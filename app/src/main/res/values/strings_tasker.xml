@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tasker / Locale 插件模块的界面文案。
+  约定：本文件所有 key 一律以 tasker_ 开头，避免与主 strings.xml / strings_np.xml 冲突。
+
+  注意：动作名与参数说明**不在这里**，而在 core/tasker/TaskerContract.kt 的
+  TASKER_ACTION_SPECS 里 —— 那是「单一事实来源」，文档 docs/TASKER.md 与
+  编辑界面共用它，放两份到资源里必然漂移。
+-->
+<resources>
+
+    <!-- 页面 -->
+    <string name="tasker_page_title">Tasker 插件配置</string>
+
+    <!-- 插件类型 -->
+    <string name="tasker_section_type">插件类型</string>
+    <string name="tasker_type_title">这里要做什么</string>
+    <string name="tasker_type_action">执行动作（Tasker 调用 NetPilot）</string>
+    <string name="tasker_type_condition">判断条件（供 Tasker 判断制式状态）</string>
+
+    <!-- 动作 -->
+    <string name="tasker_section_action">动作</string>
+    <string name="tasker_action_title">要执行的动作</string>
+    <string name="tasker_action_summary">参数：%1$s</string>
+
+    <!-- 参数 -->
+    <string name="tasker_section_params">参数</string>
+    <string name="tasker_param_no_params">这个动作不需要参数</string>
+    <string name="tasker_param_sub_id_title">SIM 卡</string>
+    <string name="tasker_param_sub_id_input">subId（例如 1）</string>
+    <string name="tasker_param_sub_id_fallback">没读到已启用的 SIM 卡，请手动填写 subId（可在 NetPilot 首页查看）</string>
+    <string name="tasker_param_sub_id_detected">已检测到：%1$s</string>
+    <string name="tasker_param_mode_title">网络制式（RIL 裸值）</string>
+    <string name="tasker_param_preset_title">制式预设</string>
+    <string name="tasker_param_enabled_title">自动降级开关</string>
+    <string name="tasker_param_enabled_summary">打开 = 允许「信号满格但没网」时自动降到 4G</string>
+    <string name="tasker_param_lock_title">锁定为「仅 4G (LTE)」</string>
+    <string name="tasker_param_lock_summary">关闭 = 恢复运营商默认制式</string>
+
+    <!-- 条件 -->
+    <string name="tasker_section_condition">条件</string>
+    <string name="tasker_condition_title">要判断的条件</string>
+
+    <!-- 预览与示例 -->
+    <string name="tasker_section_preview">Tasker 列表里会显示为</string>
+    <string name="tasker_section_example">等价的 adb 命令（调试用，可复制）</string>
+
+    <!-- Blurb（Tasker 任务列表里显示的一行摘要） -->
+    <string name="tasker_blurb_prefix">NetPilot：</string>
+    <string name="tasker_blurb_set_mode">卡 %1$d 切换为 %2$s</string>
+    <string name="tasker_blurb_set_preset">卡 %1$d 预设 %2$s</string>
+    <string name="tasker_blurb_toggle_auto">反转自动降级开关</string>
+    <string name="tasker_blurb_set_auto_on">开启自动降级</string>
+    <string name="tasker_blurb_set_auto_off">关闭自动降级</string>
+    <string name="tasker_blurb_set_data_sim">默认数据卡切到 subId %1$d</string>
+    <string name="tasker_blurb_switch_data_sim">双卡互换默认数据卡</string>
+    <string name="tasker_blurb_lock_on">锁定 仅 4G (LTE)</string>
+    <string name="tasker_blurb_lock_off">恢复运营商默认制式</string>
+    <string name="tasker_blurb_sample_now">立即采样一次</string>
+    <string name="tasker_blurb_get_status">读取状态快照</string>
+    <string name="tasker_blurb_condition">条件：%1$s</string>
+
+    <!-- 按钮与提示 -->
+    <string name="tasker_save">保存</string>
+    <string name="tasker_cancel">取消</string>
+    <string name="tasker_error_sub_id">请填写合法的 subId（非负整数，例如 1）</string>
+    <string name="tasker_note_exported">保存后 Tasker 会把这份配置存进自己的任务里，之后每次执行都会带回来。本页面不申请任何权限、不联网；真正的切换动作要在执行时才有 Root / Shizuku 的事。</string>
+
+</resources>

@@ -1,0 +1,208 @@
+<resources>
+    <string name="app_name">NetPilot</string>
+    <string name="tab_home">Home</string>
+    <string name="tab_features">Features</string>
+    <string name="tab_settings">Settings</string>
+    <string name="tab_about">About</string>
+    <string name="placeholder_value">Placeholder</string>
+    <string name="action_back">Back</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="search_hint">Search features</string>
+    <string name="search_empty">No matching feature found</string>
+
+    <!-- Home -->
+    <string name="home_status_title">Status Card</string>
+    <string name="home_stat_one">Statistic One</string>
+    <string name="home_stat_two">Statistic Two</string>
+    <string name="home_scope">Scope</string>
+    <string name="home_feature_count">Features</string>
+    <string name="scope_empty">No scope</string>
+    <string name="home_device_info">Device Info</string>
+    <string name="home_device_name">Device Name</string>
+    <string name="home_device_model">Device Model</string>
+    <string name="home_hyperos_version">HyperOS Version</string>
+    <string name="home_android_version">Android Version</string>
+    <string name="home_system_version">System Version</string>
+    <string name="home_app_version">App Version</string>
+
+    <!-- Settings -->
+    <string name="settings_interface">Interface</string>
+    <string name="settings_language">Language</string>
+    <string name="settings_update">Update</string>
+    <string name="settings_data">Data Management</string>
+    <string name="settings_module">Module</string>
+    <string name="theme_mode">Theme Mode</string>
+    <string name="theme_system">Follow System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_monet_system">Monet Follow System</string>
+    <string name="theme_monet_light">Monet Light</string>
+    <string name="theme_monet_dark">Monet Dark</string>
+    <string name="floating_navbar">Floating Navbar</string>
+    <string name="floating_navbar_summary">Use floating style bottom navigation bar</string>
+    <string name="liquid_glass">Liquid Glass</string>
+    <string name="liquid_glass_summary">iOS-style liquid glass blur effect</string>
+    <string name="blur_enabled">Background Blur</string>
+    <string name="blur_enabled_summary">Enable background blur effect for navigation bar and bottom bar</string>
+    <string name="language_default">Default</string>
+    <string name="language_zh_cn">简体中文</string>
+    <string name="language_en">English</string>
+    <string name="copyright">© 2026 Ianzb.</string>
+
+    <!-- Module status -->
+    <string name="module_status">Module Status</string>
+    <string name="module_status_summary_activated">Activated</string>
+    <string name="module_status_summary_inactive">Not activated</string>
+    <string name="module_status_summary_no_root">Activated (No Root)</string>
+    <string name="module_status_root_hint">Root not granted, restart and other features unavailable</string>
+    <string name="hook_status_applied">Active</string>
+    <string name="hook_status_not_applied">Inactive</string>
+    <string name="module_scope">Scope</string>
+    <string name="module_scope_count">%d apps authorized</string>
+    <string name="module_scope_request">Request All Scopes</string>
+    <string name="module_scope_request_summary">Request scope for target apps of all options</string>
+    <string name="module_scope_request_success">Scope request submitted</string>
+    <string name="module_scope_request_failed">Scope request failed: %s</string>
+    <string name="module_clear_dexkit">Clear DexKit Cache</string>
+    <string name="module_clear_dexkit_summary">Delete DexKit cache files of all scoped apps</string>
+    <string name="module_clear_dexkit_success">DexKit cache cleared</string>
+    <string name="module_clear_dexkit_failed">Failed, check permission and scope</string>
+
+    <!-- Module: safe mode -->
+    <string name="safe_mode_active_title">Module safe mode is active</string>
+    <string name="safe_mode_active_summary">Hooks of %d app(s) were auto-disabled. Restore them one by one.</string>
+    <string name="safe_mode_manage">Safe Mode</string>
+    <string name="safe_mode_manage_summary_none">Tap to set safe mode per app</string>
+    <string name="safe_mode_manage_summary_active">%d app(s) disabled · tap to set</string>
+    <string name="safe_mode_declaration">Safe mode is the module\'s protection mechanism: if a target app crashes repeatedly shortly after loading hooks, its hooks are skipped automatically to avoid boot loops. You can also toggle safe mode per hooked app here — on skips all hooks for that app, off restores them and clears the crash counter.</string>
+    <string name="safe_mode_crash_count">crashed %d time(s)</string>
+
+    <!-- Module: device -->
+
+    <!-- Scope page -->
+    <string name="scope_restart">Restart</string>
+    <string name="scope_restart_need_root">Restarting an app requires root</string>
+    <string name="scope_safe_mode">Safe mode</string>
+    <string name="scope_safe_mode_reset">Restore</string>
+    <string name="scope_safe_mode_reset_done">Restored %s</string>
+    <string name="restart_system_confirm_title">Restart System</string>
+    <string name="restart_system_confirm_message">The target includes system processes. Restarting will reboot the device. Continue?</string>
+    <string name="restart_system_confirm_action">Restart</string>
+
+    <!-- Slider -->
+    <string name="hook_slider_current">Current: %1$s</string>
+    <string name="hook_slider_current_default">Current %1$s · Default %2$s</string>
+    <string name="hook_slider_dialog_summary">Enter a custom value</string>
+    <string name="hook_slider_dialog_values">Current: %1$s\nDefault: %2$s</string>
+    <string name="hook_slider_dialog_input">Value</string>
+    <string name="hook_slider_dialog_range">Range: %1$s ~ %2$s</string>
+    <string name="hook_slider_restore_default">Restore Default</string>
+
+    <!-- Text -->
+    <string name="hook_text_placeholder">Please enter content</string>
+    <string name="hook_text_save">Save</string>
+    <string name="hook_text_not_set">Not set</string>
+    <string name="hook_text_dialog_summary">Enter custom text</string>
+    <string name="hook_text_current">Current: %1$s</string>
+    <string name="hook_text_default">Default: %1$s</string>
+    <string name="hook_text_dialog_values">Current: %1$s\nDefault: %2$s</string>
+
+    <!-- Package list -->
+    <string name="hook_package_list_count">%d package(s) configured</string>
+    <string name="hook_package_list_dialog_summary">Enter package names, one per line or comma separated</string>
+    <string name="hook_package_list_placeholder">com.example.app</string>
+    <string name="hook_package_list_hint">Supports newline, comma, semicolon or space separators</string>
+
+    <!-- Quick actions -->
+    <string name="quick_action_title">Restart Apps</string>
+    <string name="quick_action_select_all">Select All</string>
+    <string name="quick_action_deselect_all">Deselect All</string>
+    <string name="quick_action_restart">Restart</string>
+    <string name="quick_action_restart_success">Restarted</string>
+
+    <!-- Features -->
+    <string name="example_section_switch">Switch card</string>
+    <string name="example_section_checkbox">Checkbox card</string>
+    <string name="example_section_arrow">Arrow card (navigates to a subpage)</string>
+    <string name="example_section_dropdown">Dropdown card</string>
+    <string name="example_section_spinner">Spinner card</string>
+    <string name="example_section_radio">Radio card</string>
+    <string name="example_section_slider">Slider card</string>
+    <string name="example_section_text">Text input card</string>
+    <string name="example_section_package_list">Package list card (restart apps top-right)</string>
+
+    <string name="example_switch_title">Enable Experimental Features</string>
+    <string name="example_switch_summary">Try new features that are not yet stable</string>
+    <string name="example_checkbox_title">Join Experience Program</string>
+    <string name="example_checkbox_summary">Allow collecting anonymous usage data to improve the product</string>
+    <string name="example_arrow_title">Advanced Options</string>
+    <string name="example_arrow_summary">More advanced configuration</string>
+    <string name="example_arrow_back">Back to previous page</string>
+    <string name="example_arrow_sub_title">Advanced Options</string>
+    <string name="example_arrow_sub_item">Subpage example option</string>
+    <string name="example_arrow_sub_summary">Subpage content is shown here</string>
+    <string name="example_arrow_sub_body">The subpage can host more components and return via the back button.</string>
+    <string name="example_sub_text_title">Subpage text option</string>
+    <string name="example_sub_text_summary">This option lives in a subpage; reachable from the features page search</string>
+    <string name="example_dropdown_title">Animation Speed</string>
+    <string name="example_dropdown_summary">Choose the animation playback speed</string>
+    <string name="example_dropdown_default">Default (Normal)</string>
+    <string name="example_dropdown_slow">Slow</string>
+    <string name="example_dropdown_normal">Normal</string>
+    <string name="example_dropdown_fast">Fast</string>
+    <string name="example_spinner_title">Theme Color</string>
+    <string name="example_spinner_summary">Choose the theme color scheme</string>
+    <string name="example_spinner_red">Red</string>
+    <string name="example_spinner_green">Green</string>
+    <string name="example_spinner_blue">Blue</string>
+    <string name="example_radio_title">Start Page</string>
+    <string name="example_radio_summary">Choose the page shown after launch</string>
+    <string name="example_radio_home">Home</string>
+    <string name="example_radio_discover">Discover</string>
+    <string name="example_radio_mine">Mine</string>
+    <string name="example_slider_title">UI Scale</string>
+    <string name="example_slider_summary">Adjust the overall UI scale</string>
+    <string name="example_slider_unit">%</string>
+    <string name="example_slider_value_label">Scale ratio</string>
+    <string name="example_text_title">Custom Suffix</string>
+    <string name="example_text_summary">Add a custom suffix to exported files</string>
+    <string name="example_package_list_title">Custom App List</string>
+    <string name="example_package_list_summary">Enter package names; batch restart from the top-right button</string>
+
+    <!-- Update -->
+    <string name="check_update_on_launch">Check for Updates on Launch</string>
+    <string name="check_update_on_launch_summary">Automatically check for new versions at startup</string>
+    <string name="check_update">Check for Updates</string>
+    <string name="check_update_summary">Current version %s</string>
+    <string name="check_update_checking">Checking…</string>
+    <string name="update_available_title">New Version Available</string>
+    <string name="update_available_summary">Current version: %1$s\nLatest version: %2$s</string>
+    <string name="update_later">Later</string>
+    <string name="update_now">Update</string>
+    <string name="update_latest">You are on the latest version</string>
+    <string name="update_check_failed">Failed to check for updates, please try again later</string>
+
+    <!-- Data -->
+    <string name="export_settings">Export Settings</string>
+    <string name="export_settings_summary">Save current settings as JSON file</string>
+    <string name="import_settings">Import Settings</string>
+    <string name="import_settings_summary">Import settings from JSON file</string>
+    <string name="import_success">Import successful, restarting app</string>
+    <string name="import_failed">Import failed, invalid file format</string>
+    <string name="export_success">Export successful</string>
+    <string name="export_failed">Export failed</string>
+
+    <!-- About -->
+    <string name="about">About</string>
+    <string name="about_dependencies">Third Party Licenses &amp; Credits</string>
+    <string name="about_license">GNU General Public License v3.0</string>
+    <string name="about_license_summary">View full license text</string>
+    <string name="third_party_licenses_title">Third Party Licenses &amp; Credits</string>
+    <string name="licenses_header">This app uses or references the following open-source and referenced projects. Thanks to all authors and contributors.</string>
+    <string name="licenses_section_core">Core</string>
+    <string name="licenses_section_ui">UI</string>
+    <string name="licenses_section_androidx">AndroidX</string>
+    <string name="licenses_section_tools">Privileged Tools</string>
+    <string name="licenses_section_refs">Referenced Projects</string>
+</resources>

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Supplemental signal quality strings (q_ prefix). English version of
+  values/strings_quality.xml; keys, order and placeholders are identical.
+-->
+<resources>
+
+    <!-- ============ Why SINR is unavailable (maps to SinrUnavailableReason in core) ============ -->
+    <string name="q_sinr_unavailable_title">Why SINR is unavailable</string>
+    <string name="q_sinr_reason_no_cellular">Not camped on a cellular network, so there is no SINR to read</string>
+    <string name="q_sinr_reason_no_phone_state">Missing the Phone state permission (READ_PHONE_STATE); the system refuses to report signal strength</string>
+    <string name="q_sinr_reason_no_fine_location">Missing the Precise location permission (ACCESS_FINE_LOCATION); cell info cannot be read (required on Android 12+)</string>
+    <string name="q_sinr_reason_location_off">System location services are off; Android 12+ does not allow reading cell info</string>
+    <string name="q_sinr_reason_lte_rssnr_na">The current LTE cell does not report rssnr (SINR); this cell or firmware provides no quality reading</string>
+    <string name="q_sinr_reason_nr_ss_sinr_na">The current NR cell does not report ssSinr; this cell or firmware provides no 5G SINR</string>
+    <string name="q_sinr_reason_not_reported">This device model or the current network mode does not report SINR (some ROMs block the field)</string>
+    <string name="q_sinr_source_note">SINR source: %1$s</string>
+
+    <!-- ============ Ping failure ============ -->
+    <string name="q_ping_failed_short">Failed (no response)</string>
+    <string name="q_ping_error_detail">Reason for the ping failure (full exception, incl. class name): %1$s</string>
+
+    <!-- ============ Criteria (values currently in effect) ============ -->
+    <string name="q_section_criteria">Criteria (values in effect)</string>
+    <string name="q_criteria_hint">These are the rules actually in effect. They follow any change on the Features page immediately, and can only be viewed, not edited.</string>
+    <string name="q_criteria_full_bar_line">① Fake full bars downgrade: RSRP ≥ %1$d dBm and (Ping &gt; %2$d ms or SINR &lt; %3$d dB%4$s)</string>
+    <string name="q_criteria_full_bar_ping_fail">, or ping fails completely</string>
+    <string name="q_criteria_full_bar_rule">Applies when: RSRP is above %1$d dBm, that is, the signal bars look full. Criteria: Ping &gt; %2$d ms or SINR &lt; %3$d dB — matching either one counts as full bars without quality, and drops to 4G.</string>
+    <string name="q_criteria_weak_line">② Weak signal downgrade: RSRP &lt; %1$d dBm</string>
+    <string name="q_criteria_weak_off_line">② Weak signal downgrade: off, not part of the decision</string>
+    <string name="q_criteria_rsrp_order_hint">The two RSRP thresholds are mutually exclusive: the weak signal threshold must be at least 1 dBm below the strong signal threshold. If the values do not satisfy this, the sliders keep your numbers while the effective values converge automatically — the values shown on this page are the ones in effect.</string>
+    <string name="q_criteria_weak_rule">Applies when: RSRP is below %1$d dBm. Strength only, independent of Ping and SINR; weak 5G is often slower and more power-hungry than stable 4G.</string>
+    <string name="q_criteria_none_line">③ No downgrade: when neither rule is met, the current network mode is kept and nothing is changed.</string>
+    <string name="q_criteria_recovery_rule">%1$d consecutive healthy rounds are required to restore: a single healthy round may just be jitter, and switching network modes both drains power and risks dropping the connection. It also does not restore for %2$s after a downgrade, so it does not jump straight back to 5G.</string>
+
+    <!-- ============ Extra rows in the decision section ============ -->
+    <string name="q_judge_ping_fail_title">Whether complete ping failure counts as poor</string>
+    <string name="q_judge_ping_fail_value">%1$s (changeable on the Features page)</string>
+    <string name="q_judge_reason_title">Downgrade cause</string>
+    <string name="q_judge_reason_full_bar">Fake full bars (strong signal, poor quality)</string>
+    <string name="q_judge_reason_weak">Weak signal (weak 5G is worse than stable 4G)</string>
+
+</resources>

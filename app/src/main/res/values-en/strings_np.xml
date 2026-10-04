@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tab_monitor">Monitor</string>
+    <string name="tab_log">Log</string>
+
+    <!-- Foreground service notification -->
+    <string name="np_monitor_channel_name">Network monitoring</string>
+    <string name="np_monitor_channel_desc">Persistent notification for network quality downgrade</string>
+    <string name="np_monitor_notification_title">Monitoring network quality…</string>
+    <string name="np_action_stop">Stop</string>
+
+    <!-- Home -->
+    <string name="np_home_section_status">Live status</string>
+    <string name="np_home_section_switch">Auto downgrade</string>
+    <string name="np_home_section_actions">Quick actions</string>
+    <string name="np_home_section_channel">Privileged channel</string>
+    <string name="np_home_mode">Current network mode</string>
+    <string name="np_home_signal">Signal &amp; quality</string>
+    <string name="np_home_latency">Latency</string>
+    <string name="np_home_downgrade">Downgrade status</string>
+    <string name="np_home_channel">Control channel</string>
+    <string name="np_home_sim_default">Default data SIM</string>
+    <string name="np_home_not_sampled">Not sampled yet</string>
+    <string name="np_home_monitoring">Monitoring active</string>
+    <string name="np_home_idle">Monitoring stopped</string>
+    <string name="np_home_downgraded">Downgraded to 4G</string>
+    <string name="np_home_normal">Network normal</string>
+    <string name="np_home_auto_summary_on">Samples every %1$d s and downgrades automatically when the criteria are met</string>
+    <string name="np_home_auto_summary_off">Off — the network mode will not be changed automatically</string>
+    <string name="np_home_preset_5g">5G auto</string>
+    <string name="np_home_preset_5g_only">5G only</string>
+    <string name="np_home_preset_4g_only">4G only</string>
+    <string name="np_home_sample">Check now</string>
+    <string name="np_home_lock_lte">Lock to LTE</string>
+    <string name="np_home_open_monitor">Monitor details</string>
+    <string name="np_home_open_log">Run log</string>
+    <string name="np_home_open_datacard">SIM cards &amp; rules</string>
+    <string name="np_home_refresh">Re-detect</string>
+    <string name="np_home_shizuku">Request Shizuku permission</string>
+    <string name="np_home_result_ok">Done</string>
+    <string name="np_home_result_fail">Failed — check the privileged channel</string>
+    <string name="np_home_channel_none">No privileged channel available</string>
+
+    <!-- Features page sections -->
+    <string name="np_section_fake5g">Downgrade criteria</string>
+    <string name="np_section_policy">Downgrade &amp; restore policy</string>
+    <string name="np_section_monitor">Monitoring</string>
+    <string name="np_section_datacard">SIM cards</string>
+    <string name="np_section_other">Other</string>
+
+    <!-- Features page options -->
+    <string name="np_fake5g_enabled_title">Enable network quality downgrade</string>
+    <string name="np_fake5g_enabled_summary">Master switch (on by default). On: when fake full bars or weak signal is detected, 5G is switched to 4G automatically; Off: samples and logs only, the network mode is never changed</string>
+    <string name="np_fake5g_rsrp_title">RSRP strong signal threshold</string>
+    <string name="np_fake5g_rsrp_summary">In dBm (default -85). RSRP must be above it to count as a strong signal and to be able to trigger fake full bars; higher values are stricter and harder to trigger</string>
+    <string name="np_fake5g_sinr_title">SINR quality threshold</string>
+    <string name="np_fake5g_sinr_summary">In dB (default 0). Only checked when the signal is strong: SINR below it counts as poor quality, and higher values are stricter. If SINR cannot be read, this criterion is skipped and Ping is used instead</string>
+    <string name="np_fake5g_ping_title">Ping limit</string>
+    <string name="np_fake5g_ping_summary">In ms (default 200). Only checked when the signal is strong: Ping above it counts as poor quality, and lower values are stricter and trigger more easily</string>
+    <string name="np_fake5g_ping_fail_title">Count complete ping failure as poor</string>
+    <string name="np_fake5g_ping_fail_summary">Off by default. On: if every ping fails it also counts as poor quality and still downgrades; Off: logged only, no downgrade. Enable it only if probes often fail completely</string>
+    <string name="np_fake5g_weak_signal_title">Also downgrade on weak signal</string>
+    <string name="np_fake5g_weak_signal_summary">On by default. On: when RSRP falls below the weak signal threshold below, it switches to 4G; Off: weak signal is only recorded and the network mode stays unchanged</string>
+    <string name="np_fake5g_weak_rsrp_title">RSRP weak signal threshold</string>
+    <string name="np_fake5g_weak_rsrp_summary">In dBm (default -110). RSRP below it counts as a weak signal, regardless of Ping or SINR; it only takes effect while the switch above is on, and higher values downgrade more easily</string>
+    <string name="np_fake5g_endc_title">Disable EN-DC when downgrading</string>
+    <string name="np_fake5g_endc_summary">Off by default. On: EN-DC (NSA dual connectivity) is also disabled while downgrading and restoring, which some devices need in order to actually fall back to 4G; leave it off if you are not sure</string>
+    <string name="np_fake5g_downgrade_mode_title">Downgrade target mode</string>
+    <string name="np_fake5g_downgrade_mode_summary">Defaults to 4G preferred. The network mode written when a rule is met; 4G only is more thorough but drops the 3G fallback, so in areas with poor coverage it may end up with no service at all</string>
+    <string name="np_fake5g_lock_lte_mode_title">Restore target mode</string>
+    <string name="np_fake5g_lock_lte_mode_summary">Defaults to follow carrier. The network mode written back when the cooldown ends and the network is restored; it is derived automatically from the SIM card as 5G auto, so swapping SIMs needs no changes. Choosing the wrong one may leave 5G unavailable after restoring</string>
+    <string name="np_fake5g_cooldown_title">Downgrade cooldown</string>
+    <string name="np_fake5g_cooldown_summary">In s (default 300 = 5 minutes). No restore is attempted for this long after a downgrade, so it does not bounce straight back to 5G; a longer cooldown saves more power but brings 5G back more slowly</string>
+    <string name="np_fake5g_recovery_title">Healthy rounds required to restore</string>
+    <string name="np_fake5g_recovery_summary">In rounds (default 3). After the cooldown ends, this many consecutive healthy rounds are required before restoring; a larger value is more stable but slower, while 1 lets a single jitter trick it back to 5G</string>
+    <string name="np_fake5g_no_net_rollback_title">No-network rollback threshold</string>
+    <string name="np_fake5g_no_net_rollback_summary">In rounds (default 2). After a downgrade, this many consecutive rounds with no network at all roll everything back to the full network mode; a smaller value recovers faster, a larger one tends to stay stuck offline</string>
+    <string name="np_fake5g_interval_title">Sampling interval</string>
+    <string name="np_fake5g_interval_summary">In s (default 120). The foreground service samples this often; a larger value saves power but reacts more slowly. Opening the monitor page temporarily speeds it up to 5 s</string>
+    <string name="np_monitor_autostart_title">Start monitoring on boot</string>
+    <string name="np_monitor_autostart_summary">Restores monitoring and the downgrade state after a reboot</string>
+    <string name="np_datacard_manage_title">SIM cards &amp; rules</string>
+    <string name="np_datacard_manage_summary">Manage the default data SIM, the dual-SIM policy and Wi-Fi rules</string>
+    <string name="np_about_title">About NetPilot</string>
+    <string name="np_about_summary">Version info, open-source licenses and project page</string>
+
+    <!-- Units -->
+    <string name="np_unit_dbm"> dBm</string>
+    <string name="np_unit_db"> dB</string>
+    <string name="np_unit_ms"> ms</string>
+    <string name="np_unit_sec"> s</string>
+    <string name="np_unit_rounds"> rounds</string>
+
+    <!-- Network mode dropdown -->
+    <string name="np_mode_follow_carrier">Follow carrier (5G auto)</string>
+    <string name="np_mode_9">4G preferred (LTE/GSM/WCDMA)</string>
+    <string name="np_mode_11">4G only (LTE Only)</string>
+    <string name="np_mode_12">4G/3G (LTE/WCDMA)</string>
+    <string name="np_mode_26">5G auto (NR/LTE/GSM/WCDMA)</string>
+    <string name="np_mode_27">5G all modes (incl. CDMA)</string>
+
+    <!-- SIM cards page -->
+    <string name="np_dc_title">SIM cards &amp; rules</string>
+    <string name="np_dc_section_sim">SIM cards</string>
+    <string name="np_dc_section_policy">Dual-SIM policy</string>
+    <string name="np_dc_section_rules">Wi-Fi rules</string>
+    <string name="np_dc_sim_default">Default data SIM</string>
+    <string name="np_dc_set_default">Set as default data SIM</string>
+    <string name="np_dc_is_default">Current default data SIM</string>
+    <string name="np_dc_policy_title">Slot %1$d policy</string>
+    <string name="np_dc_rule_empty">No rules yet — tap the button below to add one</string>
+    <string name="np_dc_rule_add">Add rule</string>
+    <string name="np_dc_rule_edit">Edit rule</string>
+    <string name="np_dc_rule_name">Rule name</string>
+    <string name="np_dc_rule_ssid">Wi-Fi name (SSID)</string>
+    <string name="np_dc_rule_bssid">Wi-Fi address (BSSID, optional)</string>
+    <string name="np_dc_rule_target">Target SIM card</string>
+    <string name="np_dc_rule_priority">Priority (higher wins)</string>
+    <string name="np_dc_rule_cooldown">Cooldown (s)</string>
+    <string name="np_dc_rule_revert">Switch back after leaving Wi-Fi</string>
+    <string name="np_dc_rule_delete">Delete</string>
+    <string name="np_dc_rule_any_wifi">Any Wi-Fi</string>
+    <string name="np_dc_any_sim">Any SIM</string>
+    <string name="np_dc_sim_title">Slot %1$d · %2$s</string>
+    <string name="np_dc_no_sim">No SIM card detected</string>
+    <string name="np_dc_no_channel">No privileged channel available — cannot change the data SIM</string>
+    <string name="np_dc_switch_ok">Data SIM switched</string>
+    <string name="np_dc_switch_fail">Switch failed — check the privileged channel</string>
+</resources>

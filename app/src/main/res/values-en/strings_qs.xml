@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English (en) translations of the Chinese strings in values/strings_qs.xml. -->
+<resources>
+    <string name="qs_network_mode_label">Network mode</string>
+    <string name="qs_network_mode_busy">Switching…</string>
+    <string name="qs_network_mode_no_sim">No data SIM available</string>
+    <string name="qs_network_mode_unknown">Unknown</string>
+    <string name="qs_network_mode_switched">Switched to %1$s</string>
+    <string name="qs_network_mode_failed">Switch failed, privileged channel: %1$s</string>
+    <string name="qs_downgrade_label">Network quality downgrade</string>
+    <string name="qs_downgrade_no_channel">No Root / Shizuku channel</string>
+    <string name="qs_downgrade_off">Off</string>
+    <string name="qs_downgrade_watching">Monitoring</string>
+    <string name="qs_downgrade_cooldown">Downgraded, cooling down</string>
+    <string name="qs_downgrade_recovering">Downgraded, watching for recovery</string>
+    <string name="qs_downgrade_rollback">Downgraded, rolling back due to no data connection</string>
+    <string name="qs_downgrade_toast_on">Network quality auto-downgrade turned on</string>
+    <string name="qs_downgrade_toast_off">Network quality auto-downgrade turned off</string>
+</resources>

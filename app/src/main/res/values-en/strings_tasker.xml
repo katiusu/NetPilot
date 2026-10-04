@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English (en) translations of the Chinese strings in values/strings_tasker.xml. -->
+<resources>
+    <string name="tasker_page_title">Tasker plugin setup</string>
+    <string name="tasker_section_type">Plugin type</string>
+    <string name="tasker_type_title">What this entry does</string>
+    <string name="tasker_type_action">Run an action (Tasker calls NetPilot)</string>
+    <string name="tasker_type_condition">Condition (lets Tasker check network mode state)</string>
+    <string name="tasker_section_action">Action</string>
+    <string name="tasker_action_title">Action to run</string>
+    <string name="tasker_action_summary">Parameters: %1$s</string>
+    <string name="tasker_section_params">Parameters</string>
+    <string name="tasker_param_no_params">This action takes no parameters</string>
+    <string name="tasker_param_sub_id_title">SIM card</string>
+    <string name="tasker_param_sub_id_input">subId (for example 1)</string>
+    <string name="tasker_param_sub_id_fallback">No enabled SIM card was detected. Enter the subId manually (you can check it on the NetPilot home screen).</string>
+    <string name="tasker_param_sub_id_detected">Detected: %1$s</string>
+    <string name="tasker_param_mode_title">Network mode (raw RIL value)</string>
+    <string name="tasker_param_preset_title">Network mode preset</string>
+    <string name="tasker_param_enabled_title">Auto-downgrade switch</string>
+    <string name="tasker_param_enabled_summary">On = allow an automatic downgrade to 4G when the bars are full but there is no data connection</string>
+    <string name="tasker_param_lock_title">Lock to 4G (LTE) only</string>
+    <string name="tasker_param_lock_summary">Off = restore the carrier default network mode</string>
+    <string name="tasker_section_condition">Condition</string>
+    <string name="tasker_condition_title">Condition to check</string>
+    <string name="tasker_section_preview">Shown in the Tasker list as</string>
+    <string name="tasker_section_example">Equivalent adb command (for debugging, copyable)</string>
+    <string name="tasker_blurb_prefix">NetPilot: </string>
+    <string name="tasker_blurb_set_mode">SIM %1$d switched to %2$s</string>
+    <string name="tasker_blurb_set_preset">SIM %1$d preset %2$s</string>
+    <string name="tasker_blurb_toggle_auto">Toggle the auto-downgrade switch</string>
+    <string name="tasker_blurb_set_auto_on">Turn on auto-downgrade</string>
+    <string name="tasker_blurb_set_auto_off">Turn off auto-downgrade</string>
+    <string name="tasker_blurb_set_data_sim">Set default data SIM to subId %1$d</string>
+    <string name="tasker_blurb_switch_data_sim">Swap the default data SIM between the two SIMs</string>
+    <string name="tasker_blurb_lock_on">Lock to 4G (LTE) only</string>
+    <string name="tasker_blurb_lock_off">Restore the carrier default network mode</string>
+    <string name="tasker_blurb_sample_now">Sample now</string>
+    <string name="tasker_blurb_get_status">Read status snapshot</string>
+    <string name="tasker_blurb_condition">Condition: %1$s</string>
+    <string name="tasker_save">Save</string>
+    <string name="tasker_cancel">Cancel</string>
+    <string name="tasker_error_sub_id">Enter a valid subId (a non-negative integer, for example 1)</string>
+    <string name="tasker_note_exported">Once you save, Tasker stores this configuration in its own task and passes it back on every run. This screen requests no permissions and does not use the network; the actual switch happens at run time, where Root or Shizuku comes into play.</string>
+</resources>

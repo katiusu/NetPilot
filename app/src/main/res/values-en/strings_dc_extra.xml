@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English translation of values/strings_dc_extra.xml (SIM card policy page). -->
+<resources>
+    <!-- Section titles -->
+    <string name="dc_section_policy_rules">SIM Card Policy</string>
+    <string name="dc_section_rule_library">Wi-Fi Rule Library</string>
+
+    <!-- One Card per SIM: master switch + mode + custom items -->
+    <string name="dc_policy_switch_title">Enable policy for SIM %1$d (%2$s)</string>
+    <string name="dc_policy_switch_summary">When off, no policy applies to this SIM: no network quality downgrade, no drop to 4G on Wi-Fi, and Wi-Fi rules will not switch data to this SIM.</string>
+
+    <string name="dc_custom_title">Custom: each item has its own switch and runs only when enabled</string>
+    <string name="dc_custom_network_quality">Network quality auto-downgrade</string>
+    <string name="dc_custom_network_quality_desc">Trigger: the default data SIM shows fake full bars but the network is bad (ping timeouts, low SINR), or the signal is weak. Action: automatically downgrade to 4G. Restore: after several consecutive good probes, the original network mode is written back.</string>
+    <string name="dc_custom_wifi_downgrade">Drop to 4G on Wi-Fi</string>
+    <string name="dc_custom_wifi_downgrade_desc">Trigger: connected to any Wi-Fi. Action: immediately downgrade to 4G (default 4G/3G/2G auto) to save power. Restore: after you disconnect from Wi-Fi or turn this switch off, the network mode from before the connection is written back.</string>
+
+    <!-- Rule explanation: what rules manage, when they switch back, how priority works -->
+    <string name="dc_intro_title">What the rules manage</string>
+    <string name="dc_intro_body">The rules manage the default data SIM: when you connect to a Wi-Fi network listed in a rule, the default SIM switches to the SIM the rule specifies; if no target is specified, only a match is recorded and no switch happens. Whether it switches back after you leave depends on \"Revert after leaving Wi-Fi\".</string>
+    <string name="dc_intro_match">Matching: if a BSSID is set, match by exact BSSID; otherwise match by SSID, case-insensitive; if both are empty, match any Wi-Fi. When several rules match, the higher priority number runs first; if they are equal, the one earlier in the list wins.</string>
+    <string name="dc_intro_cooldown">Cooldown: right after a rule switches, it will not trigger again during the cooldown, so you do not flip back and forth at the edge of Wi-Fi coverage. The cooldown only limits repeat triggers; it does not affect \"revert after leaving\".</string>
+
+    <!-- Rule library -->
+    <string name="dc_rule_library_summary">Master switch: when off, no Wi-Fi rule matches, no SIM is switched and no network mode is changed</string>
+    <string name="dc_rule_add_custom">New rule</string>
+    <string name="dc_rule_summary">%1$s · Priority %2$d · Cooldown %3$d s</string>
+    <string name="dc_rule_summary_revert"> · Revert to the original SIM after leaving</string>
+    <string name="dc_rule_target_sim">On match, switch to: SIM %1$d</string>
+    <string name="dc_rule_target_none">On match, switch to: no switch (just record one match)</string>
+    <string name="dc_rule_mode_set">Also set the target SIM network mode to: %1$s</string>
+    <string name="dc_rule_mode_keep">Leave the target SIM network mode unchanged</string>
+
+    <!-- Rule editor dialog: groups and per-field hints -->
+    <string name="dc_editor_group_match">Match conditions</string>
+    <string name="dc_editor_group_action">What happens on match</string>
+    <string name="dc_editor_match_hint">Leave both SSID and BSSID empty = match any Wi-Fi; usually given a low priority as a fallback. If a BSSID is set, matching is by exact BSSID, which pins down one AP when several share the same SSID.</string>
+    <string name="dc_editor_target_hint">Choose \"Any SIM\" = no switch; a match is only recorded once and the network mode setting below has no effect. Choose a specific SIM = when you connect to that Wi-Fi, the default SIM switches to it; if the policy master switch for that SIM is off, this rule does not run.</string>
+    <string name="dc_editor_priority_hint">The higher the priority number, the earlier it is picked. When several rules match at once, only the highest one runs; 0 is allowed, and if the numbers are equal the one earlier in the list wins.</string>
+    <string name="dc_editor_cooldown_hint">Cooldown (seconds): after one switch, the rule will not trigger again for this many seconds, avoiding repeated SIM switches at the edge of Wi-Fi coverage. 0 means always allowed; the maximum is 3600 seconds.</string>
+    <string name="dc_editor_revert_hint">On: after you leave the Wi-Fi matched by this rule, the default SIM automatically switches back to the original one. Off: the current SIM is kept after you leave.</string>
+</resources>

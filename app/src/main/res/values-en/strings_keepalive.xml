@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English translation of values/strings_keepalive.xml (background services and system compatibility). -->
+<resources>
+
+    <!-- ===================== Background service master switch ===================== -->
+    <string name="ka_section_services">Background services</string>
+    <string name="ka_gate_title">Enable all background services</string>
+    <string name="ka_gate_summary">On by default; this is the master gate for background behavior. Turning it off stops the monitoring foreground service, the heartbeat, restart-after-kill and auto-start on boot, and disables actions triggered by Tasker and the tile.</string>
+    <string name="ka_gate_hint">On: registers the heartbeat, auto-start on boot and restart-after-kill, and enables Tasker and the tile; the monitor only starts when auto-downgrade is enabled. Off: the monitor and heartbeat stop immediately, and there is no auto-start or restart.</string>
+    <string name="ka_status_title">Status</string>
+    <string name="ka_status_summary">Monitor service: %1$s · Keep-alive heartbeat: %2$s</string>
+    <string name="ka_status_running">Running</string>
+    <string name="ka_status_stopped">Stopped</string>
+    <string name="ka_heartbeat_on">Registered</string>
+    <string name="ka_heartbeat_off">Not registered</string>
+    <string name="ka_status_hint">The heartbeat uses the system alarm, so it may be a few minutes late while the screen is off or in battery saver. When it shows \"Stopped\", turn the switch above on to start it again; but after you tap \"Stop\" from the notification it will not be started automatically again.</string>
+
+    <!-- ===================== System compatibility ===================== -->
+    <string name="ka_section_compat">System compatibility</string>
+    <string name="ka_verify_title">Write-back verification</string>
+    <string name="ka_verify_summary">On by default. On: right after writing settings, the value is read back and compared; a mismatch counts as a failure and is logged. Off: a single write is treated as success with no comparison.</string>
+    <string name="ka_verify_hint">Turn this off only when a write takes effect but is falsely reported as failed: some vendor ROMs read back inaccurately and mark success as failure. Once off, you have to check the system settings yourself, and failures are no longer logged.</string>
+
+    <string name="ka_compat_vendor">Vendor</string>
+    <string name="ka_compat_model">Model</string>
+    <string name="ka_compat_android">Android version</string>
+    <string name="ka_compat_miui">OS version</string>
+
+    <string name="ka_compat_channel">Current privileged channel</string>
+    <string name="ka_compat_channel_none">Not detected</string>
+    <string name="ka_compat_channel_reason">Channel detection result: %1$s</string>
+
+    <string name="ka_compat_write">Write method</string>
+    <string name="ka_compat_write_cli">app_process → PrivilegedCli setmode %1$d (run via su)</string>
+    <string name="ka_compat_write_settings">su -c \"settings put global %1$s &lt;mode value&gt;\"</string>
+    <string name="ka_compat_write_shizuku">binder → IShizukuController.setNetworkMode(%1$d)</string>
+    <string name="ka_compat_write_command">The command that will actually run with the current configuration: %1$s</string>
+
+    <string name="ka_compat_read">Read probe</string>
+    <string name="ka_compat_read_ok">Success, read back %1$s</string>
+    <string name="ka_compat_read_failed">Failed: %1$s</string>
+    <string name="ka_compat_read_no_value">No value was read back (channel timed out or was denied)</string>
+    <string name="ka_compat_read_skipped">Not run: no privileged channel available</string>
+    <string name="ka_compat_read_no_target">Not run: could not determine the write target (the default data SIM could not be read)</string>
+
+    <string name="ka_compat_verify_state">Write-back verification</string>
+    <string name="ka_compat_verify_on">On</string>
+    <string name="ka_compat_verify_off">Off</string>
+
+    <string name="ka_compat_probing">Detecting…</string>
+    <string name="ka_compat_unknown">Unknown</string>
+    <string name="ka_compat_unknown_note">These values are probed again every time you open this page. \"Unknown\" means the value really could not be read (property unavailable, channel not authorized or timed out); it does not mean there is no problem.</string>
+    <string name="ka_compat_conclusion">This app does not branch on vendor; if a write is ignored by the system on some model, write-back verification marks it as failed and writes it to the log page, so you can look it up and pinpoint it.</string>
+
+</resources>

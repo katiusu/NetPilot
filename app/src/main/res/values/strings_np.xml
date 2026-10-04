@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tab_monitor">监控</string>
+    <string name="tab_log">日志</string>
+
+    <!-- 前台服务通知 -->
+    <string name="np_monitor_channel_name">网络监控</string>
+    <string name="np_monitor_channel_desc">网络质量降级的常驻监控通知</string>
+    <string name="np_monitor_notification_title">正在监控网络质量…</string>
+    <string name="np_action_stop">停止</string>
+
+    <!-- 首页 -->
+    <string name="np_home_section_status">实时状态</string>
+    <string name="np_home_section_switch">自动降级</string>
+    <string name="np_home_section_actions">快捷操作</string>
+    <string name="np_home_section_channel">特权通道</string>
+    <string name="np_home_mode">当前制式</string>
+    <string name="np_home_signal">信号与质量</string>
+    <string name="np_home_latency">网络延迟</string>
+    <string name="np_home_downgrade">降级状态</string>
+    <string name="np_home_channel">控制通道</string>
+    <string name="np_home_sim_default">默认数据卡</string>
+    <string name="np_home_not_sampled">尚未采样</string>
+    <string name="np_home_monitoring">监控运行中</string>
+    <string name="np_home_idle">监控已停止</string>
+    <string name="np_home_downgraded">已降级到 4G</string>
+    <string name="np_home_normal">网络正常</string>
+    <string name="np_home_auto_summary_on">每 %1$d 秒采样一次，命中降级条件即自动降级</string>
+    <string name="np_home_auto_summary_off">已关闭，网络制式不会被自动修改</string>
+    <string name="np_home_preset_5g">5G 自动</string>
+    <string name="np_home_preset_5g_only">仅 5G</string>
+    <string name="np_home_preset_4g_only">仅 4G</string>
+    <string name="np_home_sample">立即检测</string>
+    <string name="np_home_lock_lte">锁定 LTE</string>
+    <string name="np_home_open_monitor">监控详情</string>
+    <string name="np_home_open_log">运行日志</string>
+    <string name="np_home_open_datacard">数据卡与规则</string>
+    <string name="np_home_refresh">重新探测</string>
+    <string name="np_home_shizuku">申请 Shizuku 权限</string>
+    <string name="np_home_result_ok">操作成功</string>
+    <string name="np_home_result_fail">操作失败，请检查特权通道</string>
+    <string name="np_home_channel_none">无可用特权通道</string>
+
+    <!-- 功能页分区 -->
+    <string name="np_section_fake5g">降级判定条件</string>
+    <string name="np_section_policy">降级与恢复策略</string>
+    <string name="np_section_monitor">监控</string>
+    <string name="np_section_datacard">数据卡</string>
+    <string name="np_section_other">其它</string>
+
+    <!-- 功能页配置项 -->
+    <string name="np_fake5g_enabled_title">启用网络质量降级</string>
+    <string name="np_fake5g_enabled_summary">总开关（默认开）。开：命中「假满格」或「信号过差」就自动把 5G 换成 4G；关：只采样记日志，不改网络制式</string>
+    <string name="np_fake5g_rsrp_title">RSRP 强信号阈值</string>
+    <string name="np_fake5g_rsrp_summary">单位 dBm（默认 -85）。RSRP 高于它才算「信号强」，才可能命中假满格；数值越大越苛刻，越难触发降级</string>
+    <string name="np_fake5g_sinr_title">SINR 质量阈值</string>
+    <string name="np_fake5g_sinr_summary">单位 dB（默认 0）。仅当信号强时才看它：SINR 低于它算质量差，数值越大越严格；读不到 SINR 时这条不生效，改用 Ping</string>
+    <string name="np_fake5g_ping_title">Ping 上限</string>
+    <string name="np_fake5g_ping_summary">单位 ms（默认 200）。仅当信号强时才看它：Ping 高于它算质量差，数值越小越严格、越容易触发降级</string>
+    <string name="np_fake5g_ping_fail_title">Ping 失败也算差</string>
+    <string name="np_fake5g_ping_fail_summary">默认关。开：Ping 全部失败也按质量差处理、照样降级；关：只记日志不降级。经常整片探测不通才建议开</string>
+    <string name="np_fake5g_weak_signal_title">信号过差也降级</string>
+    <string name="np_fake5g_weak_signal_summary">默认开。开：RSRP 低于下面的弱信号阈值就换 4G；关：弱信号只记录，不改制式</string>
+    <string name="np_fake5g_weak_rsrp_title">RSRP 弱信号阈值</string>
+    <string name="np_fake5g_weak_rsrp_summary">单位 dBm（默认 -110）。RSRP 低于它即算信号过差，与 Ping、SINR 无关；上面的开关打开才生效，数值越大越容易降级</string>
+    <string name="np_fake5g_endc_title">降级时关闭 EN-DC</string>
+    <string name="np_fake5g_endc_summary">默认关。开：降级和恢复时额外关闭 EN-DC（NSA 双连接），部分机型才能真正落到 4G；不确定就别开</string>
+    <string name="np_fake5g_downgrade_mode_title">降级目标制式</string>
+    <string name="np_fake5g_downgrade_mode_summary">默认「4G 优先」。命中规则时写入的制式；选「仅 4G」更彻底，但丢了 3G 回退，信号差的地方可能直接无网</string>
+    <string name="np_fake5g_lock_lte_mode_title">恢复目标制式</string>
+    <string name="np_fake5g_lock_lte_mode_summary">默认「跟随运营商」。冷却结束恢复时写回的制式，按 SIM 卡自动推导出 5G 自动，换卡不用改；乱选可能恢复后上不了 5G</string>
+    <string name="np_fake5g_cooldown_title">降级冷却时间</string>
+    <string name="np_fake5g_cooldown_summary">单位 秒（默认 300 = 5 分钟）。降级后这么久内不尝试恢复，免得刚切到 4G 又立刻弹回 5G；调大更省电，但 5G 回来更慢</string>
+    <string name="np_fake5g_recovery_title">恢复所需正常轮数</string>
+    <string name="np_fake5g_recovery_summary">单位 轮（默认 3）。冷却结束后要连续这么多轮正常才恢复；调大更稳但更慢，调成 1 会被单次抖动骗回 5G</string>
+    <string name="np_fake5g_no_net_rollback_title">无网回退阈值</string>
+    <string name="np_fake5g_no_net_rollback_summary">单位 轮（默认 2）。降级后连续这么多轮完全无网就整体回退到完整制式；调小自救更快，调大容易一直卡在无网</string>
+    <string name="np_fake5g_interval_title">采样间隔</string>
+    <string name="np_fake5g_interval_summary">单位 秒（默认 120）。前台服务每隔这么久采一次，越大越省电、反应越慢；打开监控页会临时加快到 5 秒</string>
+    <string name="np_monitor_autostart_title">开机自动启动监控</string>
+    <string name="np_monitor_autostart_summary">重启后自动恢复监控与降级状态</string>
+    <string name="np_datacard_manage_title">数据卡与规则</string>
+    <string name="np_datacard_manage_summary">管理默认数据卡、双卡策略与 Wi-Fi 规则</string>
+    <string name="np_about_title">关于 NetPilot</string>
+    <string name="np_about_summary">版本信息、开源许可与项目地址</string>
+
+    <!-- 数值单位 -->
+    <string name="np_unit_dbm"> dBm</string>
+    <string name="np_unit_db"> dB</string>
+    <string name="np_unit_ms"> ms</string>
+    <string name="np_unit_sec"> 秒</string>
+    <string name="np_unit_rounds"> 轮</string>
+
+    <!-- 制式下拉项 -->
+    <string name="np_mode_follow_carrier">跟随运营商（5G 自动）</string>
+    <string name="np_mode_9">4G 优先（LTE/GSM/WCDMA）</string>
+    <string name="np_mode_11">仅 4G（LTE Only）</string>
+    <string name="np_mode_12">4G/3G（LTE/WCDMA）</string>
+    <string name="np_mode_26">5G 自动（NR/LTE/GSM/WCDMA）</string>
+    <string name="np_mode_27">5G 全制式（含 CDMA）</string>
+
+    <!-- 数据卡页 -->
+    <string name="np_dc_title">数据卡与规则</string>
+    <string name="np_dc_section_sim">SIM 卡</string>
+    <string name="np_dc_section_policy">双卡策略</string>
+    <string name="np_dc_section_rules">Wi-Fi 规则</string>
+    <string name="np_dc_sim_default">默认数据卡</string>
+    <string name="np_dc_set_default">设为默认数据卡</string>
+    <string name="np_dc_is_default">当前默认数据卡</string>
+    <string name="np_dc_policy_title">卡 %1$d 策略</string>
+    <string name="np_dc_rule_empty">还没有规则，点下面的按钮添加一条</string>
+    <string name="np_dc_rule_add">添加规则</string>
+    <string name="np_dc_rule_edit">编辑规则</string>
+    <string name="np_dc_rule_name">规则名称</string>
+    <string name="np_dc_rule_ssid">Wi-Fi 名称（SSID）</string>
+    <string name="np_dc_rule_bssid">Wi-Fi 地址（BSSID，可空）</string>
+    <string name="np_dc_rule_target">目标数据卡</string>
+    <string name="np_dc_rule_priority">优先级（大者优先）</string>
+    <string name="np_dc_rule_cooldown">冷却时间（秒）</string>
+    <string name="np_dc_rule_revert">离开 Wi-Fi 后切回</string>
+    <string name="np_dc_rule_delete">删除</string>
+    <string name="np_dc_rule_any_wifi">任意 Wi-Fi</string>
+    <string name="np_dc_any_sim">任意卡</string>
+    <string name="np_dc_sim_title">卡 %1$d · %2$s</string>
+    <string name="np_dc_no_sim">未检测到 SIM 卡</string>
+    <string name="np_dc_no_channel">无可用特权通道，无法修改数据卡</string>
+    <string name="np_dc_switch_ok">已切换数据卡</string>
+    <string name="np_dc_switch_fail">切换失败，请检查特权通道</string>
+</resources>

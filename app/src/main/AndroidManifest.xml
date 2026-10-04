@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 「重启应用」对话框需要按包名解析应用图标 / 名称，目标在运行期才由用户输入，
+         无法用 <queries> 预先声明，故保留该权限。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
+    <!-- NetPilot 功能权限 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_BASIC_PHONE_STATE" />
+    <!-- Android 13+ 前台服务通知需要用户授权，否则常驻通知不显示。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Shizuku 兜底通道：绑定其 UserService 需要此项（未安装 Shizuku 时安装期自动忽略）。 -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- 位置权限：蜂窝信号强度（RSRP / SINR）在 Android 10+ 被归类为位置相关数据，
+         缺少它 SINR 会长期显示「未知」，假 5G 判定也就少了一个维度。 -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
+    <!-- 保活：Doze 模式下唤醒心跳闹钟需要持锁。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- 首次启动引导用户把本应用加入「电池优化白名单」；不使用该权限则只能跳设置页手动找。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:name=".TemplateApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.NetPilot">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.NetPilot"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- 桌面图标通过别名暴露：隐藏桌面图标时仅禁用该别名，MainActivity 仍可启动。 -->
+        <activity-alias
+            android:name=".LauncherAlias"
+            android:targetActivity=".MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity
+            android:name=".LicenseActivity"
+            android:exported="false"
+            android:label="@string/third_party_licenses_title"
+            android:theme="@style/Theme.NetPilot" />
+        <activity
+            android:name=".ui.screen.features.FeatureSubPageActivity"
+            android:exported="false"
+            android:theme="@style/Theme.NetPilot" />
+        <activity
+            android:name=".ui.screen.about.AboutActivity"
+            android:exported="false"
+            android:theme="@style/Theme.NetPilot" />
+        <activity
+            android:name=".ui.screen.datacard.DataCardActivity"
+            android:exported="false"
+            android:theme="@style/Theme.NetPilot" />
+
+        <!-- ===== 监控前台服务 =====
+             specialUse 需要在 service 内用 <property> 说明用途，否则 Google Play 会拒审；
+             此应用不上架，但保留说明以便系统审查时能解释。 -->
+        <service
+            android:name=".core.monitor.MonitorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="保持网络质量监控与假 5G 自动降级策略在后台持续运行" />
+        </service>
+
+        <!-- ===== 开机自启 ===== -->
+        <receiver
+            android:name=".core.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== 保活心跳 / 被清理后重启 =====
+             心跳与重启走 AlarmManager 广播，不用前台服务常驻第二份通知。 -->
+        <receiver
+            android:name=".core.keepalive.KeepAliveReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.katiusu.netpilot.action.KEEPALIVE_HEARTBEAT" />
+                <action android:name="com.katiusu.netpilot.action.KEEPALIVE_RESTART" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== Shizuku 兜底通道的 Binder 提供者 =====
+             Shizuku 管理器通过该 provider 找到应用并授予权限；缺少它 checkSelfPermission 永远失败。
+             注意：Shizuku 的 UserService 本身不需要在 manifest 注册（由 Shizuku 反射实例化）。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- ===== NetPilot：网络模式循环磁贴 ===== -->
+        <service
+            android:name=".core.qs.NetworkModeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_np_notification"
+            android:label="@string/qs_network_mode_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== NetPilot：自动降级开关磁贴 ===== -->
+        <service
+            android:name=".core.qs.DowngradeTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_np_notification"
+            android:label="@string/qs_downgrade_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- ===== Tasker 广播命令接收器 ===== -->
+        <receiver
+            android:name=".core.tasker.TaskerCommandReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.katiusu.netpilot.action.SET_NETWORK_MODE" />
+                <action android:name="com.katiusu.netpilot.action.SET_PRESET" />
+                <action android:name="com.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE" />
+                <action android:name="com.katiusu.netpilot.action.SET_AUTO_DOWNGRADE" />
+                <action android:name="com.katiusu.netpilot.action.SET_DATA_SIM" />
+                <action android:name="com.katiusu.netpilot.action.SWITCH_DATA_SIM" />
+                <action android:name="com.katiusu.netpilot.action.LOCK_LTE" />
+                <action android:name="com.katiusu.netpilot.action.SAMPLE_NOW" />
+                <action android:name="com.katiusu.netpilot.action.GET_STATUS" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== Locale / Tasker 插件：执行与条件 =====
+             发送方 Tasker 是另一个 UID，exported 必须为 true，否则 Android 12+ 收不到；
+             不能设 android:permission（Tasker 拿不到本应用的权限，设了插件即失效）。 -->
+        <receiver
+            android:name=".core.tasker.LocaleFireReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
+                <action android:name="com.twofortyfouram.locale.intent.action.QUERY_CONDITION" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ===== Locale / Tasker 插件：配置界面 ===== -->
+        <activity
+            android:name=".tasker.TaskerEditActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.NetPilot">
+            <intent-filter>
+                <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
+
+                <category android:name="com.twofortyfouram.locale.intent.category.SETTING" />
+                <category android:name="com.twofortyfouram.locale.intent.category.CONDITION" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  English strings for the monitor page (monitor_ prefix) and the log page (log_ prefix).
+
+  monitor_channel_name / monitor_channel_desc / monitor_notification_title /
+  action_stop are deliberately not defined here: those four keys are owned by
+  strings.xml, since defining them in both places would break resource merging
+  with a duplicate-resource error.
+-->
+<resources>
+
+    <!-- ===================== Monitor page ===================== -->
+    <string name="monitor_page_title">Monitor</string>
+
+    <!-- 1. Master switch -->
+    <string name="monitor_section_switch">Monitoring switch</string>
+    <string name="monitor_switch_title">Automatic network quality downgrade</string>
+    <string name="monitor_switch_summary_on">On: after fake full bars or a weak signal is detected, the network is downgraded to the configured mode and left alone during the cooldown</string>
+    <string name="monitor_switch_summary_off">Off: results are only recorded, no network mode is ever changed</string>
+
+    <!-- 1b. Loop and state machine -->
+    <string name="monitor_loop_title">Monitor loop</string>
+    <string name="monitor_loop_on">Running (foreground service)</string>
+    <string name="monitor_loop_off">Stopped</string>
+    <string name="monitor_phase_title">State machine phase</string>
+    <string name="monitor_phase_off">Off</string>
+    <string name="monitor_phase_watching">Monitoring normally</string>
+    <string name="monitor_phase_cooldown">Downgraded, in cooldown</string>
+    <string name="monitor_phase_recovering">Cooldown over, counting healthy runs</string>
+    <string name="monitor_phase_rollback">No network after downgrade, rolling back</string>
+    <string name="monitor_last_tick_title">Last sample</string>
+    <string name="monitor_last_tick_never">Not sampled yet</string>
+    <string name="monitor_last_tick_value">%1$s (%2$d s ago)</string>
+    <string name="monitor_last_tick_just_now">%1$s (just now)</string>
+    <string name="monitor_cooldown_title">Cooldown remaining</string>
+    <string name="monitor_cooldown_none">Not in cooldown</string>
+    <string name="monitor_recovery_title">Restore progress</string>
+    <string name="monitor_recovery_value">%1$d / %2$d runs</string>
+
+    <!-- 2. Live signal -->
+    <string name="monitor_section_signal">Live signal</string>
+    <string name="monitor_signal_network">Network mode</string>
+    <string name="monitor_signal_raw">Raw network mode value</string>
+    <string name="monitor_signal_raw_value">%1$d (RIL constant, 0..33)</string>
+    <string name="monitor_signal_carrier">Carrier</string>
+    <string name="monitor_signal_rsrp">RSRP (Reference Signal Received Power)</string>
+    <string name="monitor_signal_sinr">SINR (Signal to Interference plus Noise Ratio)</string>
+    <string name="monitor_signal_ping">Ping (%1$s)</string>
+    <string name="monitor_signal_source">Sample source</string>
+    <string name="monitor_signal_snapshot_time">Snapshot time</string>
+    <string name="monitor_value_unknown">Unknown</string>
+    <string name="monitor_value_none">—</string>
+    <string name="monitor_value_no_response">No response</string>
+    <string name="monitor_value_dbm">%1$d dBm</string>
+    <string name="monitor_value_db">%1$d dB</string>
+    <string name="monitor_value_ping_failed">Failed (%1$s)</string>
+    <string name="monitor_value_ms">%1$d ms</string>
+    <string name="monitor_value_seconds">%1$d s</string>
+    <string name="monitor_value_minutes">%1$d min %2$d s</string>
+    <string name="monitor_value_hours">%1$d h %2$d min</string>
+    <string name="monitor_value_count">%1$d times</string>
+    <string name="monitor_value_bool_on">Yes</string>
+    <string name="monitor_value_bool_off">No</string>
+    <string name="monitor_source_cellular">Cellular (slot %1$d, subId %2$d)</string>
+    <string name="monitor_source_wifi">Wi-Fi%1$s</string>
+    <string name="monitor_source_wifi_ssid"> (%1$s)</string>
+    <string name="monitor_source_none">Nothing available to sample</string>
+
+    <!-- 3. Network quality check -->
+    <string name="monitor_section_judge">Network quality check</string>
+    <string name="monitor_judge_none">No check has run yet. Tap Sample now below to run one</string>
+    <string name="monitor_judge_fake">Marked as poor network quality</string>
+    <string name="monitor_judge_real">Network quality is good</string>
+    <string name="monitor_judge_strong_ok">Strong signal with good quality (no downgrade rule matched)</string>
+    <string name="monitor_judge_weak">Signal is not strong enough for the fake full bars check (a weak signal rule may still match)</string>
+    <string name="monitor_judge_reason">Downgrade cause</string>
+    <string name="monitor_judge_reasons">Matched criteria</string>
+    <string name="monitor_judge_detail">Decision details</string>
+
+    <!-- 4. Threshold overview (read-only; values come from the live DowngradeThresholds) -->
+    <string name="monitor_section_thresholds">Current thresholds (read-only)</string>
+    <string name="monitor_threshold_hint">To change these values, go to the Automatic network quality downgrade card on the Features page. This section only shows the values the kernel is actually using right now</string>
+    <string name="monitor_threshold_rsrp">RSRP strong signal threshold</string>
+    <string name="monitor_threshold_rsrp_summary">In dBm; RSRP must be strictly above this value to count as a strong signal, which is required for the fake full bars rule</string>
+    <string name="monitor_threshold_sinr">Minimum SINR</string>
+    <string name="monitor_threshold_sinr_summary">In dB; while the signal is strong, an SINR below this value counts as poor quality. If SINR cannot be read, this rule is skipped and Ping is used instead</string>
+    <string name="monitor_threshold_ping">Maximum Ping</string>
+    <string name="monitor_threshold_ping_summary">In ms; while the signal is strong, a Ping above this value counts as poor quality</string>
+    <string name="monitor_threshold_weak_signal">Weak signal also triggers a downgrade</string>
+    <string name="monitor_threshold_weak_signal_summary">Off: a weak signal is only recorded and the network mode is left untouched. On: when RSRP drops below the weak signal threshold below, 5G is switched to the more stable 4G</string>
+    <string name="monitor_threshold_weak_rsrp">RSRP weak signal threshold</string>
+    <string name="monitor_threshold_weak_rsrp_summary">In dBm; an RSRP below this value matches the weak signal rule, regardless of Ping or SINR</string>
+    <string name="monitor_threshold_cooldown">Cooldown after downgrade</string>
+    <string name="monitor_threshold_cooldown_summary">In s; no restore is attempted during this period after a downgrade, so the device does not jump straight back from 4G to 5G</string>
+    <string name="monitor_threshold_recovery">Healthy runs needed to restore</string>
+    <string name="monitor_threshold_recovery_summary">In runs; after the cooldown ends, this many consecutive healthy runs are required before restoring, since a single healthy run may just be a blip</string>
+    <string name="monitor_threshold_rollback">No-network rollback threshold</string>
+    <string name="monitor_threshold_rollback_summary">In runs; while downgraded, this many consecutive runs with no network or no response trigger a full rollback to the complete network mode</string>
+    <string name="monitor_threshold_interval">Regular sampling interval</string>
+    <string name="monitor_threshold_interval_summary">In s; the foreground service samples at this interval (temporarily sped up to 5 s while the Monitor page is open)</string>
+    <string name="monitor_threshold_downgrade">Downgrade target network mode</string>
+    <string name="monitor_threshold_downgrade_summary">Network mode written when a rule matches; the default 9 = LTE/GSM/WCDMA, which keeps a 3G fallback</string>
+    <string name="monitor_threshold_lock_lte">Network mode used when locking LTE</string>
+    <string name="monitor_threshold_lock_lte_summary">Network mode written back on restore and rollback; Follow carrier = automatic 5G derived from the SIM MCC/MNC</string>
+    <string name="monitor_threshold_ping_fail">Total Ping failure also counts as poor quality</string>
+    <string name="monitor_threshold_ping_fail_summary">Off: a total Ping failure is only logged, with no downgrade. On: a total Ping failure is treated the same as exceeding the Ping limit and also triggers a downgrade</string>
+    <string name="monitor_threshold_endc">Also disable EN-DC when downgrading</string>
+    <string name="monitor_threshold_endc_summary">On: endc_capability is written on both downgrade and restore; on some devices NSA dual connectivity must be disabled for the device to actually fall back to 4G</string>
+
+    <!-- 4. Manual actions -->
+    <string name="monitor_section_actions">Manual actions</string>
+    <string name="monitor_action_sample">Sample now</string>
+    <string name="monitor_action_sample_summary">Run a full probe right now (including TCP Ping) and refresh all the data above</string>
+    <string name="monitor_action_reset">Reset downgrade state machine</string>
+    <string name="monitor_action_reset_summary">Clears only the cooldown and recovery counters; the current network mode is left unchanged</string>
+    <string name="monitor_action_refresh_channel">Re-detect privileged channel</string>
+    <string name="monitor_action_refresh_channel_summary">Clear the cache and check again whether Root or Shizuku is available</string>
+    <string name="monitor_action_shizuku">Request Shizuku permission</string>
+    <string name="monitor_action_shizuku_summary">Shows the Shizuku permission prompt (the Shizuku service must already be running)</string>
+    <string name="monitor_busy">Working…</string>
+
+    <!-- 5/8. Privileged channel -->
+    <string name="monitor_section_channel">Privileged channel</string>
+    <string name="monitor_channel_current">Preferred channel</string>
+    <string name="monitor_channel_none">None (no Root and not connected to Shizuku)</string>
+    <string name="monitor_channel_detail">Channel availability</string>
+    <string name="monitor_channel_detail_empty">Detecting…</string>
+    <string name="monitor_channel_shortcut">View all channel status</string>
+
+    <!-- Action feedback -->
+    <string name="monitor_toast_sampled">Sample complete</string>
+    <string name="monitor_toast_sampled_fail">Sampling failed, check the Log page</string>
+    <string name="monitor_toast_reset">Downgrade state machine reset</string>
+    <string name="monitor_toast_channel">Privileged channel: %1$s</string>
+    <string name="monitor_toast_shizuku_ok">Shizuku permission granted</string>
+    <string name="monitor_toast_shizuku_fail">Permission not granted; make sure Shizuku is running and has authorized NetPilot</string>
+
+    <!-- ===================== Log page ===================== -->
+    <string name="log_page_title">Log</string>
+    <string name="log_filter_all">All</string>
+    <string name="log_filter_warn">Warning and above</string>
+    <string name="log_filter_error">Errors only</string>
+    <string name="log_empty">No logs yet</string>
+    <string name="log_empty_filtered">No logs match the current filter</string>
+    <string name="log_count">%1$d entries (at most 400 are kept in memory; older ones are dropped)</string>
+    <string name="log_action_clear">Clear</string>
+    <string name="log_action_copy">Copy</string>
+    <string name="log_action_share">Share</string>
+    <string name="log_clear_dialog_title">Clear all logs?</string>
+    <string name="log_clear_dialog_summary">This cannot be undone. If monitoring is still running, new logs will keep coming in afterwards.</string>
+    <string name="log_toast_copied">Copied %1$d log entries to the clipboard</string>
+    <string name="log_toast_copy_empty">Nothing to copy</string>
+    <string name="log_toast_cleared">Logs cleared</string>
+    <string name="log_share_title">NetPilot runtime logs</string>
+
+</resources>

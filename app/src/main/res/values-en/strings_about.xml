@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English (en) translations of the Chinese strings in values/strings_about.xml. -->
+<resources>
+    <string name="ab_github_repo">GitHub repository</string>
+    <string name="ab_github_repo_summary">github.com/katiusu/NetPilot</string>
+    <string name="ab_open_failed">No app can open this link</string>
+    <string name="ab_license_summary">Opens the full GPLv3 text in your browser. This app is released under GPLv3: you are free to use, modify and redistribute it, but modified versions must publish their source under GPLv3 as well.</string>
+    <string name="ab_dependencies_summary">Lists the open-source libraries used by this app together with their full license texts.</string>
+</resources>

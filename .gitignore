@@ -1,0 +1,26 @@
+# Gradle / 构建产物
+.gradle
+.kotlin
+/build
+/app/build/
+/dist/
+*.apk
+*.aab
+
+# 本地环境
+local.properties
+*.log
+/captures
+
+# IDE
+/.idea/
+*.iml
+.DS_Store
+
+# 签名密钥（永远不要提交）
+/release.keystore
+*.jks
+*.keystore
+
+# 第三方参考源码（仅本地对照用，不随仓库分发）
+/_ref/

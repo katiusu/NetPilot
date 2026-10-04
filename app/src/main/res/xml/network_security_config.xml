@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  明文 HTTP 放行配置 —— 这是「Ping 永远是未知」的根因修复。
+
+  为什么要放行：延迟探测（SignalReader.httpProbe）打的是各厂商的
+  generate_204 联网校验地址，公网上这些地址只提供 http://。本项目 targetSdk=34，
+  Android 9+ 默认禁止明文流量，不放行时 HttpURLConnection 会直接抛
+  java.net.UnknownServiceException: CLEARTEXT communication to <host> not permitted
+  by network security policy —— 四个候选目标（华为 / Google / 百度 / vivo）全部失败，
+  快照里 pingMs 恒为 null，界面只能显示「未知」，网络质量降级也就少了最关键的一维。
+
+  为什么不直接改成 https://：TLS 握手要多花一个 RTT（常见 50–150 ms），而 Ping 的
+  判定阈值默认只有 200 ms，加密开销会直接污染「假满格」的判定结果。
+
+  为什么用 base-config 而不是列域名白名单：Ping 目标在界面上是用户可改的
+  （DowngradeThresholds.pingTarget），写死域名会让用户改成任何别的地址后静默失效。
+  本应用除了这个延迟探测之外不做任何其它网络访问，全量放行的实际暴露面为零。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

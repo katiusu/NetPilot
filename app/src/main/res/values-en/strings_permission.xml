@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English (en) translations of the Chinese strings in values/strings_permission.xml. -->
+<resources>
+    <string name="perm_rationale_title">Permissions needed first</string>
+    <string name="perm_rationale_summary">The three permissions below determine whether signal readings are accurate and whether background monitoring can stay alive. Here is what each one is for:</string>
+    <string name="perm_item_phone_state_name">Phone (read phone state)</string>
+    <string name="perm_item_phone_state_reason">Reads signal strength and network mode, and identifies the subId of each SIM. Without it RSRP shows as unknown and the SIM card list may be empty.</string>
+    <string name="perm_item_location_name">Location (precise location)</string>
+    <string name="perm_item_location_reason">Since Android 10, cellular signal strength (including SINR) counts as location-related data. Without it SINR always shows as unknown, and fake full bars detection loses one dimension.</string>
+    <string name="perm_item_notification_name">Notifications</string>
+    <string name="perm_item_notification_reason">Monitoring runs as a foreground service. Without notification permission, Android 13 and later refuses to keep a foreground service resident, and the system kills background monitoring.</string>
+    <string name="perm_action_continue">Continue</string>
+    <string name="perm_action_later">Later</string>
+    <string name="perm_action_go_settings">Open settings</string>
+    <string name="perm_denied_title">Permission denied</string>
+    <string name="perm_denied_summary">The permissions below were not granted, so the related features are limited. Turn them on in system settings and they take effect as soon as you return to the app:</string>
+    <string name="perm_first_launch_title">Auto-start and battery settings</string>
+    <string name="perm_first_launch_summary">The system restricts background apps by default. Unless you enable the two options below, monitoring may stop working:</string>
+    <string name="perm_first_launch_autostart_name">Allow auto-start</string>
+    <string name="perm_first_launch_autostart_reason">The system blocks auto-start by default. If you leave it off, monitoring and auto-downgrade will not resume after you restart the phone.</string>
+    <string name="perm_first_launch_battery_name">Set battery optimization to Unrestricted</string>
+    <string name="perm_first_launch_battery_reason">Otherwise the system freezes the app when the screen goes off: network quality monitoring stops, and after a switch back to 4G the original network mode may not be restored.</string>
+    <string name="perm_first_launch_hint">Open settings first opens the auto-start management page. On device models that do not have that page, it opens the app info page instead; enable both options there manually.</string>
+    <string name="perm_battery_ignore_action">Request battery optimization exemption (in one step)</string>
+</resources>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  数据卡页文案（本子代理写区）。
+  key 统一 dc_ 前缀，和别的开发者新加的字符串不会撞。
+  注意：本文件只放 dc_ 开头的键；np_dc_* 在 strings_np.xml 里（别人的写区）。
+-->
+<resources>
+    <!-- 分区标题 -->
+    <string name="dc_section_policy_rules">卡片策略</string>
+    <string name="dc_section_rule_library">Wi-Fi 规则库</string>
+
+    <!-- 每张卡一张 Card：总开关 + 模式 + 自定义子项 -->
+    <string name="dc_policy_switch_title">启用卡 %1$d 策略（%2$s）</string>
+    <string name="dc_policy_switch_summary">关闭后这张卡所有策略都不生效：不做网络质量降级、不因 Wi-Fi 降 4G，Wi-Fi 规则也不会把数据切到这张卡</string>
+
+    <string name="dc_custom_title">自定义：每项都有独立开关，打开才执行</string>
+    <string name="dc_custom_network_quality">网络质量自动降级</string>
+    <string name="dc_custom_network_quality_desc">触发：默认数据卡信号满格却网络差（Ping 超时、SINR 过低），或信号过差。动作：自动降到 4G。恢复：连续多轮探测正常后写回原制式。</string>
+    <string name="dc_custom_wifi_downgrade">连 Wi-Fi 时降为 4G</string>
+    <string name="dc_custom_wifi_downgrade_desc">触发：连上任意 Wi-Fi。动作：立刻降到 4G（默认 4G/3G/2G 自动）省电。恢复：断开 Wi-Fi 或关掉本开关后，写回连上前的制式。</string>
+
+    <!-- 规则说明（用户反馈：规则没说清楚管理什么、什么时候切回去、优先级怎么比） -->
+    <string name="dc_intro_title">规则管理的是什么</string>
+    <string name="dc_intro_body">规则管的是「默认数据卡」：连上规则里的 Wi-Fi 时，把默认卡切成规则指定的卡；没指定目标就只记命中、不切卡。离开后是否切回，看「离开 Wi-Fi 后切回」。</string>
+    <string name="dc_intro_match">匹配：填了 BSSID 就按 BSSID 精确匹配；否则按 SSID 忽略大小写匹配；都留空则匹配任意 Wi-Fi。多条命中时，优先级数字大的先执行，相同则取列表靠前的。</string>
+    <string name="dc_intro_cooldown">冷却时间：一条规则刚切过，冷却期内不会再触发，避免站在 Wi-Fi 边缘来回横跳。冷却只限重复触发，不影响「离开后切回」。</string>
+
+    <!-- 规则库 -->
+    <string name="dc_rule_library_summary">总开关：关闭后所有 Wi-Fi 规则都不匹配，不切卡也不改制式</string>
+    <string name="dc_rule_add_custom">新建规则</string>
+    <string name="dc_rule_summary">%1$s · 优先级 %2$d · 冷却 %3$d 秒</string>
+    <string name="dc_rule_summary_revert"> · 离开后切回原卡</string>
+    <string name="dc_rule_target_sim">命中后切到：卡 %1$d</string>
+    <string name="dc_rule_target_none">命中后切到：不切卡（只记录一次命中）</string>
+    <string name="dc_rule_mode_set">同时把目标卡制式设为：%1$s</string>
+    <string name="dc_rule_mode_keep">不改目标卡制式</string>
+
+    <!-- 规则编辑弹窗：分组与逐项说明 -->
+    <string name="dc_editor_group_match">匹配条件</string>
+    <string name="dc_editor_group_action">命中后做什么</string>
+    <string name="dc_editor_match_hint">SSID 和 BSSID 都留空 = 匹配任意 Wi-Fi，通常配低优先级当兜底。填了 BSSID 就按 BSSID 精确匹配，同一个 SSID 有多个 AP 时能认准其中一个。</string>
+    <string name="dc_editor_target_hint">选「任意卡」= 不切卡，命中后只记一次，下面的制式设置也不生效。选某张卡 = 连上该 Wi-Fi 时把默认卡切到它；若那张卡的策略总开关关着，这条规则不执行。</string>
+    <string name="dc_editor_priority_hint">优先级数字越大越先选中。多条同时命中时只执行最高的那条；填 0 也行，数字相同取列表靠前的。</string>
+    <string name="dc_editor_cooldown_hint">冷却时间（秒）：切换过一次后，这么多秒内不再重复触发，避免在 Wi-Fi 边缘反复切卡。填 0 表示每次都允许，最大 3600 秒。</string>
+    <string name="dc_editor_revert_hint">打开：离开这条规则匹配的 Wi-Fi 后，自动把默认卡切回原卡。关闭：离开后保持当前这张卡。</string>
+</resources>

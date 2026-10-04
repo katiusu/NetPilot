@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  后台服务（保活 / 总开关）与系统兼容性的文案，key 统一 ka_ 前缀。
+
+  分成独立文件的原因和 strings_monitor.xml 一样：这块功能由一个开发者独立负责，
+  单独成文件可以避免和其他分支并发改 strings.xml 时产生冲突。
+
+  写作约定：开关的 summary 只写「改了什么 / 默认值 / 最要紧的后果」，长解释放 *_hint
+  脚注（脚注一定会换行，summary 有被截断的风险）。系统兼容性里的每一项都必须是真测出来
+  的值，测不到就显示「未知」——「未知」表示没测到，不表示没问题。
+-->
+<resources>
+
+    <!-- ===================== 后台服务总开关 ===================== -->
+    <string name="ka_section_services">后台服务</string>
+    <string name="ka_gate_title">启用所有后台服务</string>
+    <string name="ka_gate_summary">默认开启，是后台行为的总闸。关闭会停掉监控前台服务、心跳、被杀重启、开机自启，Tasker 和磁贴触发的操作也失效。</string>
+    <string name="ka_gate_hint">开启：登记心跳、开机自启、被杀重启，Tasker 与磁贴生效；监控需自动降级开着才拉起。关闭：监控与心跳即停，不再自启重启。</string>
+    <string name="ka_status_title">运行状态</string>
+    <string name="ka_status_summary">监控服务：%1$s · 保活心跳：%2$s</string>
+    <string name="ka_status_running">运行中</string>
+    <string name="ka_status_stopped">已停止</string>
+    <string name="ka_heartbeat_on">已注册</string>
+    <string name="ka_heartbeat_off">未注册</string>
+    <string name="ka_status_hint">心跳走系统闹钟，息屏或省电时可能迟到几分钟。显示「已停止」时点上面开关重新拉起；但通知栏点过「停止」后不会再自动拉起。</string>
+
+    <!-- ===================== 系统兼容性 ===================== -->
+    <string name="ka_section_compat">系统兼容性</string>
+    <string name="ka_verify_title">写入后回读校验</string>
+    <string name="ka_verify_summary">默认开启。开启：写完 settings 立刻读回比对，不一致算失败并写日志。关闭：写一次就当成功，不再比对。</string>
+    <string name="ka_verify_hint">只在「写入生效却误报失败」时才关：部分厂商 ROM 回读不准，会把成功判成失败。关掉后只能自己到系统设置核对，失败不再进日志。</string>
+
+    <string name="ka_compat_vendor">厂商</string>
+    <string name="ka_compat_model">型号</string>
+    <string name="ka_compat_android">Android 版本</string>
+    <string name="ka_compat_miui">OS 版本</string>
+
+    <string name="ka_compat_channel">当前特权通道</string>
+    <string name="ka_compat_channel_none">未检测到</string>
+    <string name="ka_compat_channel_reason">通道探测结果：%1$s</string>
+
+    <string name="ka_compat_write">写入方式</string>
+    <string name="ka_compat_write_cli">app_process → PrivilegedCli setmode %1$d（经 su 执行）</string>
+    <string name="ka_compat_write_settings">su -c \"settings put global %1$s &lt;模式值&gt;\"</string>
+    <string name="ka_compat_write_shizuku">binder → IShizukuController.setNetworkMode(%1$d)</string>
+    <string name="ka_compat_write_command">当前配置下真正会执行的命令：%1$s</string>
+
+    <string name="ka_compat_read">读取探测</string>
+    <string name="ka_compat_read_ok">成功，读回 %1$s</string>
+    <string name="ka_compat_read_failed">失败：%1$s</string>
+    <string name="ka_compat_read_no_value">没有读回任何值（通道超时或被拒绝）</string>
+    <string name="ka_compat_read_skipped">未执行：没有可用的特权通道</string>
+    <string name="ka_compat_read_no_target">未执行：没能确定写入目标（读不到默认数据卡）</string>
+
+    <string name="ka_compat_verify_state">回读校验</string>
+    <string name="ka_compat_verify_on">开启</string>
+    <string name="ka_compat_verify_off">关闭</string>
+
+    <string name="ka_compat_probing">检测中…</string>
+    <string name="ka_compat_unknown">未知</string>
+    <string name="ka_compat_unknown_note">这些值每次进本页都会重新探测。「未知」表示真没测出来（属性读不到、通道没授权或超时），不代表没问题。</string>
+    <string name="ka_compat_conclusion">本应用不对厂商做分支处理；某机型写入若被系统忽略，回读校验会标为失败并写进日志页，可查可定位。</string>
+
+</resources>

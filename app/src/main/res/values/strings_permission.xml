@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  权限引导与首启引导的文案，key 前缀统一为 perm_。
+
+  「取消」「确定」这种通用按钮复用 strings.xml 里的 action_cancel / action_confirm，
+  不在这里重复定义，避免同一个词出现两份译文。
+-->
+<resources>
+    <!-- 运行时权限：逐项列出权限名 + 为什么需要（用户要求每个权限都注明原因） -->
+    <string name="perm_rationale_title">需要先授予权限</string>
+    <string name="perm_rationale_summary">下面三项权限决定了信号显示是否准确、后台监控能否常驻，逐项说明用途：</string>
+
+    <string name="perm_item_phone_state_name">电话（读取手机状态）</string>
+    <string name="perm_item_phone_state_reason">读取信号强度与网络制式、识别双卡的 subId。没有它 RSRP 会显示「未知」，SIM 卡列表可能是空的。</string>
+
+    <string name="perm_item_location_name">位置信息（精确位置）</string>
+    <string name="perm_item_location_reason">Android 10 起把蜂窝信号强度（含 SINR）归类为位置相关数据。没有它 SINR 会一直显示「未知」，假满格判定就少一个维度。</string>
+
+    <string name="perm_item_notification_name">通知</string>
+    <string name="perm_item_notification_reason">监控靠前台服务运行。没有通知权限时 Android 13 及以上会直接拒绝让前台服务常驻，后台监控会被系统杀掉。</string>
+
+    <string name="perm_action_continue">继续授权</string>
+    <string name="perm_action_later">稍后</string>
+    <string name="perm_action_go_settings">去设置</string>
+
+    <!-- 权限被拒后的说明 -->
+    <string name="perm_denied_title">权限被拒绝</string>
+    <string name="perm_denied_summary">以下权限没有授予，对应功能会受限；在系统设置里打开后回到应用即刻生效：</string>
+
+    <!-- 首次打开：自启动 + 省电策略（用户要求用通俗的话说明原因） -->
+    <string name="perm_first_launch_title">开机自启与省电设置</string>
+    <string name="perm_first_launch_summary">系统默认会限制后台应用，下面两项不打开的话监控可能失效：</string>
+
+    <string name="perm_first_launch_autostart_name">允许自启动</string>
+    <string name="perm_first_launch_autostart_reason">系统默认禁止应用开机自启，不开的话重启手机后监控与自动降级不会恢复。</string>
+
+    <string name="perm_first_launch_battery_name">省电策略改为「无限制」</string>
+    <string name="perm_first_launch_battery_reason">否则系统会在息屏后冻结应用，网络质量监控会停止、切回 4G 后可能无法恢复原制式。</string>
+
+    <string name="perm_first_launch_hint">点「去设置」会先打开自启动管理页；机型没有这个页面时打开应用程式详情页，两项都在里面手动打开。</string>
+
+    <string name="perm_battery_ignore_action">申请忽略电池优化（一步到位）</string>
+</resources>
