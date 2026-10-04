@@ -1,12 +1,13 @@
 # NetPilot 测试指南
 
-产物：`NetPilot-1.0.1-2026100401-debug.apk`
-（`versionName = 1.0.1`、`versionCode = 2026100401`，debug 签名，`minSdk 34 / targetSdk 34`，包名 `com.katiusu.netpilot`）。
+产物：`NetPilot-1.1.0-2026100500-release.apk`（签名版）与 `NetPilot-1.1.0-2026100500-debug.apk`
+（`versionName = 1.1.0`、`versionCode = 2026100500`，`minSdk 34 / targetSdk 34`，包名 `com.katiusu.netpilot`。
+release 与 debug 是两把签名，不能互相覆盖安装）。
 
 APK 只交付、不安装。要自己装的话：
 
 ```bash
-adb install -r NetPilot-1.0.1-2026100401-debug.apk
+adb install -r NetPilot-1.1.0-2026100500-release.apk
 ```
 
 ---
@@ -86,7 +87,7 @@ adb install -r NetPilot-1.0.1-2026100401-debug.apk
 
 1. 功能页 → 确认「启用网络质量降级」总开关是开的（**默认开启**；若之前关过就打开）。
 2. 把参数改成「一定判假」的组合：**RSRP 强信号阈值 → `-140 dBm`**、**Ping 阈值 → `1 ms`**。
-3. 等一个检测周期（**检测间隔**默认 120 秒，可调到 15 秒加速）。
+3. 等一个检测周期（**检测间隔**默认 60 秒，可调到 15 秒加速）。
 4. 期望结果：监控页出现降级、写回 `preferred_network_mode` = 9、日志出现「检出网络质量差（假满格）」、
    `adb logcat -s NetPilot:V` 同步可见。
 5. 验证「恢复」：把 RSRP 强信号阈值调回 `-50 dBm` → 连续 3 个周期后恢复。
@@ -313,7 +314,7 @@ Locale 插件：Tasker → 任务 → 插件 → NetPilot。完整 extra 键表�
 
 ## 12. 关于页
 
-- 版本行显示 `1.0.1 (2026100401)`（`versionName` + `longVersionCode`）。
+- 版本行显示 `1.1.0 (2026100500)`（`versionName` + `longVersionCode`）。
 - **GitHub 仓库**（<https://github.com/katiusu/NetPilot>）是**单独一张卡片**，在「许可证 / 开源依赖」
   那张卡**上方**，两者不混在一起；下方那张卡放许可证与依赖两个入口。
 - 三个入口点击都应正常打开浏览器（没有可用浏览器时弹 Toast，**不能崩页**）。
@@ -401,3 +402,33 @@ python3 -c "import zipfile;n=zipfile.ZipFile('app/build/outputs/apk/release/app-
    - **识别方法**：产物条目数应为 152 且含 manifest/arsc；若只有 85 个条目、没有 res，就是坏包，不要发布。
      `_build.sh` 现在会在构建后自动做这项自检（`APK_CHECK:` 行）。
 2. **Gradle 偶发 `FileHasher … java.io.IOException: Operation not permitted`。** 容器里文件监视（inotify）在 sdcardfs 上不稳定，已设 `org.gradle.vfs.watch=false`；若仍出现，先杀干净残留的 `GradleDaemon` 进程再重试。
+
+## 15. 来源与许可（clean-room 重写 + Apache-2.0）
+
+### 15.1 为什么改许可
+
+1.0.1 及更早的版本里，`core/priv/TelephonyReflection.kt` 与上游
+[NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch)（GPL-3.0）几乎逐字相同：
+token 相似度 0.761、上游 **98.2%** 的 token 落在长度 ≥12 的公共串里。因此那些版本整体按 GPL-3.0 分发。
+该文件已 clean-room 重写（相似度降到 0.291、最长公共串 25 token，且剩下的是
+`HiddenApiBypass` 豁免前缀清单这类事实信息），另外几个被列过的文件实测本就不构成衍生
+（`ControlManager.kt` 0.074、`NetworkMode.kt` 0.239），于是本项目改为 **Apache-2.0**。
+
+> **GPL-3.0 不可撤回**：已经分发出去的 1.0.1 APK（GitHub Releases）仍然按 GPL-3.0 约束，
+> 只有本次改动之后的版本才是 Apache-2.0。逐文件数字与逐条结论写在 `docs/PROVENANCE.md`。
+
+### 15.2 怎么核查（可复现）
+
+```bash
+git clone --depth 1 https://github.com/aunchagaonkar/NetworkSwitch _ref/networkswitch
+python3 tools/check_provenance.py
+```
+
+期望每行 verdict 是 `OK`，或是已在 `docs/PROVENANCE.md` 写明结论的 `REVIEW (reviewed: …)`。
+出现 `UNREVIEWED overlap above threshold` 时退出码 1 —— 表示有表达层重合需要重写，或需要在文档里补结论。
+
+### 15.3 界面上该看到什么
+
+- 「关于」页许可证行：摘要为「在浏览器打开 Apache-2.0 协议原文。本应用以 Apache-2.0 发布……需保留版权与许可声明」，
+  点进去是 Apache-2.0 原文（`https://www.apache.org/licenses/LICENSE-2.0.txt`）。
+- 「开源许可」页：NetworkSwitch 一行写「GPL-3.0（上游）· 仅参考行为与常量表，代码为独立实现」。

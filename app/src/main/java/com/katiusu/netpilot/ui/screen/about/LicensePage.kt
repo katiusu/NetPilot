@@ -168,7 +168,7 @@ private val licenseSections: List<LicenseSection> = listOf(
             LibraryInfo(
                 "NetworkSwitch",
                 "-",
-                "GPL-3.0 · 仅参考制式表设计",
+                "GPL-3.0（上游）· 仅参考行为与常量表，代码为独立实现",
                 "https://github.com/aunchagaonkar/NetworkSwitch",
             ),
         ),

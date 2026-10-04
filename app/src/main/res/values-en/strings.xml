@@ -196,7 +196,7 @@
     <!-- About -->
     <string name="about">About</string>
     <string name="about_dependencies">Third Party Licenses &amp; Credits</string>
-    <string name="about_license">GNU General Public License v3.0</string>
+    <string name="about_license">Apache License 2.0</string>
     <string name="about_license_summary">View full license text</string>
     <string name="third_party_licenses_title">Third Party Licenses &amp; Credits</string>
     <string name="licenses_header">This app uses or references the following open-source and referenced projects. Thanks to all authors and contributors.</string>

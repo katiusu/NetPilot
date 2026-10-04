@@ -9,7 +9,7 @@
 ![Android](https://img.shields.io/badge/Android-14%2B-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?logo=kotlin&logoColor=white)
 ![Compose](https://img.shields.io/badge/Jetpack%20Compose-Miuix%200.9.4-4285F4)
-![License](https://img.shields.io/badge/License-GPL--3.0-blue)
+![License](https://img.shields.io/badge/License-Apache--2.0-blue)
 
 [English](README_EN.md) · [测试指南](docs/TESTING.md) · [代码来源追溯](docs/PROVENANCE.md) · [Tasker 接口](docs/TASKER.md) · [快捷磁贴](docs/QS_TILE.md)
 
@@ -33,13 +33,13 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.0.1**（`versionName = "1.0.1"`，`versionCode = 2026100401`） |
+| 版本 | **1.1.0**（`versionName = "1.1.0"`，`versionCode = 2026100500`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 34） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
-| 许可证 | [GPL-3.0](LICENSE) |
+| 许可证 | [Apache-2.0](LICENSE) |
 
-> **安装**：从 [Releases](../../releases) 下载 APK 直接安装。当前是 **Android Debug 签名**，仅供个人使用；自行分发请换成自己的 keystore。
+> **安装**：从 [Releases](../../releases) 下载 APK 直接安装。发布包用项目自有 release key 签名；`debug` 构建是 Android Debug 签名，两者签名不同、不能互相覆盖安装（换签名需先卸载）。
 
 ---
 
@@ -72,10 +72,10 @@ NetPilot 把这个判断和切换自动化：
 
 状态机：
 
-- 降级后进入**冷却期**（默认 300 s，可调），期间不重复降级
-- 冷却结束后累计 **3 轮**（`recoveryCount`）判定为正常 → 恢复到原制式
+- 降级后进入**冷却期**（默认 60 s，可调，下限 30 s），期间不重复降级
+- 冷却结束后累计 **2 轮**（`recoveryCount`）判定为正常 → 恢复到原制式
 - 降级后连续 **2 轮**（`noNetRollbackCount`）完全无网 → 立即回滚，并**退出自动模式**
-- 检测间隔默认 **120 s**（可调，下限 15 s）
+- 检测间隔默认 **60 s**（可调，下限 15 s）
 
 相对参考实现的两处**有意改进**（代码注释里已写明理由）：
 
@@ -167,6 +167,25 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 - **回收残留的 Shizuku 特权进程**：Shizuku 的用户服务是本应用之外的独立进程（名字是 `<包名>:np_service`，权限 root/shell）。应用被系统杀掉时来不及 `unbindUserService(remove = true)`，它就会变成 PPID=1 的孤儿长期驻留——实测一台机器上累积了 **4 个、约 180 MB**。现在绑定成功后会扫一次 `/proc`，把「同包名 + `:np_service`」且不是自己的进程回收掉，每个应用进程只做一次，失败静默（只省内存，不影响通道）。
 - **日志落盘减量**：内存里仍然保留 400 条（日志页看得到），但**落盘只写最近 120 条**、单条消息最长 2000 字符。原先每 4 秒要把 400 条拼成一个 40+ KB 的 JSON 串再交给 SharedPreferences，是应用里最稳定的分配来源。
 - **关于页版本信息 `remember`**：不再每次重组都走一遍 `PackageManager` 并新建字符串。
+
+### 11. 许可证改为 Apache-2.0（1.1.0）
+
+- **起因**：1.0.1 及更早版本里，`core/priv/TelephonyReflection.kt` 与上游 GPL-3.0 项目 NetworkSwitch 几乎逐字相同
+  （实测相似度 0.761、上游 98.2% 的 token 落在长度 ≥12 的公共串里），因此那些版本整体按 GPL-3.0 分发。
+- **处理**：该文件已 clean-room 重写（相似度 0.291、最长公共串 25 token；剩余重合只有 `HiddenApiBypass` 豁免前缀清单、
+  AOSP 常量表与接口签名这类必须一致的事实），`LICENSE` 换成 **Apache-2.0**，README / 关于页 / 开源许可页文案同步更新。
+- **不可撤回**：1.0.1 及更早的已分发副本（含 Releases 里的 1.0.1 APK）仍然是 GPL-3.0。
+- **可复现**：`python3 tools/check_provenance.py` 打印逐文件相似度报告；逐条结论见
+  [`docs/PROVENANCE.md`](docs/PROVENANCE.md)，验收步骤见 [`docs/TESTING.md`](docs/TESTING.md) 第 15 节。
+
+### 12. 默认值调整（1.1.0）
+
+- **网络质量降级总开关默认打开**：以前功能页的开关硬编码默认 `false`、引擎侧默认 `true`，界面显示关着其实已经在生效；现在两处都读 `MonitorSettings.DEFAULT_ENABLED`。
+- **冷却期默认 60 s**（原 300 s），滑条下限 **30 s**（原 60 s）、步进 30 s。
+- **恢复正常轮数默认 2**（原 3）。
+- **采样间隔默认 60 s**（原 120 s）。
+- 无网回滚默认 2 轮不变。
+- 只影响**没写过该键**的用户：老用户存在 `SharedPreferences` 里的值照旧生效。
 
 ---
 
@@ -272,17 +291,17 @@ app/src/main/java/com/katiusu/netpilot/
 
 ## 来源与许可
 
-本项目以 **GPL-3.0** 发布（见 [`LICENSE`](LICENSE)）。逐文件的借鉴明细见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。
+本项目以 **Apache-2.0** 发布（见 [`LICENSE`](LICENSE)）。逐文件的借鉴明细见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。
 
 | 来源 | 许可证 | 借鉴内容 |
 |---|---|---|
 | [Network_Enhance](https://github.com/ScarletHanami/Network_Enhance) | MIT | 假 5G 判定阈值与状态机、运营商 PNM 修正表、`settings put` 可行性论证（**未移植**其按厂商分支的定制系统兼容代码，理由见 §功能 8） |
 | [TrafficSIM](https://github.com/L-aros/TrafficSIM) | MIT | Wi-Fi SSID/BSSID 规则的字段设计、优先级/冷却/回切语义 |
-| [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch) | **GPL-3.0** | `core/mode/NetworkMode.kt`、`core/mode/NetworkModeBitmaskMapper.kt`（逐字移植）、`core/priv/TelephonyReflection.kt` 的隐藏 API 调用形状；**这是本项目采用 GPL-3.0 的原因** |
+| [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch) | GPL-3.0（**仅作行为参考**） | 隐藏 API 目标清单与调用形状的参考；对应文件已 clean-room 重写，实测相似度见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。**1.0.1 及更早版本移植过其中代码，那些版本以 GPL-3.0 分发且授权不可撤回** |
 | [Miuix](https://github.com/YuKongA/Miuix) | Apache-2.0 | UI 组件库 |
 | Miuix 示例工程（MiuixGui） | — | 项目骨架、偏好组件、模糊导航栏 |
 
-> 由于移植了 GPL-3.0 的 NetworkSwitch 代码，**整个项目以及分发的 APK 都以 GPL-3.0 授权**：可自由使用、修改、再分发，但修改后的版本必须同样以 GPL-3.0 公开源码。若要换成更宽松的许可证，需要先对上述三个文件做 clean-room 重写（它们本质是 Android 公开常量 `NETWORK_MODE_*` 的机械映射与位运算，重写成本很低）。
+> **许可变更**：1.0.1 及更早的版本移植过 GPL-3.0 的 NetworkSwitch 代码，因此那些版本以 GPL-3.0 授权（不可撤回，含 Releases 里的 1.0.1 APK）。相关文件已 clean-room 重写——方法、实测数字与复现命令见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)——自本次提交起本项目以 **Apache-2.0** 发布。
 
 ---
 

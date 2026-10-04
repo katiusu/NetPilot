@@ -107,15 +107,15 @@ data class DowngradeThresholds(
      * 降级后多久内不尝试恢复（秒）。
      *
      * 原脚本用 1800（30 分钟），实测太保守：一旦降级，半小时内即使网络早已恢复也
-     * 不会回到 5G，用户会以为「5G 丢了」。这里默认降到 300（5 分钟）。
+     * 不会回到 5G，用户会以为「5G 丢了」。这里默认 60 秒（1 分钟），滑条下限 30 秒。
      */
-    val cooldownSec: Int = 300,
+    val cooldownSec: Int = 60,
     /** 冷却结束后累计多少轮正常才恢复。 */
-    val recoveryCount: Int = 3,
+    val recoveryCount: Int = 2,
     /** 降级态下连续多少轮无网/无响应就整体回退。 */
     val noNetRollbackCount: Int = 2,
     /** 后台监控轮询间隔（秒）。 */
-    val monitorIntervalSec: Int = 120,
+    val monitorIntervalSec: Int = 60,
     /** 降级目标模式：9 = LTE/GSM/WCDMA，保留 3G 回退与 EN-DC。 */
     val downgradeMode: Int = 9,
     /**

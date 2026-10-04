@@ -14,8 +14,8 @@
     <!-- 打开外部链接失败（设备上没有能处理该 URL 的应用）时的提示 -->
     <string name="ab_open_failed">没有应用可以打开这个链接</string>
 
-    <!-- 许可证行：说明这一行点下去到底会看到什么、以及 GPLv3 对使用者意味着什么 -->
-    <string name="ab_license_summary">在浏览器打开 GPLv3 协议原文。本应用以 GPLv3 发布：可自由使用、修改和再分发，但修改后的版本必须同样以 GPLv3 公开源码。</string>
+    <!-- 许可证行：说明这一行点下去到底会看到什么、以及 Apache-2.0 对使用者意味着什么 -->
+    <string name="ab_license_summary">在浏览器打开 Apache-2.0 协议原文。本应用以 Apache-2.0 发布：可自由使用、修改和再分发，需保留版权与许可声明。</string>
 
     <!-- 依赖库行：这一页列出应用实际用到的开源库与许可证全文 -->
     <string name="ab_dependencies_summary">列出本应用用到的开源库及其许可证全文。</string>

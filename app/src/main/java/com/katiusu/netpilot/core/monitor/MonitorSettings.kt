@@ -56,11 +56,18 @@ object MonitorSettings {
     const val DEFAULT_RSRP = -85
     const val DEFAULT_SINR = 0
     const val DEFAULT_PING = 200
-    /** 降级冷却默认 300 秒（原脚本 1800 太长，见 DowngradeThresholds.cooldownSec）。 */
-    const val DEFAULT_COOLDOWN = 300
-    const val DEFAULT_RECOVERY = 3
+    /**
+     * 降级冷却默认 60 秒。
+     *
+     * 上游脚本用 1800 秒（30 分钟）太长：降级本来就发生在「满格但跑不动」时，冷却过久会让
+     * 网络已经恢复还长时间停在 4G。滑条下限 30 秒（见 FeaturesPage 的 KEY_COOLDOWN 规格）。
+     */
+    const val DEFAULT_COOLDOWN = 60
+    /** 恢复正常默认 2 轮：3 轮在 60 秒采样间隔下要等 3 分钟才对「已经好了」有反应。 */
+    const val DEFAULT_RECOVERY = 2
     const val DEFAULT_NO_NET_ROLLBACK = 2
-    const val DEFAULT_INTERVAL = 120
+    /** 采样间隔默认 60 秒；技术下限 15 秒（MonitorEngine 与滑条范围都按它收敛）。 */
+    const val DEFAULT_INTERVAL = 60
     const val DEFAULT_DOWNGRADE_MODE = 9
     /** 0 = 跟随运营商（5G 自动），见 DowngradeThresholds.lockLteMode。 */
     const val DEFAULT_LOCK_LTE_MODE = 0

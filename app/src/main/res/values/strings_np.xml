@@ -70,13 +70,13 @@
     <string name="np_fake5g_lock_lte_mode_title">恢复目标制式</string>
     <string name="np_fake5g_lock_lte_mode_summary">默认「跟随运营商」。冷却结束恢复时写回的制式，按 SIM 卡自动推导出 5G 自动，换卡不用改；乱选可能恢复后上不了 5G</string>
     <string name="np_fake5g_cooldown_title">降级冷却时间</string>
-    <string name="np_fake5g_cooldown_summary">单位 秒（默认 300 = 5 分钟）。降级后这么久内不尝试恢复，免得刚切到 4G 又立刻弹回 5G；调大更省电，但 5G 回来更慢</string>
+    <string name="np_fake5g_cooldown_summary">单位 秒（默认 60 = 1 分钟）。降级后这么久内不尝试恢复，免得刚切到 4G 又立刻弹回 5G；调大更省电，但 5G 回来更慢</string>
     <string name="np_fake5g_recovery_title">恢复所需正常轮数</string>
-    <string name="np_fake5g_recovery_summary">单位 轮（默认 3）。冷却结束后要连续这么多轮正常才恢复；调大更稳但更慢，调成 1 会被单次抖动骗回 5G</string>
+    <string name="np_fake5g_recovery_summary">单位 轮（默认 2）。冷却结束后要连续这么多轮正常才恢复；调大更稳但更慢，调成 1 会被单次抖动骗回 5G</string>
     <string name="np_fake5g_no_net_rollback_title">无网回退阈值</string>
     <string name="np_fake5g_no_net_rollback_summary">单位 轮（默认 2）。降级后连续这么多轮完全无网就整体回退到完整制式；调小自救更快，调大容易一直卡在无网</string>
     <string name="np_fake5g_interval_title">采样间隔</string>
-    <string name="np_fake5g_interval_summary">单位 秒（默认 120）。前台服务每隔这么久采一次，越大越省电、反应越慢；打开监控页会临时加快到 5 秒</string>
+    <string name="np_fake5g_interval_summary">单位 秒（默认 60）。前台服务每隔这么久采一次，越大越省电、反应越慢；打开监控页会临时加快到 5 秒</string>
     <string name="np_monitor_autostart_title">开机自动启动监控</string>
     <string name="np_monitor_autostart_summary">重启后自动恢复监控与降级状态</string>
     <string name="np_datacard_manage_title">数据卡与规则</string>

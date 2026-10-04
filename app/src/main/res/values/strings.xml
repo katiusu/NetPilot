@@ -196,7 +196,7 @@
     <!-- About -->
     <string name="about">关于</string>
     <string name="about_dependencies">第三方许可证与致谢</string>
-    <string name="about_license">GNU General Public License v3.0</string>
+    <string name="about_license">Apache License 2.0</string>
     <string name="about_license_summary">查看完整协议文本</string>
     <string name="third_party_licenses_title">第三方许可证与致谢</string>
     <string name="licenses_header">本应用使用或参考了以下开源项目及参考项目，谨向所有作者与贡献者致谢。</string>

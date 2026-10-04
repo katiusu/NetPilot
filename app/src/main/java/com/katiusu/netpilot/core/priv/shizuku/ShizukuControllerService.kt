@@ -9,8 +9,8 @@ import com.katiusu.netpilot.core.priv.TelephonyReflection
  * 跑在 Shizuku 用户进程里的 binder 服务（uid = shell 或 root），只有在这里才持有
  * MODIFY_PHONE_STATE。逻辑全部转调 [TelephonyReflection] / [SubscriptionSwitcher]。
  *
- * 与 NetworkSwitch 的写法一致：用户服务**不需要**在 AndroidManifest.xml 里注册，
- * Shizuku 会通过 app_process 反射实例化本类。
+ * 用户服务**不需要**在 AndroidManifest.xml 里注册：Shizuku 会通过 app_process
+ * 反射实例化本类（见 Shizuku API 文档 `Shizuku.UserService`）。
  */
 class ShizukuControllerService() : IShizukuController.Stub() {
 

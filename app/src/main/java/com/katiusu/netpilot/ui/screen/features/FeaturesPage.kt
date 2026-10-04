@@ -110,7 +110,9 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         type = OptionType.SWITCH,
         titleRes = R.string.np_fake5g_enabled_title,
         summaryRes = R.string.np_fake5g_enabled_summary,
-        defaultBoolean = false,
+        // 与 MonitorSettings.DEFAULT_ENABLED 同一处真源：以前这里硬编码 false，
+        // 引擎按 true 跑，界面却显示关着，用户以为没生效。
+        defaultBoolean = MonitorSettings.DEFAULT_ENABLED,
     ),
     OptionSpec(
         key = MonitorSettings.KEY_RSRP,
@@ -232,9 +234,9 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         titleRes = R.string.np_fake5g_cooldown_title,
         summaryRes = R.string.np_fake5g_cooldown_summary,
         defaultFloat = MonitorSettings.DEFAULT_COOLDOWN.toFloat(),
-        sliderMin = 60f,
+        sliderMin = 30f,
         sliderMax = 7200f,
-        sliderStep = 60f,
+        sliderStep = 30f,
         sliderDecimals = 0,
         sliderUnitRes = R.string.np_unit_sec,
         sliderValueLabelRes = R.string.np_fake5g_cooldown_title,

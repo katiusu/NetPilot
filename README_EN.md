@@ -28,11 +28,11 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.0.1** (`versionCode 2026100401`) |
+| Version | **1.1.0** (`versionCode 2026100500`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 34) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
-| License | [GPL-3.0](LICENSE) |
+| License | [Apache-2.0](LICENSE) |
 
 > **Install**: grab the APK from [Releases](../../releases). It is signed with the **Android debug key** — fine for personal use, not for redistribution.
 
@@ -58,7 +58,7 @@ Rule 2 — "very weak signal" (separate switch, on by default):
   → downgrade (strength only, ignores ping/SINR)
 ```
 
-State machine: after a downgrade it enters a cooldown (default 300 s); once the cooldown ends, **3 consecutive** healthy rounds restore the original mode; **2 consecutive** no-network rounds roll back immediately and leave auto mode; the sampling interval defaults to 120 s.
+State machine: after a downgrade it enters a cooldown (default 60 s, adjustable down to 30 s); once the cooldown ends, **2 consecutive** healthy rounds restore the original mode; **2 consecutive** no-network rounds roll back immediately and leave auto mode; the sampling interval defaults to 60 s.
 
 Ping is measured as **HTTP time-to-first-byte** against `http://www.bing.com/` by default, falling back to `cn.bing.com` → Baidu → vendor connectivity-check endpoints, and the UI shows the **exact failure reason**.
 
@@ -109,6 +109,31 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 - **About page**: the version string is memoised instead of calling `PackageManager` on every
   recomposition.
 
+### License change to Apache-2.0 (1.1.0)
+
+- **Why**: up to 1.0.1, `core/priv/TelephonyReflection.kt` was near-verbatim from the GPL-3.0 project
+  NetworkSwitch (0.761 token similarity; 98.2% of upstream tokens inside shared runs), which is why
+  those releases were GPL-3.0.
+- **What changed**: that file is now a clean-room re-implementation (0.291 similarity, longest shared
+  run 25 tokens — what remains is platform fact: the `HiddenApiBypass` exemption prefixes, the AOSP
+  constant table, interface signatures). `LICENSE` is now **Apache-2.0** and the About / licenses
+  screens were updated in step.
+- **Irrevocable**: copies already distributed under GPL-3.0 — including the 1.0.1 APK in Releases —
+  remain GPL-3.0.
+- **Reproduce**: `python3 tools/check_provenance.py` (per-file similarity report); item-by-item
+  reasoning in [PROVENANCE](docs/PROVENANCE.md), acceptance steps in [TESTING](docs/TESTING.md) §15.
+
+### Default-value changes (1.1.0)
+
+- **The network-quality downgrade master switch now defaults to on.** The Features page had it hard-coded
+  to `false` while the engine defaulted to `true`, so the UI showed "off" while downgrades were already
+  running; both now read `MonitorSettings.DEFAULT_ENABLED`.
+- **Cooldown defaults to 60 s** (was 300 s), slider minimum **30 s** (was 60 s), step 30 s.
+- **Healthy rounds required to restore default to 2** (was 3).
+- **Sampling interval defaults to 60 s** (was 120 s).
+- No-network rollback stays at 2 rounds.
+- Only affects users who never wrote the key: values already stored in `SharedPreferences` win.
+
 ## Privacy
 
 NetPilot **uploads nothing**. Its only network request is the ping probe. It does not read contacts, SMS, or the photo library, and it does not collect location — `ACCESS_FINE_LOCATION` is requested only because Android 10+ classifies cellular signal strength (including SINR) as location data.
@@ -146,4 +171,6 @@ Still unverified: whether `app_process` really runs under HyperOS; the Shizuku U
 
 ## License
 
-[GPL-3.0](LICENSE). Provenance per file: [`docs/PROVENANCE.md`](docs/PROVENANCE.md). The GPL-3.0 obligation comes from the three files ported from [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch); everything else is MIT/Apache-2.0-derived or original.
+[Apache-2.0](LICENSE). Provenance per file: [`docs/PROVENANCE.md`](docs/PROVENANCE.md).
+
+**License change.** Releases up to 1.0.1 shipped code ported from [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch) (GPL-3.0): `core/priv/TelephonyReflection.kt` was near-verbatim (0.761 token similarity, 98.2% of upstream tokens inside shared ≥12-token runs), which is why those versions were GPL-3.0. That file has since been re-implemented from scratch (clean-room; method, measurements and reproduction in [PROVENANCE](docs/PROVENANCE.md)), so the project is Apache-2.0 from this commit on. Copies already distributed under GPL-3.0 — including the 1.0.1 APK in Releases — remain GPL-3.0; that grant cannot be withdrawn. Everything else is MIT/Apache-2.0-derived or original.

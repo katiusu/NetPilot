@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Shizuku 通道：把操作转发给 [ShizukuControllerService]（跑在 shell/root 的用户进程里）。
  *
- * 绑定流程照抄 NetworkSwitch 的 `ShizukuNetworkControlDataSource.ensureServiceBinding()`：
+ * 绑定走 Shizuku 用户服务的标准三步（见 Shizuku API 文档 `Shizuku.UserService`）：
  * `pingBinder()` → `checkSelfPermission()` → `bindUserService(UserServiceArgs(...), conn)`。
  * 区别是本类不依赖 `BuildConfig`（本项目没开 `buildFeatures.buildConfig`），
  * debuggable / versionCode 从 PackageManager 现取。

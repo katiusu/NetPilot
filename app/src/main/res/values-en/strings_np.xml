@@ -70,13 +70,13 @@
     <string name="np_fake5g_lock_lte_mode_title">Restore target mode</string>
     <string name="np_fake5g_lock_lte_mode_summary">Defaults to follow carrier. The network mode written back when the cooldown ends and the network is restored; it is derived automatically from the SIM card as 5G auto, so swapping SIMs needs no changes. Choosing the wrong one may leave 5G unavailable after restoring</string>
     <string name="np_fake5g_cooldown_title">Downgrade cooldown</string>
-    <string name="np_fake5g_cooldown_summary">In s (default 300 = 5 minutes). No restore is attempted for this long after a downgrade, so it does not bounce straight back to 5G; a longer cooldown saves more power but brings 5G back more slowly</string>
+    <string name="np_fake5g_cooldown_summary">In s (default 60 = 1 minute). No restore is attempted for this long after a downgrade, so it does not bounce straight back to 5G; a longer cooldown saves more power but brings 5G back more slowly</string>
     <string name="np_fake5g_recovery_title">Healthy rounds required to restore</string>
-    <string name="np_fake5g_recovery_summary">In rounds (default 3). After the cooldown ends, this many consecutive healthy rounds are required before restoring; a larger value is more stable but slower, while 1 lets a single jitter trick it back to 5G</string>
+    <string name="np_fake5g_recovery_summary">In rounds (default 2). After the cooldown ends, this many consecutive healthy rounds are required before restoring; a larger value is more stable but slower, while 1 lets a single jitter trick it back to 5G</string>
     <string name="np_fake5g_no_net_rollback_title">No-network rollback threshold</string>
     <string name="np_fake5g_no_net_rollback_summary">In rounds (default 2). After a downgrade, this many consecutive rounds with no network at all roll everything back to the full network mode; a smaller value recovers faster, a larger one tends to stay stuck offline</string>
     <string name="np_fake5g_interval_title">Sampling interval</string>
-    <string name="np_fake5g_interval_summary">In s (default 120). The foreground service samples this often; a larger value saves power but reacts more slowly. Opening the monitor page temporarily speeds it up to 5 s</string>
+    <string name="np_fake5g_interval_summary">In s (default 60). The foreground service samples this often; a larger value saves power but reacts more slowly. Opening the monitor page temporarily speeds it up to 5 s</string>
     <string name="np_monitor_autostart_title">Start monitoring on boot</string>
     <string name="np_monitor_autostart_summary">Restores monitoring and the downgrade state after a reboot</string>
     <string name="np_datacard_manage_title">SIM cards &amp; rules</string>

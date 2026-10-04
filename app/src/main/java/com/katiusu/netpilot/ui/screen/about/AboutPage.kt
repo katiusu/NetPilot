@@ -202,8 +202,8 @@ private fun AboutContent(
             .toBitmap(iconSizePx, iconSizePx)
             .asImageBitmap()
     }
-    // 同时展示 versionName 与 versionCode：前者是语义版本（1.0.1），后者是构建号
-    // （2026100401）。用户报问题时给构建号才有意义，光给 1.0.0 定位不到具体构建。
+    // 同时展示 versionName 与 versionCode：前者是语义版本，后者是构建号
+    // （形如 2026100500）。用户报问题时给构建号才有意义，光给语义版本定位不到具体构建。
     // remember：版本信息一次取到就够，避免每次重组都走一遍 PackageManager 并新建字符串。
     val versionName = remember(ctx) {
         try {
@@ -407,8 +407,8 @@ private fun AboutContent(
 /** 仓库地址；与 [R.string.ab_github_repo_summary] 展示的字符串保持一致。 */
 private const val GITHUB_REPO_URL = "https://github.com/katiusu/NetPilot"
 
-/** GPLv3 协议原文。 */
-private const val LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.txt"
+/** Apache-2.0 协议原文。 */
+private const val LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0.txt"
 
 /**
  * 用系统默认应用打开外部链接。
