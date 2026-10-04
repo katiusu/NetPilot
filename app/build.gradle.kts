@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     // AGP 9.x 内置 Kotlin 支持，无需再应用 org.jetbrains.kotlin.android
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+// 签名配置：release.keystore 与 keystore.properties 都在 .gitignore 里（私钥绝不进仓库）。
+// 缺 keystore.properties 时（别人克隆仓库、CI 没配密钥）回落到 debug 签名，保证 assembleRelease 仍能出包。
+val keystorePropsFile = rootProject.file("keystore.properties")
+val hasReleaseKeystore = keystorePropsFile.exists()
+val keystoreProps = Properties().apply {
+    if (hasReleaseKeystore) keystorePropsFile.inputStream().use { load(it) }
 }
 
 android {
@@ -23,10 +33,33 @@ android {
 
     }
 
+    // release 构建默认会跑 lintVital（只看 fatal 问题）。本容器 metaspace 上限 320m，
+    // 它会在 lintVitalAnalyzeRelease 里抛 OutOfMemoryError: Metaspace（与代码无关）。
+    // 关掉 release 构建的 lint 门禁；需要检查时单独跑 :app:lintDebug。
+    lint {
+        checkReleaseBuilds = false
+    }
+
+    // 正式签名（v2/v3 由 AGP 按 minSdk 自动决定，minSdk 34 不需要 v1）
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // 仓库内没有 release.keystore，签名沿用 debug，保证 assembleRelease 也能出包
-            signingConfig = signingConfigs.getByName("debug")
+            // 有密钥就用正式签名，否则沿用 debug（保证 assembleRelease 也能出包）
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
         }
     }

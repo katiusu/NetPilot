@@ -340,3 +340,42 @@ Locale 插件：Tasker → 任务 → 插件 → NetPilot。完整 extra 键表�
 1. 日志页仍应能看到最多 **400 条**历史记录。
 2. 杀掉应用再打开：能恢复的最近日志约 **120 条**（刻意的取舍：换更小的 SharedPreferences 与更少的 GC）。
 3. 单条超长文本（异常堆栈等）会被截断到 2000 字符，不丢条目、只截内容。
+
+---
+
+## 14. 发布签名（release）
+
+### 14.1 密钥库与口令
+
+- 密钥库 `release.keystore`（PKCS12，别名 `netpilot`，RSA 4096，SHA256withRSA，有效期至 2056-09-26）。
+- 证书 SHA-256 指纹：`34:10:08:75:B4:5D:7C:4D:C9:92:80:30:B3:32:9B:54:90:86:9A:23:61:55:F9:CE:08:B1:DC:70:C7:43:4C:4C`。
+- 口令与别名写在 `keystore.properties`（**已被 .gitignore 排除，永远不要提交**），格式：
+
+```properties
+storeFile=release.keystore
+storePassword=<口令>
+keyAlias=netpilot
+keyPassword=<口令>
+```
+
+- ⚠️ **务必离线备份 `release.keystore` 与口令**：两者缺一，以后就无法再发布"可覆盖安装"的更新（签名不同，用户必须先卸载旧版）。
+- `app/build.gradle.kts` 里的 `signingConfigs` 仅在 `keystore.properties` 存在时启用；缺失时 release 自动回落 debug 签名，保证别人 clone 后仍能 `assembleRelease`。
+
+### 14.2 打包与自检
+
+```bash
+bash _build.sh :app:assembleRelease --max-workers=1 --no-daemon
+# 产物：app/build/outputs/apk/release/app-release.apk
+```
+
+```bash
+/opt/android-sdk/build-tools/37.0.0/apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+# 期望：Verifies；V2 Signer 证书 DN = CN=NetPilot, OU=Mobile, O=katiusu…，SHA-256 = 34100875…4c4c
+python3 -c "import zipfile;n=zipfile.ZipFile('app/build/outputs/apk/release/app-release.apk').namelist();print(len(n),'AndroidManifest.xml' in n,'resources.arsc' in n)"
+# 期望：152 True True
+```
+
+### 14.3 两个已踩过的坑
+
+1. **`optimizeReleaseResources` 会静默打出坏包。** 本容器（aarch64 + PRoot）下 AGP 9.4.1 的该任务只写 `output-metadata.json`，不产出它声明的 `resources-release-optimize.ap_`，`packageRelease` 于是生成**没有 `AndroidManifest.xml`、`resources.arsc`、`res/`** 的 APK（`apksigner verify` 报 `Missing AndroidManifest.xml`）。已在 `gradle.properties` 设 `android.enableResourceOptimizations=false` 关掉该任务。**识别方法**：产物条目数应是 152 且含 manifest/arsc；若只有 85 个条目、没有 res，就是坏包，不要发。
+2. **Gradle 偶发 `FileHasher … java.io.IOException: Operation not permitted`。** 容器里文件监视（inotify）在 sdcardfs 上不稳定，已设 `org.gradle.vfs.watch=false`；若仍出现，先杀干净残留的 `GradleDaemon` 进程再重试。
