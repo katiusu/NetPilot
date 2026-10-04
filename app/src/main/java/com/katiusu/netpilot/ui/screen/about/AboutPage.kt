@@ -202,13 +202,16 @@ private fun AboutContent(
             .toBitmap(iconSizePx, iconSizePx)
             .asImageBitmap()
     }
-    // 同时展示 versionName 与 versionCode：前者是语义版本（1.0.0），后者是构建号
-    // （2026100400）。用户报问题时给构建号才有意义，光给 1.0.0 定位不到具体构建。
-    val versionName = try {
-        val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
-        // minSdk 34 已经高于 P，longVersionCode 必然可用；旧的 versionCode 字段已废弃。
-        "${info.versionName ?: "1.0"} (${info.longVersionCode})"
-    } catch (_: Exception) { "1.0" }
+    // 同时展示 versionName 与 versionCode：前者是语义版本（1.0.1），后者是构建号
+    // （2026100401）。用户报问题时给构建号才有意义，光给 1.0.0 定位不到具体构建。
+    // remember：版本信息一次取到就够，避免每次重组都走一遍 PackageManager 并新建字符串。
+    val versionName = remember(ctx) {
+        try {
+            val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            // minSdk 34 已经高于 P，longVersionCode 必然可用；旧的 versionCode 字段已废弃。
+            "${info.versionName ?: "1.0"} (${info.longVersionCode})"
+        } catch (_: Exception) { "1.0" }
+    }
 
     BgEffectBackground(
         dynamicBackground = true,

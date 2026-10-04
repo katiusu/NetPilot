@@ -38,7 +38,21 @@ object LogStore {
     private const val PREFS_NAME = "netpilot_logs"
     private const val KEY_ENTRIES = "entries"
     private const val MAX_ENTRIES = 400
+
+    /**
+     * 落盘只写最近这么多条。
+     *
+     * 内存里仍然保留 [MAX_ENTRIES] 条（日志页看得到全部），但每次落盘都要把条目拼成一个
+     * JSON 串再交给 SharedPreferences，400 条时那个串约 40+ KB；日志活跃时每
+     * [PERSIST_INTERVAL_MS] 就要拼一次，是应用里最稳定的分配来源（实测 ART sticky GC
+     * 每两秒一次）。只落盘最近 120 条把这个串压到约 1/3，同时永久驻留的那份字符串也变小。
+     */
+    private const val PERSIST_ENTRIES = 120
+
     private const val PERSIST_INTERVAL_MS = 4_000L
+
+    /** 单条消息最长字符数，避免异常堆栈这类超长文本长期占内存（截断而非丢弃）。 */
+    private const val MAX_MESSAGE_CHARS = 2_000
 
     private val buffer = mutableStateListOf<LogEntry>()
 
@@ -82,7 +96,7 @@ object LogStore {
     }
 
     fun log(tag: String, message: String, level: LogLevel = LogLevel.INFO) {
-        val entry = LogEntry(System.currentTimeMillis(), level, tag, message)
+        val entry = LogEntry(System.currentTimeMillis(), level, tag, message.take(MAX_MESSAGE_CHARS))
         buffer += entry
         while (buffer.size > MAX_ENTRIES) buffer.removeAt(0)
         dirty = true
@@ -114,7 +128,8 @@ object LogStore {
         lastPersistAt = now
         dirty = false
         val array = JSONArray()
-        buffer.forEach { entry ->
+        // 只落盘最近的 PERSIST_ENTRIES 条；内存 buffer 不变。
+        buffer.takeLast(PERSIST_ENTRIES).forEach { entry ->
             array.put(
                 JSONObject()
                     .put("t", entry.timeMs)

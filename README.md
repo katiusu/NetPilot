@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.0.0**（`versionName = "1.0.0"`，`versionCode = 2026100400`） |
+| 版本 | **1.0.1**（`versionName = "1.0.1"`，`versionCode = 2026100401`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 34） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -160,6 +160,13 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 - **Locale 插件**：Tasker 的「插件 → NetPilot」里直接配置动作与条件
 
 详见 [`docs/TASKER.md`](docs/TASKER.md) 与 [`docs/QS_TILE.md`](docs/QS_TILE.md)。
+
+### 10. 应用图标与运行时内存（1.0.1）
+
+- **自适应图标**：黑色背景层 + 白色「信号格 + 加号」前景层 + **单色层**（Android 13+ 的「主题图标」用它跟随壁纸着色）。因为 `minSdk 34`，只保留 `mipmap-anydpi-v26/ic_launcher.xml` 一套 XML + 5 档密度 PNG；`roundIcon` 也一并提供（部分系统/启动器要圆形图标）。
+- **回收残留的 Shizuku 特权进程**：Shizuku 的用户服务是本应用之外的独立进程（名字是 `<包名>:np_service`，权限 root/shell）。应用被系统杀掉时来不及 `unbindUserService(remove = true)`，它就会变成 PPID=1 的孤儿长期驻留——实测一台机器上累积了 **4 个、约 180 MB**。现在绑定成功后会扫一次 `/proc`，把「同包名 + `:np_service`」且不是自己的进程回收掉，每个应用进程只做一次，失败静默（只省内存，不影响通道）。
+- **日志落盘减量**：内存里仍然保留 400 条（日志页看得到），但**落盘只写最近 120 条**、单条消息最长 2000 字符。原先每 4 秒要把 400 条拼成一个 40+ KB 的 JSON 串再交给 SharedPreferences，是应用里最稳定的分配来源。
+- **关于页版本信息 `remember`**：不再每次重组都走一遍 `PackageManager` 并新建字符串。
 
 ---
 

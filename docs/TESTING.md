@@ -1,12 +1,12 @@
 # NetPilot 测试指南
 
-产物：`NetPilot-1.0.0-2026100400-debug.apk`
-（`versionName = 1.0.0`、`versionCode = 2026100400`，debug 签名，`minSdk 34 / targetSdk 34`，包名 `com.katiusu.netpilot`）。
+产物：`NetPilot-1.0.1-2026100401-debug.apk`
+（`versionName = 1.0.1`、`versionCode = 2026100401`，debug 签名，`minSdk 34 / targetSdk 34`，包名 `com.katiusu.netpilot`）。
 
 APK 只交付、不安装。要自己装的话：
 
 ```bash
-adb install -r NetPilot-1.0.0-2026100400-debug.apk
+adb install -r NetPilot-1.0.1-2026100401-debug.apk
 ```
 
 ---
@@ -313,8 +313,30 @@ Locale 插件：Tasker → 任务 → 插件 → NetPilot。完整 extra 键表�
 
 ## 12. 关于页
 
-- 版本行显示 `1.0.0 (2026100400)`（`versionName` + `longVersionCode`）。
+- 版本行显示 `1.0.1 (2026100401)`（`versionName` + `longVersionCode`）。
 - **GitHub 仓库**（<https://github.com/katiusu/NetPilot>）是**单独一张卡片**，在「许可证 / 开源依赖」
   那张卡**上方**，两者不混在一起；下方那张卡放许可证与依赖两个入口。
 - 三个入口点击都应正常打开浏览器（没有可用浏览器时弹 Toast，**不能崩页**）。
 - **验收**：GitHub 卡里**不该**出现许可证 / 依赖行；触摸目标与相邻行一致（≥48dp），点击有反应。
+
+## 13. 应用图标与内存（1.0.1）
+
+### 13.1 图标
+
+1. 桌面 / 抽屉图标是**黑底白色「信号格 + 加号」**，与「应用信息」页里显示的图标一致。
+2. 圆形图标场景（部分系统 / 启动器）不应出现白边或方角（`ic_launcher_round` 与 `ic_launcher` 都已提供）。
+3. Android 13+ 打开「设置 → 壁纸与个性化 → 主题图标」后，图标应变成**单色跟随壁纸着色**——这就是 `ic_launcher_monochrome` 层。
+
+### 13.2 回收残留的 Shizuku 特权进程
+
+1. 前提：当前特权通道是 **Shizuku**（Root 通道不会产生 `np_service` 进程）。
+2. 打开应用触发一次通道探测，然后 `adb logcat -s NetPilot`，应能看到
+   `pruned N stale Shizuku user service process(es)`（N > 0 表示这次真的回收了残留进程）。
+3. 想直接在设备上核对：`adb shell ps -A | grep np_service` —— 正常情况下**只有 1 个**（当前绑定的那个），不再是多个。
+4. 一个都没有、或没有 log：说明当前没走 Shizuku 通道，或系统不允许读 `/proc`。**只影响这条优化，不影响任何功能**。
+
+### 13.3 日志落盘减量
+
+1. 日志页仍应能看到最多 **400 条**历史记录。
+2. 杀掉应用再打开：能恢复的最近日志约 **120 条**（刻意的取舍：换更小的 SharedPreferences 与更少的 GC）。
+3. 单条超长文本（异常堆栈等）会被截断到 2000 字符，不丢条目、只截内容。

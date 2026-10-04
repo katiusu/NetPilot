@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.0.0** (`versionCode 2026100400`) |
+| Version | **1.0.1** (`versionCode 2026100401`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 34) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -91,6 +91,23 @@ The app deliberately contains **no vendor-specific branches**. It writes `settin
 Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpilot.event.*`, plus a Locale plugin for Tasker. See [`docs/TASKER.md`](docs/TASKER.md).
 
 ---
+
+### App icon & runtime memory (1.0.1)
+
+- **Adaptive icon**: a black background layer, a white "signal bars + plus" foreground layer, and a
+  **monochrome layer** (used by Android 13+ themed icons). `minSdk 34`, so there is a single
+  `mipmap-anydpi-v26` XML plus five density PNGs, and a `roundIcon` is provided too.
+- **Reaping orphaned Shizuku user-service processes**: the Shizuku user service is a separate
+  root/shell process named `<package>:np_service`. When Android kills the app, it never gets to run
+  `unbindUserService(remove = true)`, so the process survives as an orphan — measured on one device:
+  **4 processes, ~180 MB**. After a successful bind, NetPilot scans `/proc` once per app process and
+  kills every `:np_service` process of this package that is not itself. Failures are ignored: this
+  only saves memory and can never break the privileged channel.
+- **Cheaper log persistence**: 400 entries stay in memory, but only the newest 120 are written to
+  disk and a single message is capped at 2000 characters. Previously a 40+ KB JSON string was built
+  every 4 seconds — the steadiest allocation source in the app.
+- **About page**: the version string is memoised instead of calling `PackageManager` on every
+  recomposition.
 
 ## Privacy
 

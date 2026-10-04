@@ -16,10 +16,10 @@ android {
         applicationId = "com.katiusu.netpilot"
         minSdk = 34
         targetSdk = 34
-        versionCode = 2026100400
-        // versionName 是给人看的语义版本；versionCode 是构建号（2026100400），
+        versionCode = 2026100401
+        // versionName 是给人看的语义版本；versionCode 是构建号（2026100401），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
-        versionName = "1.0.0"
+        versionName = "1.0.1"
 
     }
 

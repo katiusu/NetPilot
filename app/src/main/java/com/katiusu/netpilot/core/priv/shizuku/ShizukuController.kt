@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import rikka.shizuku.Shizuku
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Shizuku 通道：把操作转发给 [ShizukuControllerService]（跑在 shell/root 的用户进程里）。
@@ -76,6 +77,7 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
             return ChannelStatus.Unavailable(method, "Shizuku 用户服务绑定失败（进程未启动或等待超时）")
         }
         return if (call(false) { it.probe() }) {
+            pruneStaleServices()
             ChannelStatus.Available
         } else {
             ChannelStatus.Unavailable(method, "Shizuku 用户服务已连接，但特权进程内反射不可用")
@@ -126,6 +128,20 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
         }
         service = null
         serviceBinder = null
+    }
+
+    /**
+     * 绑定成功后清扫上一次运行遗留的用户服务孤儿进程。
+     *
+     * 用户服务是 root/shell 权限的独立进程（`<包名>:np_service`），客户端被系统杀掉时
+     * 来不及 `unbindUserService(remove = true)`，它就会变成 PPID=1 的孤儿长期驻留，
+     * 每个约 40 MB（实测累积到 4 个 / ~180 MB）。每个应用进程只做一次；
+     * 清扫只是省内存，失败一律静默，绝不影响通道可用性。
+     */
+    private suspend fun pruneStaleServices() {
+        if (!pruneOnce.compareAndSet(false, true)) return
+        val removed = call(-1) { it.pruneStaleProcesses() }
+        if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
     }
 
     private fun shizukuAlive(): Boolean = try {
@@ -205,5 +221,8 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
         const val BIND_TIMEOUT_MS = 15_000L
         const val CALL_TIMEOUT_MS = 10_000L
         const val POLL_INTERVAL_MS = 100L
+
+        /** 孤儿进程清扫每个应用进程只做一次。 */
+        val pruneOnce = AtomicBoolean(false)
     }
 }
