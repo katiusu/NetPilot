@@ -377,5 +377,27 @@ python3 -c "import zipfile;n=zipfile.ZipFile('app/build/outputs/apk/release/app-
 
 ### 14.3 两个已踩过的坑
 
-1. **`optimizeReleaseResources` 会静默打出坏包。** 本容器（aarch64 + PRoot）下 AGP 9.4.1 的该任务只写 `output-metadata.json`，不产出它声明的 `resources-release-optimize.ap_`，`packageRelease` 于是生成**没有 `AndroidManifest.xml`、`resources.arsc`、`res/`** 的 APK（`apksigner verify` 报 `Missing AndroidManifest.xml`）。已在 `gradle.properties` 设 `android.enableResourceOptimizations=false` 关掉该任务。**识别方法**：产物条目数应是 152 且含 manifest/arsc；若只有 85 个条目、没有 res，就是坏包，不要发。
+1. **`optimizeReleaseResources` 会静默打出坏包（根因已实证）。**
+   AGP 9.4.1 的资源优化任务调用的是
+
+   ```bash
+   aapt2 optimize <linked .ap_> --shorten-resource-paths \
+     --resource-path-shortening-map=<路径> -o <resources-release-optimize.ap_>
+   ```
+
+   注意是 `--选项=值` 形式。而本容器经 `android.aapt2FromMavenOverride` 强制的 build-tools 36.0.0
+   （aarch64）aapt2 只认 `--选项 值`，于是打印 `unknown option '--resource-path-shortening-map=…'`
+   并非零退出、完全不产出文件；AGP 既不校验 aapt2 退出码、也不校验声明的产物是否存在，
+   照样写 `output-metadata.json` 报成功。`packageRelease` 拿到一个不存在的资源文件，最终打出
+   **没有 `AndroidManifest.xml`、`resources.arsc`、`res/`** 的 APK（`apksigner verify` 报 `Missing AndroidManifest.xml`）。
+   - **当前默认选择**：`gradle.properties` 设 `android.enableResourceOptimizations=false` 关掉该任务，
+     复用 `processReleaseResources` 的 linked-resources `.ap_`。实测优化只省 **6.4 KB**
+     （33,076,005 → 33,069,588 B），不值得为它承担静默坏包风险。
+   - **真修（已在本容器验证）**：给 aapt2 套一个只做参数改写的壳（把 `--resource-path-shortening-map=x`
+     拆成 `--resource-path-shortening-map x`，其余参数原样 `exec`），并让 `$GRADLE_USER_HOME/gradle.properties`
+     的 `android.aapt2FromMavenOverride` 指向这个壳。之后 `-Pandroid.enableResourceOptimizations=true`
+     能正常产出 `resources-release-optimize.ap_`（835,253 B）与合法 APK（152 条目、含 manifest/arsc、v2 验签通过）。
+     本容器已装：`/root/aapt2-shim/aapt2`。
+   - **识别方法**：产物条目数应为 152 且含 manifest/arsc；若只有 85 个条目、没有 res，就是坏包，不要发布。
+     `_build.sh` 现在会在构建后自动做这项自检（`APK_CHECK:` 行）。
 2. **Gradle 偶发 `FileHasher … java.io.IOException: Operation not permitted`。** 容器里文件监视（inotify）在 sdcardfs 上不稳定，已设 `org.gradle.vfs.watch=false`；若仍出现，先杀干净残留的 `GradleDaemon` 进程再重试。

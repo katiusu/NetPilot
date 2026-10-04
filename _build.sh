@@ -20,4 +20,22 @@ echo "=== EXIT=$CODE  (task: $TASK) ==="
 grep -nE "^e: |FAILURE|What went wrong|> Task .*FAILED|error:|Caused by|Execution failed|Unresolved reference|daemon disappeared|BUILD (SUCCESSFUL|FAILED)" "$LOG" | head -60
 echo "--- tail 25 ---"
 tail -25 "$LOG"
+# 产物自检：AGP 资源优化一旦静默失败，打出的 APK 会没有清单/资源，必须在发布前拦住。
+for apk in app/build/outputs/apk/*/*.apk; do
+  [ -f "$apk" ] || continue
+  python3 - "$apk" <<'PY'
+import sys, zipfile
+p = sys.argv[1]
+try:
+    names = zipfile.ZipFile(p).namelist()
+except Exception as e:
+    print("APK_CHECK: can not read %s: %s" % (p, e)); sys.exit(0)
+has_manifest = "AndroidManifest.xml" in names
+has_arsc = "resources.arsc" in names
+print("APK_CHECK: %s entries=%d manifest=%s arsc=%s -> %s" % (
+    p, len(names), has_manifest, has_arsc,
+    "OK" if (has_manifest and has_arsc) else "BROKEN APK: missing manifest/resources, do not release"))
+PY
+done
+
 exit $CODE
