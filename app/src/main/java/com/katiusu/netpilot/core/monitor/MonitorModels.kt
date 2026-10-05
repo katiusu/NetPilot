@@ -57,6 +57,50 @@ data class SignalSnapshot(
 
     /** 信号「满格」：RSRP 严格强于阈值（与 Network_Enhance 的 `|RSRP| < 85` 一致）。 */
     fun isStrongSignal(rsrpThreshold: Int): Boolean = rsrp != null && rsrp > rsrpThreshold
+
+    /**
+     * 本轮读数是否「靠近」某条降级门限。
+     *
+     * 只用来调采样节奏，**不参与任何判定**：[isStrongSignal] 与 `FakeSignalDetector.judge`
+     * 仍然拿原始的 RSRP / SINR / Ping 与阈值做严格比较，所以这个函数怎么改都不会改变
+     * 降级或恢复的结果，最多改变「多久采一次」。
+     *
+     * 三条带宽由 [DowngradeThresholds.adaptiveMarginDbm]（默认 10）按固定比例推导，
+     * 而不是各给一个可调项：三个滑块用户调不明白，绑到同一个「灵敏度」上才能一次调灵或调钝。
+     * 比例取 1 : 1/3 : 5 是因为三条阈值本身的量级差就是 10 dBm : 3 dB : 50 ms。
+     *
+     * 读不到的项一律**不算靠近**：读不到就无法判断远近，按「不靠近」处理能干净地退化回
+     * 固定间隔，而不是因为「读不到」就长期贴着快采跑。
+     */
+    fun isNearThreshold(thresholds: DowngradeThresholds): Boolean {
+        val margin = thresholds.adaptiveMarginDbm
+        if (margin <= 0) return false
+        val rsrpBand = margin
+        val sinrBand = (margin / 3).coerceAtLeast(1)
+        val pingBand = margin * 5
+        val currentRsrp = this.rsrp
+        if (currentRsrp != null &&
+            (
+                kotlin.math.abs(currentRsrp - thresholds.rsrpThreshold) <= rsrpBand ||
+                    kotlin.math.abs(currentRsrp - thresholds.weakRsrpThreshold) <= rsrpBand
+                )
+        ) {
+            return true
+        }
+        val currentSinr = this.sinr
+        if (currentSinr != null &&
+            kotlin.math.abs(currentSinr - thresholds.sinrThreshold) <= sinrBand
+        ) {
+            return true
+        }
+        val currentPing = this.pingMs
+        if (currentPing != null &&
+            kotlin.math.abs(currentPing - thresholds.pingThresholdMs) <= pingBand
+        ) {
+            return true
+        }
+        return false
+    }
 }
 
 /**
@@ -163,6 +207,21 @@ data class DowngradeThresholds(
     val downgradeOnPingFail: Boolean = false,
     /** 降级/恢复是否同时写 endc_capability（部分机型需关闭 EN-DC 才能落到 4G）。 */
     val toggleEndc: Boolean = false,
+    /**
+     * 是否启用自适应采样间隔；默认开。
+     *
+     * 关掉后采样间隔恒等于 [monitorIntervalSec]，也就是 1.2.0 之前的固定节奏。
+     * 留这个开关是因为自适应会让「多久采一次」变得不可预测，而总有人要可预测。
+     */
+    val adaptiveIntervalEnabled: Boolean = true,
+    /**
+     * 「靠近门限」的宽度，单位 dBm；默认 10。
+     *
+     * 只是把「多近才算近」交给用户：太小则几乎不缩短间隔（等于关掉自适应），
+     * 太大则长期贴着缩短后的间隔跑（等于把耗电固定在近 2 倍）。SINR / Ping
+     * 两条规则的带宽由它按固定比例推导，见 [SignalSnapshot.isNearThreshold]。
+     */
+    val adaptiveMarginDbm: Int = 10,
 )
 
 /** 引擎对外暴露的阶段，仅用于展示。 */

@@ -80,6 +80,9 @@ object MonitorEngine {
                 LogStore.warn(TAG, "启动自愈失败：${it.message ?: it.javaClass.simpleName}")
             }
             publish(e)
+            // 连续「读数靠近门限」的轮数。0 = 用配置的间隔；每多靠近一轮就乘一次
+            // ADAPTIVE_STEP_FACTOR，任何一轮不靠近立刻归零。
+            var nearStreak = 0
             while (isActive) {
                 val t = MonitorSettings.thresholds()
                 // 后台循环允许在「屏幕关闭 + 未降级 + 信号非强」时跳过 HTTP 探测；
@@ -103,10 +106,50 @@ object MonitorEngine {
                             )
                         }
                 }
-                // 下限 15 秒：比这更密没有意义，还会让 modem 查询本身变成耗电源
-                delay(t.monitorIntervalSec.coerceIn(15, 3600) * 1000L)
+                // 自适应采样间隔：读数靠近门限时逐轮缩短，远离时立刻恢复。
+                // 只有「这一轮真的量到了东西」才算靠近 —— 采样失败（snap == null）时
+                // 没有任何读数可以判断远近，此时保持原间隔，而不是假装远离。
+                val near = snap != null && t.adaptiveIntervalEnabled && snap.isNearThreshold(t)
+                val wasNear = nearStreak > 0
+                nearStreak = if (near) nearStreak + 1 else 0
+                val intervalMs = adaptiveIntervalMs(t, nearStreak)
+                // 只在「节奏发生变化」的那一轮记日志，靠近期间不会每轮都刷一条。
+                if (near != wasNear) {
+                    LogStore.debug(
+                        TAG,
+                        if (near) {
+                            "读数靠近判定门限，采样间隔开始逐轮缩短（本轮 ${intervalMs / 1000}s）"
+                        } else {
+                            "读数已远离判定门限，采样间隔恢复为 ${intervalMs / 1000}s"
+                        },
+                    )
+                }
+                delay(intervalMs)
             }
         }
+    }
+
+    /**
+     * 把「连续靠近门限的轮数」换算成本轮实际等待的毫秒数。
+     *
+     * 每多靠近一轮就乘一次 [MonitorSettings.ADAPTIVE_STEP_FACTOR]（0.8），但**最多只缩到
+     * 配置值的一半**（[MonitorSettings.ADAPTIVE_MIN_FACTOR]）。为什么必须有下限：判定阈值是
+     * 固定的，采样再密也不会让读数更准，反而让 modem 查询与 HTTP 探测本身变成耗电源 ——
+     * 自适应可以变快，但不能变成「一直快」。
+     *
+     * 仍然走原来的 `coerceIn(15, 3600)`：自适应既不能突破技术下限 15 秒，也不会把间隔
+     * 放大到超过用户配置（[nearStreak] 为 0 时原样返回）。
+     */
+    private fun adaptiveIntervalMs(t: DowngradeThresholds, nearStreak: Int): Long {
+        val base = t.monitorIntervalSec
+        if (!t.adaptiveIntervalEnabled || nearStreak <= 0) {
+            return base.coerceIn(15, 3600) * 1000L
+        }
+        val factor = Math.pow(
+            MonitorSettings.ADAPTIVE_STEP_FACTOR.toDouble(),
+            nearStreak.toDouble(),
+        ).coerceAtLeast(MonitorSettings.ADAPTIVE_MIN_FACTOR.toDouble())
+        return (base * factor).toInt().coerceIn(15, 3600) * 1000L
     }
 
     fun stopLoop(reason: String) {

@@ -46,6 +46,7 @@
     <string name="np_section_policy">Downgrade &amp; restore policy</string>
     <string name="np_section_monitor">Monitoring</string>
     <string name="np_section_datacard">SIM cards</string>
+    <string name="np_section_tasker">Automation</string>
     <string name="np_section_other">Other</string>
 
     <!-- Features page options -->
@@ -79,6 +80,12 @@
     <string name="np_fake5g_interval_summary">In s (default 60). The foreground service samples this often; a larger value saves power but reacts more slowly. Opening the monitor page temporarily speeds it up to 5 s</string>
     <string name="np_monitor_autostart_title">Start monitoring on boot</string>
     <string name="np_monitor_autostart_summary">Restores monitoring and the downgrade state after a reboot</string>
+    <string name="np_adaptive_interval_title">Adaptive sampling interval</string>
+    <string name="np_adaptive_interval_summary">On by default. While readings stay close to a threshold the interval shrinks by 20% per round (at most down to half the configured value); it snaps back as soon as they move away. Reacts faster near the edge, at the cost of more frequent sampling and probing</string>
+    <string name="np_adaptive_margin_title">Adaptive sensitivity</string>
+    <string name="np_adaptive_margin_summary">In dBm (default 10). A sample counts as &quot;near a threshold&quot; when RSRP is within this of either threshold, SINR within a third of it, or ping within 5x of it</string>
+    <string name="np_tasker_enabled_title">Enable Tasker / Locale interface</string>
+    <string name="np_tasker_enabled_summary">Off by default. When off, the command receiver, the Locale plugin and its config screen are disabled at the system level, so Tasker broadcasts cannot wake this app at all (strictly zero background cost). Turn it on to use Tasker actions immediately; users upgrading from 1.2.0 must turn it on once</string>
     <string name="np_datacard_manage_title">SIM cards &amp; rules</string>
     <string name="np_datacard_manage_summary">Manage the default data SIM, the dual-SIM policy and Wi-Fi rules</string>
     <string name="np_about_title">About NetPilot</string>

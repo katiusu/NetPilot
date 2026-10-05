@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.katiusu.netpilot.R
 import com.katiusu.netpilot.core.monitor.MonitorSettings
+import com.katiusu.netpilot.core.tasker.TaskerGate
 import com.katiusu.netpilot.prefs.OptionSpec
 import com.katiusu.netpilot.prefs.OptionType
 import com.katiusu.netpilot.ui.component.pref.HookOptionsPage
@@ -90,12 +91,18 @@ private fun featureSections(specs: List<OptionSpec>): List<HookSection> = listOf
         specs = specsByKeys(
             specs,
             MonitorSettings.KEY_INTERVAL,
+            MonitorSettings.KEY_ADAPTIVE_INTERVAL,
+            MonitorSettings.KEY_ADAPTIVE_MARGIN,
             MonitorSettings.KEY_AUTO_START,
         ),
     ),
     HookSection(
         titleRes = R.string.np_section_datacard,
         specs = listOf(specByKey(specs, KEY_DATACARD_MANAGE)),
+    ),
+    HookSection(
+        titleRes = R.string.np_section_tasker,
+        specs = listOf(specByKey(specs, TaskerGate.KEY_ENABLED)),
     ),
     HookSection(
         titleRes = R.string.np_section_other,
@@ -281,11 +288,41 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         sliderValueLabelRes = R.string.np_fake5g_interval_title,
     ),
     OptionSpec(
+        key = MonitorSettings.KEY_ADAPTIVE_INTERVAL,
+        type = OptionType.SWITCH,
+        titleRes = R.string.np_adaptive_interval_title,
+        summaryRes = R.string.np_adaptive_interval_summary,
+        defaultBoolean = MonitorSettings.DEFAULT_ADAPTIVE_INTERVAL,
+    ),
+    OptionSpec(
+        key = MonitorSettings.KEY_ADAPTIVE_MARGIN,
+        type = OptionType.SLIDER,
+        titleRes = R.string.np_adaptive_margin_title,
+        summaryRes = R.string.np_adaptive_margin_summary,
+        defaultFloat = MonitorSettings.DEFAULT_ADAPTIVE_MARGIN.toFloat(),
+        // 2 dBm 已经窄到几乎不触发自适应，30 dBm 宽到会把间隔长期压在低位：
+        // 两端都是「这个开关等于没有/等于常开」的边界，所以范围就取在它们之间。
+        sliderMin = 2f,
+        sliderMax = 30f,
+        sliderStep = 1f,
+        sliderDecimals = 0,
+        sliderUnitRes = R.string.np_unit_dbm,
+        sliderValueLabelRes = R.string.np_adaptive_margin_title,
+        dependsOn = MonitorSettings.KEY_ADAPTIVE_INTERVAL,
+    ),
+    OptionSpec(
         key = MonitorSettings.KEY_AUTO_START,
         type = OptionType.SWITCH,
         titleRes = R.string.np_monitor_autostart_title,
         summaryRes = R.string.np_monitor_autostart_summary,
         defaultBoolean = true,
+    ),
+    OptionSpec(
+        key = TaskerGate.KEY_ENABLED,
+        type = OptionType.SWITCH,
+        titleRes = R.string.np_tasker_enabled_title,
+        summaryRes = R.string.np_tasker_enabled_summary,
+        defaultBoolean = TaskerGate.DEFAULT_ENABLED,
     ),
     OptionSpec(
         key = KEY_DATACARD_MANAGE,

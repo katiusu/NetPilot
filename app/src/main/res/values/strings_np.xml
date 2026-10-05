@@ -46,6 +46,7 @@
     <string name="np_section_policy">降级与恢复策略</string>
     <string name="np_section_monitor">监控</string>
     <string name="np_section_datacard">数据卡</string>
+    <string name="np_section_tasker">自动化接口</string>
     <string name="np_section_other">其它</string>
 
     <!-- 功能页配置项 -->
@@ -79,6 +80,12 @@
     <string name="np_fake5g_interval_summary">单位 秒（默认 60）。前台服务每隔这么久采一次，越大越省电、反应越慢；打开监控页会临时加快到 5 秒</string>
     <string name="np_monitor_autostart_title">开机自动启动监控</string>
     <string name="np_monitor_autostart_summary">重启后自动恢复监控与降级状态</string>
+    <string name="np_adaptive_interval_title">自适应采样间隔</string>
+    <string name="np_adaptive_interval_summary">默认开启。当读数靠近判定门限时，采样间隔逐轮缩短 20%（最多缩到设置值的一半）；一旦远离门限立刻恢复成设置值。靠近门限时反应更快，代价是更频繁的采样与网络探测</string>
+    <string name="np_adaptive_margin_title">自适应灵敏度</string>
+    <string name="np_adaptive_margin_summary">单位 dBm（默认 10）。RSRP 距任一门限不超过此值、SINR 不超过它的三分之一、Ping 不超过它的 5 倍时，算作「靠近门限」</string>
+    <string name="np_tasker_enabled_title">启用 Tasker / Locale 接口</string>
+    <string name="np_tasker_enabled_summary">默认关闭。关闭时命令接收器、Locale 插件与插件配置界面会被系统直接禁用，Tasker 广播不会唤醒本应用（后台开销严格为零）；打开后 Tasker 动作立即生效。从 1.2.0 升级上来的用户需要重新打开一次</string>
     <string name="np_datacard_manage_title">数据卡与规则</string>
     <string name="np_datacard_manage_summary">管理默认数据卡、双卡策略与 Wi-Fi 规则</string>
     <string name="np_about_title">关于 NetPilot</string>

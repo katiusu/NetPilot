@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.2.0**（`versionName = "1.2.0"`，`versionCode = 2026100501`） |
+| 版本 | **1.3.0**（`versionName = "1.3.0"`，`versionCode = 2026100502`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 36） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -145,6 +145,7 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
   1.2.0 起这层快采**只在「应用在前台 + 当前标签页就是监控页」时运行**：以前它退到后台也不会停，会每 5 秒发起一次真实 HTTP 探测（每小时最多 720 次），是待机耗电的头号来源。页面本身的表现没有任何变化。
   采样循环内部还会**每轮独立确认一次屏幕状态**（`PowerManager.isInteractive`）：Compose 的重组要等下一帧，屏幕关闭后系统不再投递 VSYNC，只靠上面那个开关盖不住「关屏仍在探测」这条路径。
 - **屏幕关闭且信号非强时不再做无用探测**（1.2.0）：判定只在信号强于阈值时才会用到 Ping，所以在「屏幕关 + 状态机空闲 + 信号非强」时整轮跳过网络探测，监控页/通知会显示「已跳过探测（屏幕关闭）」而不是「无响应」。屏幕亮起、进入降级态、或信号变强都会立刻恢复真实探测。逐分支证明见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §3。
+- **自适应采样间隔（1.3.0，默认开）**：读数靠近任一判定门限时，采样间隔逐轮缩短 20%（60s → 48s → 38s → 30s），最多缩到设置值的一半；一旦远离就立刻恢复成设置值。它只决定「多久采一次」，**不参与判定** —— 门限比较仍然用原始读数，所以自适应不可能改变降级/恢复结果（证明见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6）。远离门限时不产生任何额外开销。
 - **SINR 读不到时不再是干巴巴的「未知」**：显示结构化原因（未插卡 / 缺 `READ_PHONE_STATE` / 缺定位权限 / 定位服务未开 / 当前制式不上报 SINR 等），并且 SINR 先试 `signalStrength`、再回退 `allCellInfo`。
 - **「判定标准（当前生效值）」区**：把两条规则用当前生效阈值拼成人话，含「过差规则已关闭」这种状态。
 - **日志页**：最近 400 条运行记录，可清空。
@@ -164,6 +165,8 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 
 - **安全广播**：发命令 `com.katiusu.netpilot.action.*`，收事件 `com.katiusu.netpilot.event.*`
 - **Locale 插件**：Tasker 的「插件 → NetPilot」里直接配置动作与条件
+
+- **总开关（1.3.0，默认关）**：功能页 →「自动化接口」→「启用 Tasker / Locale 接口」。关着时命令接收器、Locale 插件与插件配置界面被**系统层面禁用**，Tasker 广播连派发都不会发生（不是「收到再忽略」，而是彻底的零唤醒）。**从 1.2.0 升级上来的用户需要重新打开一次。**
 
 详见 [`docs/TASKER.md`](docs/TASKER.md) 与 [`docs/QS_TILE.md`](docs/QS_TILE.md)。
 
@@ -214,6 +217,18 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 **自动更新（新）**：关于页新增「检查更新」入口，启动时也会按设置项（默认开）检查一次 [Releases](../../releases)。**只查、只提示**：有新版会弹出对话框显示版本号与更新说明，点「立即更新」用浏览器打开 Releases 页——不静默下载、不自动安装、不做任何后台轮询。
 
 **合规（1.2.0）**：`targetSdk` 34 → **36**（`compileSdk` 保持 37）。已逐条核对 edge-to-edge、预测性返回、前台服务 `specialUse`、BOOT_COMPLETED 限制、16 KB 页对齐（`zipalign -c -P 16` 实测通过），本应用均无需额外改动。
+
+### 14. 自动化接口开关 + 自适应采样间隔（1.3.0）
+
+| 改动 | 以前 | 现在 | 你能感觉到的差异 |
+|---|---|---|---|
+| Tasker / Locale 接口 | 三个组件常驻启用，Tasker 每发一次命令都会拉起本应用进程 | **默认关闭**；开关一关就由系统禁用这三个组件，广播不派发、进程不被唤醒 | 不用自动化的用户不再被 Tasker 广播唤醒；用自动化的人需要去功能页打开一次 |
+| 采样间隔 | 固定等于设置值 | 读数靠近判定门限时逐轮缩短 20%（最多到一半），远离立刻恢复 | 临界信号下判定反应更快；功能页多出「自适应采样间隔」开关和「自适应灵敏度」滑块 |
+| 保活拉起失败 | 被系统拒绝时只有一句笼统的「保活广播处理失败」，而且日志还会跟着写一条「已拉起」 | 单独识别 `ForegroundServiceStartNotAllowedException`，写明原因与下一步操作 | 排查「保活没生效」时日志能说清是电池优化没关 |
+
+**自适应只改采样节奏，不改判定**：门限比较仍然使用原始读数，`isNearThreshold()` 怎么变都不可能改变降级/恢复结果 —— 它在代码里没有任何判定路径的调用者。逐条说明、以及一项「查证后判定不安全、因此没做」的候选，见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6。
+
+**新增配置项（1.3.0）**：`np_tasker_enabled` 默认**关**、`np_fake5g_adaptive_interval` 默认**开**、`np_fake5g_adaptive_margin` 默认 **10 dBm**。既有阈值与采样间隔的默认值**一个都没动**。
 
 ---
 
@@ -286,7 +301,7 @@ app/src/main/java/com/katiusu/netpilot/
 │   ├── keepalive/               # 心跳闹钟 + 被杀后重启接收器
 │   ├── datacard/                # 双卡策略（SimPolicyMode）+ Wi-Fi 规则引擎
 │   ├── qs/                      # 两个 QS 磁贴
-│   ├── tasker/                  # 广播 + Locale 插件 + 桥接
+│   ├── tasker/                  # 广播 + Locale 插件 + 桥接 + TaskerGate（接口总开关）
 │   └── update/                  # 检查 GitHub Releases 更新（只查、只提示、不静默安装）
 ├── ui/
 │   ├── screen/                  # 首页 / 功能 / 监控 / 日志 / 设置 / 数据卡 / 关于

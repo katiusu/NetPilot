@@ -10,6 +10,7 @@ import com.katiusu.netpilot.ui.screen.features.featureSpecs
 import com.katiusu.netpilot.core.NetPilot
 import com.katiusu.netpilot.core.priv.ControlManager
 import com.katiusu.netpilot.core.tasker.TaskerBridge
+import com.katiusu.netpilot.core.tasker.TaskerGate
 import kotlinx.coroutines.runBlocking
 
 class TemplateApp : Application() {
@@ -25,6 +26,9 @@ class TemplateApp : Application() {
         NetPilot.install(this)
         // Tasker/Locale 事件上报（订阅 MonitorEngine 的 StateFlow，幂等）
         TaskerBridge.init(this)
+        // Tasker / Locale 接口总开关（默认关）：把系统里的组件启用状态对齐到配置。
+        // 关闭时这两个接收器在系统层面就是禁用的，Tasker 广播不会拉起本进程。
+        TaskerGate.install(this)
         pruneShizukuOrphans()
     }
 

@@ -160,9 +160,13 @@
             </intent-filter>
         </service>
 
-        <!-- ===== Tasker 广播命令接收器 ===== -->
+        <!-- ===== Tasker 广播命令接收器 =====
+             默认 android:enabled="false"：Tasker 接口由应用内的「启用 Tasker / Locale 接口」
+             开关控制（默认关）。关闭时 TaskerGate 用 PackageManager 在系统层面禁用本接收器，
+             广播连派发都不会发生（零唤醒）；打开开关后会被置为 ENABLED。 -->
         <receiver
             android:name=".core.tasker.TaskerCommandReceiver"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.katiusu.netpilot.action.SET_NETWORK_MODE" />
@@ -182,6 +186,7 @@
              不能设 android:permission（Tasker 拿不到本应用的权限，设了插件即失效）。 -->
         <receiver
             android:name=".core.tasker.LocaleFireReceiver"
+            android:enabled="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.twofortyfouram.locale.intent.action.FIRE_SETTING" />
@@ -192,6 +197,7 @@
         <!-- ===== Locale / Tasker 插件：配置界面 ===== -->
         <activity
             android:name=".tasker.TaskerEditActivity"
+            android:enabled="false"
             android:exported="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.NetPilot">

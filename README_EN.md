@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.2.0** (`versionCode 2026100501`) |
+| Version | **1.3.0** (`versionCode 2026100502`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -90,7 +90,7 @@ The app deliberately contains **no vendor-specific branches**. It writes `settin
 
 ### Automation
 
-Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpilot.event.*`, plus a Locale plugin for Tasker. See [`docs/TASKER.md`](docs/TASKER.md).
+Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpilot.event.*`, plus a Locale plugin for Tasker. See [`docs/TASKER.md`](docs/TASKER.md). **Off by default since 1.3.0** — the command receiver, the Locale plugin and its config screen are disabled at the system level until you turn on Settings → Features → "Enable Tasker / Locale interface", so Tasker broadcasts cannot wake the app at all. Users upgrading from 1.2.0 must turn it on once.
 
 ---
 
@@ -155,6 +155,18 @@ See **[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)** for before/after numbers,
 **In-app update check (new)**: an entry in About, plus an optional check at launch (setting defaults to on) against [Releases](../../releases). **Check and notify only** — a dialog shows the version and release notes, and "Update now" opens the Releases page in your browser. No silent downloads, no auto-install, no background polling.
 
 **Play compliance (1.2.0)**: `targetSdk` 34 → **36** (`compileSdk` stays 37). Edge-to-edge, predictive back, the `specialUse` foreground service, BOOT_COMPLETED restrictions and 16 KB page alignment (`zipalign -c -P 16` passes) were each checked; nothing else was needed.
+
+### Tasker switch + adaptive sampling interval (1.3.0)
+
+| Change | Before | After | What you notice |
+|---|---|---|---|
+| Tasker / Locale interface | Three components always enabled; every Tasker command cold-started the app process | **Off by default**; flipping the switch disables those components at the system level, so broadcasts are never delivered | If you don't use automation you're no longer woken by Tasker; if you do, turn it on once in Features |
+| Sampling interval | Always the configured value | Shrinks by 20% per round while readings stay near a threshold (at most down to half), and snaps back as soon as they move away | Faster reactions on marginal signal; Features gains an "Adaptive sampling interval" switch and an "Adaptive sensitivity" slider |
+| Keep-alive start failure | A single vague "keep-alive broadcast failed", plus a misleading "service started" line right after it | `ForegroundServiceStartNotAllowedException` is detected separately and logged with the cause and the next step | When keep-alive silently fails, the log now says it is the battery-optimization setting |
+
+**Adaptive sampling changes the cadence only, never the decision**: threshold comparisons still use the raw readings, and `isNearThreshold()` has no caller on any decision path — it cannot change a downgrade or recovery outcome. The full write-up, plus one candidate that was investigated and *rejected as unsafe*, is in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6.
+
+**New settings (1.3.0)**: `np_tasker_enabled` (**off**), `np_fake5g_adaptive_interval` (**on**), `np_fake5g_adaptive_margin` (**10 dBm**). No existing threshold or interval default was touched.
 
 ---
 

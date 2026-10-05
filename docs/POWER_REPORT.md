@@ -416,58 +416,198 @@ val maySkipProbe = allowProbeSkip          // ① 只有引擎主循环传 true�
 
 ---
 
+## 6. 1.3.0 增补（自动化接口开关 + 自适应采样间隔）
+
+> 本节记录 1.3.0 相对 1.2.0 的**增量**。§1–§5 的结论**没有被推翻**，基线数字仍然有效。
+
+### 6.1 改动清单
+
+| # | 改动（文件） | 级别 | 省电原理 | 前 | 后 | 验证方式 | 回滚 |
+|---|---|---|---|---|---|---|---|
+| C8 | `app/build.gradle.kts` | 版本 | — | 1.2.0 / 2026100501 | **1.3.0 / 2026100502** | `aapt2 dump badging` | 改回两行 |
+| C9 | 新增 `core/tasker/TaskerGate.kt`；改 `AndroidManifest.xml`（三处 `android:enabled="false"`）、`prefs/ConfigState.kt`（`observe`）、`TemplateApp.kt`、`ui/screen/features/FeaturesPage.kt` | **零行为变化**（不改判定、不改既有默认值） | Tasker / Locale 广播不再冷启动应用进程 | 三个 exported 组件常驻启用，任何 Tasker 命令都会拉起进程（冷启动 + 读配置 + 写日志） | 默认禁用；开关一关就由**系统层面**禁用组件，广播**不派发** | 见 §6.4 自测 17.1；`dumpsys package com.katiusu.netpilot` 看组件 Enabled 状态 | 删掉三行 `android:enabled="false"` + 去掉 `TaskerGate.install()` |
+| C10 | `core/monitor/MonitorModels.kt`（`adaptiveIntervalEnabled` / `adaptiveMarginDbm` + `isNearThreshold`）、`MonitorSettings.kt`、`MonitorEngine.kt`（`adaptiveIntervalMs`）、`FeaturesPage.kt` | **零行为变化**（不改判定） | 只在读数靠近门限时变快；远离时零额外开销 | 固定间隔 | 靠近门限时 60s→48s→38.4s→30s，下限 50% 且不低于 15s；**一轮**远离立刻回到设置值 | §6.4 自测 17.2 | 关掉「自适应采样间隔」开关即回到固定间隔 |
+| C11-① | `core/keepalive/KeepAliveReceiver.kt` | 零行为变化（只改日志） | 把「静默失效」变成可诊断（不是省电，是排障能力） | 被系统拒绝时只记一句笼统的「保活广播处理失败」，且**无条件**跟着记一条「已拉起」 | 单独识别 `ForegroundServiceStartNotAllowedException`，ERROR 写明原因与下一步；只有真起来了才记「已拉起」 | §6.4 自测 17.3 | 还原成原来的 `runCatching` 包法 |
+| C11-② | **查证后判定不安全，未实施** | — | — | — | — | 见 §6.2 | — |
+| C11-③ | 跑一次 `:app:lintDebug` 排查 `NewApi` 误用 | 验证 | — | 从未跑过 | **`NewApi` 0 条** | 见 §6.5 | — |
+
+### 6.2 C11-② 为什么没做：冷却期内跳过探测**会**改变判定
+
+原设想是「已进入降级态、且正处于冷却期时，这一轮探测没有消费者，可以跳过」。逐行核对
+`core/monitor/AutoDowngradeEngine.kt` 的 `applyTransition()` 后否掉：
+
+- 已降级分支里，`noResponse` 的消费点在**冷却闸门之前**：先 `if (noResponse || !hasCellular) { noNetFailCount += 1 … }`，
+  之后才是 `cooldownRemainingMs > 0 → return`。
+- 所以在冷却期内跳过探测 ⇒ `pingMs == null` ⇒ `noResponse == true` ⇒ `noNetFailCount` 被凭空 +1
+  ⇒ 两轮之后触发一次**本不该发生**的 rollback。（`probeSkipped` 只挡 C2 那条路径，而 C2 只在「未降级」时生效。）
+
+要安全地做，就得让 `noResponse` 认识「因为冷却期而跳过」这第四种含义 —— 那已经是在改状态机的输入语义，
+不是在省电。按「漏检比多耗电糟糕得多」的原则，**不做**。
+
+> 这条记录本身是本次的产出之一：它把「想当然能省」和「算过才知道不能」区分开了。
+
+### 6.3 C10 的正确性边界：`isNearThreshold()` 没有任何判定路径的调用者
+
+`SignalSnapshot.isNearThreshold(thresholds)` 的返回值只进 `MonitorEngine.adaptiveIntervalMs()` → `delay()`；
+全仓调用点只有 `core/monitor/MonitorEngine.kt` 里那一处，**没有**任何 `judge()` / `applyTransition()` /
+`isStrongSignal()` 路径读它。因此：
+
+- 它无论返回什么，降级/恢复的结果都不可能改变；
+- 它只改变「下一次采样在**什么时候**」，不改变「每一次采样得到**什么**」；
+- 关掉开关（`adaptiveIntervalEnabled = false`）时 `adaptiveIntervalMs` 走
+  `base.coerceIn(15, 3600) * 1000L`，与 1.2.0 的表达式**逐字符相同**。
+
+「靠近门限」的三条带宽由 `margin`（默认 10 dBm）按 1 : 1/3 : 5 推导（10 dBm / 3 dB / 50 ms）。
+读不到的项一律**不算靠近**：读不到就无法判断远近，按「不靠近」处理能干净地退化回固定间隔，
+不会因为「读不到」就长期贴着快采跑。
+
+### 6.4 量化对照（1.2.0 → 1.3.0）
+
+| 项 | 1.2.0 | 1.3.0 |
+|---|---|---|
+| Tasker 广播唤醒应用进程次数 | 每条命令 1 次冷启动 | **0**（接口关闭时；打开后与 1.2.0 相同） |
+| 空闲且远离门限时的采样节奏 | 60 秒 | 60 秒（**不变** —— 这是「远离就恢复」的直接结果） |
+| 靠近门限时的判定滞后 | 最坏 60 秒 | 最坏 30 秒（间隔缩到一半后），即**反应快一倍** |
+| 靠近门限时的探测开销 | 60 次/小时 | 最多 120 次/小时（**本版唯一一处开销上升**，只在读数贴着门限时发生，且上限 2 倍） |
+| 判定语义 | — | **未变**（见 §6.3） |
+
+如实说明：C10 **不是**省电改动，它是一处「用可选的探测密度换反应速度」的权衡，而且默认开启。
+它之所以符合本轮要求，是因为它**不改变判定结果**，且远离门限时开销严格不变（零额外开销）。
+更在意待机耗电的话，直接关掉「自适应采样间隔」就能回到 1.2.0 的节奏。
+
+### 6.5 lint 结果（C11-③）
+
+`lint { checkReleaseBuilds = false }` 意味着 release 构建不会拦 `NewApi`；`compileSdk 37` + `minSdk 34`
+的组合下，误用高版本 API 会在 Android 14 设备上直接崩。本次单独跑了一次：
+
+```bash
+cd /sdcard/Project/NetPilot
+./gradlew :app:lintDebug --console=plain \
+  -Dorg.gradle.jvmargs="-Xmx1024m -XX:MaxMetaspaceSize=768m -XX:+UseSerialGC -Dfile.encoding=UTF-8" \
+  -Dorg.gradle.configuration-cache.parallel=false
+```
+
+> 必须手工放大 Metaspace：`_build.sh` 固定用 `-XX:MaxMetaspaceSize=320m`，lint 的 work action 会以
+> `> Metaspace` 失败 —— 和项目里 `lint { checkReleaseBuilds = false }` 要绕开的是同一个坑。
+
+报告：`app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt`
+
+| issue | 条数 | 与本轮的关系 |
+|---|---|---|
+| **`NewApi`** | **0** | **本次要查的就是它：1.3.0 新增代码没有误用高版本 API** |
+| `UnusedResources` | 112 | 既有（模板遗留资源）；**本次新增的 7 条文案一条都没被判为未使用** |
+| `UseKtx` / `PluralsCandidate` | 16 / 13 | 既有，风格类 |
+| `ObsoleteSdkInt` | 5 | 既有（minSdk 34 下的冗余版本判断） |
+| `PrivateApi` | 1 | 既有且刻意（`TelephonyReflection` 读隐藏 API） |
+| `StaticFieldLeak` | 1 | **误报**：`MonitorEngine.engine` 是 object 字段，`AutoDowngradeEngine` 持有的是 `applicationContext`，不泄漏 Activity |
+| `MissingPermission` | 1（Error） | **误报**：`SubscriptionSwitcher.activeSlotList()` 整段包在 `try { … } catch (e: Throwable)` 里，`SecurityException` 已被处理 |
+| `BatteryLife` | 1 | 既有且刻意（`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，保活需要） |
+| `HighAppVersionCode` | 1（Error） | 既有约定（`2026100502` 式构建号，离 `Integer.MAX_VALUE` 还很远） |
+| `OldTargetApi` | 1 | `targetSdk 36 < compileSdk 37`，符合预期（Play 当前只要求 36） |
+
+两条 `Error` 都是既有误报/既有约定，**没有一条是 1.3.0 引入的**。新增代码引入的新 issue 数为 **0**
+（唯一打在新文案上的是 `TypographyFractions`「用 ⅓ 代替 1/3」，已改文案，现在也消失了）。
+
+### 6.6 产物与验收（1.3.0）
+
+构建（debug 与 release **分两次**跑，同一次会 `java.lang.OutOfMemoryError: Metaspace`）：
+
+```bash
+cd /sdcard/Project/NetPilot
+bash _build.sh :app:assembleDebug   --no-configuration-cache   # === EXIT=0 ===  APK_CHECK … -> OK
+bash _build.sh :app:assembleRelease --no-configuration-cache   # === EXIT=0 ===  APK_CHECK … -> OK
+```
+
+> `--no-configuration-cache` 在本容器不是可选项：Gradle 配置缓存命中时，APK 会沿用**上一版**的
+> `versionCode` / `versionName` —— 构建全绿、APK 时间戳也是新的，值却还是旧的（本次首次构建就实测到
+> `versionCode='2026100501' versionName='1.2.0'`）。核对方法是 `aapt2 dump badging … | head -1`，
+> 详见 [`TESTING.md` §14.3 第 3 条](TESTING.md)。
+
+| 项 | 值 |
+|---|---|
+| `NetPilot-1.3.0-2026100502-debug.apk` | 43,757,363 B · MD5 `6c12a5ab0e6cb959871430fb6ecbcbcc` |
+| `NetPilot-1.3.0-2026100502-release.apk` | 33,146,557 B · MD5 `0e528d52fef4390ca48fd5e6cd3069e8` · SHA-256 `744b44e10f1bf8ade85f5035560ca41aa67a214d0646c1feed7987b51841b84a` |
+| `aapt2 dump badging` | `versionCode='2026100502' versionName='1.3.0'` · `targetSdkVersion:'36'` · `compileSdkVersion='37'` |
+| `native-code` | `arm64-v8a` `armeabi-v7a` `x86` `x86_64` |
+| release 签名 | `CN=NetPilot, OU=Mobile, O=katiusu, L=Beijing, ST=Beijing, C=CN`，SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.0.1 / 1.1.0 / 1.2.0 同一把） |
+| debug 签名 | `C=US, O=Android, CN=Android Debug`，SHA-256 `eae3bb7895cd29ddfda1deaae6a4177c4a00f429916c2a6427f13109c208675c` |
+| 16 KB 页 | `zipalign -c -P 16 -v 4` 打在 release 包上 → **Verification successful** |
+| APK 内的 Tasker 组件 | 三个组件都是 `android:enabled="false"`（`aapt2 dump xmltree --file AndroidManifest.xml` 命中 3 次）—— 证明 C9 的「默认关」是打进包里的，不只是源码里写着 |
+| 架构自检 | `scannedFiles: 107`、`cycles: []`、超大模块 5 个（与 1.2.0 相同，`MonitorPage.kt` 710 行）。注意该分析器 `moduleCount: 0` / `importEdges: 0`，**解析不出 Kotlin 包导入**，「无环」只能算弱证据 |
+| 来源核查 | `python3 tools/check_provenance.py` → `checked 7 pair(s), worst duplicated share 27.2% (threshold 25%)`，唯一 REVIEW 项是既有的 `ShizukuControllerService.kt`（已标注 reviewed：AIDL 接口签名 + 类声明）；1.3.0 新增的 `TaskerGate.kt` 不复制任何第三方代码 |
+
+交付物（放在仓库根，`.apk` 已被 `.gitignore` 排除，不会进版本库）：
+`NetPilot-1.3.0-2026100502-debug.apk`、`NetPilot-1.3.0-2026100502-release.apk`。
+
 ## 附录 A：改动文件与回滚
 
-**新增文件（2 个）**
+**1.3.0 新增文件（1 个）**
+
+```
+app/src/main/java/com/katiusu/netpilot/core/tasker/TaskerGate.kt   C9
+```
+
+**1.2.0 新增文件（2 个）**
 
 ```
 app/src/main/java/com/katiusu/netpilot/core/update/UpdateChecker.kt
 app/src/main/java/com/katiusu/netpilot/ui/component/UpdateDialog.kt
 ```
 
-**修改文件（17 个）**
+**修改文件**
 
 ```
-app/build.gradle.kts                                            C6
+app/build.gradle.kts                                            C6 / C8
+app/src/main/AndroidManifest.xml                                C9
 MainActivity.kt                                                 C1 / C7
-TemplateApp.kt                                                  C5
+TemplateApp.kt                                                  C5 / C9
 core/NetPilot.kt                                                C2
-core/keepalive/KeepAliveReceiver.kt                             C3
+core/keepalive/KeepAliveReceiver.kt                             C3 / C11-①
 core/keepalive/KeepAliveScheduler.kt                            C3
 core/keepalive/KeepAliveState.kt                                C3
 core/monitor/AutoDowngradeEngine.kt                             C2
 core/monitor/LogStore.kt                                        C4
-core/monitor/MonitorEngine.kt                                   C2
-core/monitor/MonitorModels.kt                                   C2
+core/monitor/MonitorEngine.kt                                   C2 / C10
+core/monitor/MonitorModels.kt                                   C2 / C10
 core/monitor/MonitorService.kt                                  C2 / C3 / C5
+core/monitor/MonitorSettings.kt                                 C10
 core/monitor/SignalReader.kt                                    C2
 core/priv/ControlManager.kt                                     C5
 core/priv/shizuku/ShizukuController.kt                          C5
+prefs/ConfigState.kt                                            C9
 ui/screen/about/AboutPage.kt                                    C7
-ui/screen/monitor/MonitorPage.kt                                C2
+ui/screen/features/FeaturesPage.kt                              C9 / C10
+ui/screen/monitor/MonitorPage.kt                                C1 / C2
 res/values/strings_monitor.xml                                  C2
 res/values-en/strings_monitor.xml                               C2
+res/values/strings_np.xml                                       C8 / C9 / C10
+res/values-en/strings_np.xml                                    C8 / C9 / C10
 ```
 
 **回滚方式**
 
 | 粒度 | 做法 |
 |---|---|
-| 全部回滚 | `git checkout -- .` + 删除两个新增的 `.kt` 文件（本次改动**全部未提交**，`git status` 即可看到） |
-| 只回滚某一项 | 按 §2 每行的「回滚」列操作，都是 1–3 处的定点还原；其中 C2 有一键开关：把 `MonitorEngine` 主循环的 `e.tick(allowProbeSkip = true)` 改回 `e.tick()` |
-| 真机回滚 | 用 1.2.0 覆盖安装前先导出配置；要退回 1.1.0 直接装回 `NetPilot-1.1.0-2026100500-{debug,release}.apk`（同一把签名 key，可覆盖安装，`SharedPreferences` 不会被清） |
+| 全部回滚 | `git checkout -- .` + 删除三个新增的 `.kt` 文件（`git status` 就能看到全部改动） |
+| 只回滚某一项 | 按 §2 / §6.1 每行的「回滚」列操作，都是 1–3 处的定点还原 |
+| 不改代码就能关掉的项 | C2：把 `MonitorEngine` 主循环的 `e.tick(allowProbeSkip = true)` 改回 `e.tick()`（唯一的代码级开关）；C9：设置里关掉「Tasker / Locale 接口」；C10：设置里关掉「自适应采样间隔」 |
+| 真机回滚 | 同一把签名 key，可直接覆盖安装任一旧版 APK（`SharedPreferences` 不会被清）：`NetPilot-1.2.0-2026100501-{debug,release}.apk`、`NetPilot-1.1.0-2026100500-{debug,release}.apk` |
 
 ## 附录 B：报告里每张表的复现命令
 
 ```bash
-# 版本 / targetSdk / 原生库
-/opt/android-sdk/build-tools/36.0.0/aapt2 dump badging NetPilot-1.2.0-2026100501-release.apk
+# 版本 / targetSdk / 原生库（发布前必看：核对 versionCode/versionName 与 build.gradle.kts 是否一致）
+/opt/android-sdk/build-tools/36.0.0/aapt2 dump badging NetPilot-1.3.0-2026100502-release.apk | head -1
 
 # 签名（注意：36.0.0 里没有 apksigner，用 35.0.0 的）
-/opt/android-sdk/build-tools/35.0.0/apksigner verify --print-certs NetPilot-1.2.0-2026100501-release.apk
+/opt/android-sdk/build-tools/35.0.0/apksigner verify --print-certs NetPilot-1.3.0-2026100502-release.apk
 
 # 16 KB 页对齐
-/opt/android-sdk/build-tools/36.0.0/zipalign -c -P 16 -v 4 NetPilot-1.2.0-2026100501-release.apk
+/opt/android-sdk/build-tools/36.0.0/zipalign -c -P 16 -v 4 NetPilot-1.3.0-2026100502-release.apk
+
+# Tasker 三个组件在打包后的清单里确实是 enabled=false（期望输出 3，见 §6.6）
+/opt/android-sdk/build-tools/36.0.0/aapt2 dump xmltree --file AndroidManifest.xml \
+  NetPilot-1.3.0-2026100502-release.apk | grep -c "enabled.*false"
 
 # 来源 / 许可复核
 python3 tools/check_provenance.py
@@ -477,7 +617,12 @@ adb shell dumpsys meminfo com.katiusu.netpilot      # 只接受包名，不接�
 adb shell ps -A | grep np_service
 adb logcat -s NetPilot
 
-# 构建（debug 与 release 必须分两次跑）
-bash _build.sh :app:assembleDebug
-bash _build.sh :app:assembleRelease
+# 构建（debug 与 release 必须分两次跑；--no-configuration-cache 的原因见 TESTING.md §14.3 第 3 条）
+bash _build.sh :app:assembleDebug   --no-configuration-cache
+bash _build.sh :app:assembleRelease --no-configuration-cache
+
+# lint（必须手工放大 Metaspace：_build.sh 的 320m 会让 lintAnalyzeDebug 以 > Metaspace 失败）
+./gradlew :app:lintDebug --console=plain \
+  -Dorg.gradle.jvmargs="-Xmx1024m -XX:MaxMetaspaceSize=768m -XX:+UseSerialGC -Dfile.encoding=UTF-8" \
+  -Dorg.gradle.configuration-cache.parallel=false
 ```

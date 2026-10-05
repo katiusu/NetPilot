@@ -1,17 +1,17 @@
 # NetPilot 测试指南
 
-产物：`NetPilot-1.2.0-2026100501-release.apk`（签名版）与 `NetPilot-1.2.0-2026100501-debug.apk`
-（`versionName = 1.2.0`、`versionCode = 2026100501`，`minSdk 34 / targetSdk 36`，包名 `com.katiusu.netpilot`。
+产物：`NetPilot-1.3.0-2026100502-release.apk`（签名版）与 `NetPilot-1.3.0-2026100502-debug.apk`
+（`versionName = 1.3.0`、`versionCode = 2026100502`，`minSdk 34 / targetSdk 36`，包名 `com.katiusu.netpilot`。
 release 与 debug 是两把签名，不能互相覆盖安装）。
 
 APK 只交付、不安装。要自己装的话：
 
 ```bash
-adb install -r NetPilot-1.2.0-2026100501-release.apk
+adb install -r NetPilot-1.3.0-2026100502-release.apk
 ```
 
-> 本次优化（1.2.0）的验收步骤单独写在 **§16**；改动的量化数据与真值表证明在
-> [`POWER_REPORT.md`](POWER_REPORT.md)。
+> 1.2.0 的耗电优化验收步骤写在 **§16**，1.3.0 的增量（自动化接口开关 + 自适应采样间隔）写在 **§17**；
+> 改动的量化数据与真值表证明在 [`POWER_REPORT.md`](POWER_REPORT.md)。
 
 ---
 
@@ -271,6 +271,11 @@ Tasker / 快捷设置磁贴触发的操作也会一并失效。
 
 ## 8. Tasker 联动
 
+> **1.3.0 起这个接口默认关闭。** 先到「功能页 → 自动化接口 → 启用 Tasker / Locale 接口」打开它，
+> 否则命令接收器、Locale 插件与插件配置界面都被**系统层面禁用**：Tasker 动作会报找不到组件，
+> `adb shell am broadcast` 也**不会有任何反应**（连日志都不会写，因为广播根本没派发到应用）。
+> 逐条验证步骤见本文 §17.1。
+
 命令（Tasker → 系统 → 发送意图）：
 
 | 动作 | Action |
@@ -290,7 +295,7 @@ Locale 插件：Tasker → 任务 → 插件 → NetPilot。完整 extra 键表�
 
 > 本轮只改了**用户可见文案**（「假 5G」→「网络质量」），**action / 条件 / extra 键名一个都没动**，老配置继续可用。
 > 已知偏差：在 NetPilot 界面里手动切制式 / 换卡**不会**发 `MODE_CHANGED` / `DATA_SIM_CHANGED`。
-> 总开关关闭时，这些入口会明确失败并写日志。
+> 总开关关闭时，这些入口会明确失败并写日志。**接口开关关闭时则是连广播都收不到**（见 §17.1）。
 
 ## 9. 配置导入导出
 
@@ -317,11 +322,11 @@ Locale 插件：Tasker → 任务 → 插件 → NetPilot。完整 extra 键表�
 
 ## 12. 关于页
 
-- 版本行显示 `1.2.0 (2026100501)`（`versionName` + `longVersionCode`）。
+- 版本行显示 `1.3.0 (2026100502)`（`versionName` + `longVersionCode`）。
 - **GitHub 仓库**（<https://github.com/katiusu/NetPilot>）是**单独一张卡片**，在「许可证 / 开源依赖」
   那张卡**上方**，两者不混在一起；下方那张卡放许可证与依赖两个入口。
 - 三个入口点击都应正常打开浏览器（没有可用浏览器时弹 Toast，**不能崩页**）。
-- **「检查更新」行（1.2.0 新增）**：在 GitHub 卡里、仓库入口**下方**，摘要先显示「当前版本 1.2.0」；
+- **「检查更新」行（1.2.0 新增）**：在 GitHub 卡里、仓库入口**下方**，摘要先显示「当前版本 1.3.0」；
   点击后摘要变「检查中…」，随后二选一：
   - 有新版 → 弹 `WindowDialog`（标题「发现新版本」，正文是版本号 + release notes，限高可滚动），
     点「稍后」关闭、点「立即更新」用浏览器打开 Releases 页；
@@ -392,7 +397,7 @@ python3 -c "import zipfile;n=zipfile.ZipFile('app/build/outputs/apk/release/app-
 # 期望：152 True True
 ```
 
-### 14.3 两个已踩过的坑
+### 14.3 三个已踩过的坑
 
 1. **`optimizeReleaseResources` 会静默打出坏包（根因已实证）。**
    AGP 9.4.1 的资源优化任务调用的是
@@ -418,6 +423,23 @@ python3 -c "import zipfile;n=zipfile.ZipFile('app/build/outputs/apk/release/app-
    - **识别方法**：产物条目数应为 152 且含 manifest/arsc；若只有 85 个条目、没有 res，就是坏包，不要发布。
      `_build.sh` 现在会在构建后自动做这项自检（`APK_CHECK:` 行）。
 2. **Gradle 偶发 `FileHasher … java.io.IOException: Operation not permitted`。** 容器里文件监视（inotify）在 sdcardfs 上不稳定，已设 `org.gradle.vfs.watch=false`；若仍出现，先杀干净残留的 `GradleDaemon` 进程再重试。
+3. **配置缓存可能让 APK 带上上一版的 `versionCode` / `versionName`（构建全绿也照样发生）。**
+   2026-10-05 实测：`app/build.gradle.kts` 已改成 `1.3.0 / 2026100502`，`:app:assembleDebug` 报
+   `BUILD SUCCESSFUL`、APK 时间戳也是新的，但
+
+   ```bash
+   /opt/android-sdk/build-tools/36.0.0/aapt2 dump badging app/build/outputs/apk/debug/app-debug.apk | head -1
+   # 实测输出：package: … versionCode='2026100501' versionName='1.2.0'   ← 上一版的值
+   ```
+
+   原因是配置缓存（`org.gradle.configuration-cache=true`）命中了上一次配置期的结果，沿用了那时读到的
+   版本字段。**最阴的地方在于它不是全局失效**：清单文件这类「执行期输入」会被正确重新读取
+   （同一轮构建里 `android:enabled="false"` 这种 manifest 改动是生效的），只有构建脚本里的值会残留。
+   - **发布前必须核对**：`aapt2 dump badging <apk> | head -1` 的 `versionCode` / `versionName`
+     要和 `app/build.gradle.kts` 里写的逐字符一致。不一致就是这个坑，不是 APK 构建错了。
+   - **两条出路**（任选）：`rm -rf .gradle/configuration-cache`，或构建时显式 `--no-configuration-cache`
+     （`_build.sh` 会把额外参数原样转给 Gradle，写法：`bash _build.sh :app:assembleDebug --no-configuration-cache`）。
+   - `gradle.properties` 里的 `org.gradle.configuration-cache=true` 是项目为提速刻意开的，**不要为这个坑关掉它**。
 
 ## 15. 来源与许可（clean-room 重写 + Apache-2.0）
 
@@ -525,3 +547,58 @@ python3 tools/check_provenance.py
   自动拉回手段，取消它等于砍掉保活兜底。降低的是每次唤醒的代价，不是次数。
 - **通知/状态串新文案**「已跳过探测（屏幕关闭）」是有意的：原来的「无响应」把「没测」和「测了没通」
   混为一谈，会误导排障。
+
+---
+
+## 17. 自动化接口开关 + 自适应采样间隔（1.3.0）
+
+### 17.1 Tasker / Locale 接口默认关闭（真正的零唤醒）
+
+1. **全新安装**（或清除数据）后，确认开关是关的：「功能页 → 自动化接口 → 启用 Tasker / Locale 接口」应为**关**。
+2. 关着时发一条命令，确认**什么都不发生**：
+
+   ```bash
+   adb shell am broadcast -a com.katiusu.netpilot.action.GET_STATUS -p com.katiusu.netpilot
+   ```
+
+   期望：没有回执广播、应用日志页**不新增任何条目**。这是本项的关键验收点——「收到命令再判开关」
+   也会让日志多一条，只有组件真的被禁用才会连日志都没有。
+3. 打开开关。期望日志页出现三条（顺序不定）：
+   `…TaskerCommandReceiver 已启用`、`…LocaleFireReceiver 已启用`、`…TaskerEditActivity 已启用`。
+4. 再发第 2 步的命令：这次应收到 `com.katiusu.netpilot.event.RESULT` 回执，extra 里带当前状态。
+5. **关掉开关**：日志出现三条「已禁用」，Tasker 的「插件 → NetPilot」从列表里消失；
+   再发命令应重新变成「什么都不发生」。
+6. **升级路径**：从 1.2.0 覆盖安装到 1.3.0 后开关会回到「关」（manifest 默认值）。
+   这是刻意的——**确认一下，然后重新打开**。
+
+> 为什么用「系统层禁用组件」而不是「收到命令再判开关」：后者仍然会冷启动应用进程
+> （初始化配置 + 写日志），对不用自动化的用户就是纯浪费。禁用组件是唯一能做到「零唤醒」的方式。
+
+### 17.2 自适应采样间隔（默认开）
+
+前置：功能页把「采样间隔」设成一个便于观察的值（比如 60 秒），确认「自适应采样间隔」开着。
+
+1. **不靠近门限时不变快**：正常强信号下看日志，**不应**出现「读数靠近判定门限」；
+   相邻两次采样间隔应约等于设置值（容差 ±10 秒，受 tick 调度影响）。
+2. **靠近门限时逐轮变快**：把手机移到信号临界位置（或临时把「强信号阈值」调高、
+   把「自适应灵敏度」调大），日志应依次出现 `本轮 48s` → `本轮 38s` → `本轮 30s`，
+   到设置值的一半（60 → 30 秒）后不再继续缩短。
+3. **离开门限立刻恢复**：回到强信号位置，日志出现「读数已远离判定门限，采样间隔恢复为 60s」，
+   之后间隔回到设置值。**一轮**不靠近就恢复，不是等几轮。
+4. **技术下限仍然生效**：采样间隔设 30 秒（下限 15 秒）时最短到 15 秒；设 20 秒时算法给出的
+   10 秒会被 15 秒顶住。这是刻意的：判定阈值是固定的，采样再密也不会让读数更准。
+5. **关掉自适应**：第 2/3 步的日志与节奏变化全部消失，间隔恒等于设置值。
+6. **判定语义回归**：整段测试期间自动降级的触发/恢复、冷却期、无网回退行为与 1.2.0 一致。
+
+### 17.3 保活拉起失败：日志必须说得清（1.3.0 修复）
+
+在**没有**关闭电池优化的机器上，等一次心跳（15 分钟），或直接发重启广播：
+
+```bash
+adb shell am broadcast -a com.katiusu.netpilot.action.KEEPALIVE_RESTART -p com.katiusu.netpilot
+```
+
+- 期望：日志里出现一条 **ERROR**「系统拒绝了后台启动前台服务（未授予「忽略电池优化」）…」，
+  并且**不再**跟着一条「已拉起监控前台服务」。这两条同时出现就是 1.2.0 那版自相矛盾的日志。
+- 到系统设置里为本应用关闭电池优化后重试：应变成正常的「已拉起监控前台服务」。
+

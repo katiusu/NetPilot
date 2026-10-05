@@ -43,6 +43,12 @@ object MonitorSettings {
 
     const val KEY_AUTO_START = "np_monitor_autostart"
 
+    /** 自适应采样间隔的总开关。 */
+    const val KEY_ADAPTIVE_INTERVAL = "np_fake5g_adaptive_interval"
+
+    /** 自适应「靠近门限」的宽度（dBm）。 */
+    const val KEY_ADAPTIVE_MARGIN = "np_fake5g_adaptive_margin"
+
     /**
      * 网络质量降级的默认开关状态：**默认开启**。
      *
@@ -75,6 +81,31 @@ object MonitorSettings {
     const val DEFAULT_WEAK_RSRP = -110
     /** 「信号过差」规则默认开启：弱 5G 往往比稳定的 4G 更慢、更耗电。 */
     const val DEFAULT_WEAK_SIGNAL = true
+
+    /** 自适应采样间隔默认开启：用户要的是「该快的时候快」，而不是自己算什么时候该快。 */
+    const val DEFAULT_ADAPTIVE_INTERVAL = true
+
+    /** 自适应灵敏度默认 10 dBm（含义见 [DowngradeThresholds.adaptiveMarginDbm]）。 */
+    const val DEFAULT_ADAPTIVE_MARGIN = 10
+
+    /**
+     * 每连续靠近门限一轮，采样间隔就乘这个系数（0.8 = 每轮缩短 20%）。
+     *
+     * 定成常量而不是可调项：用户要的是「靠近门限时更灵敏」这个效果，不是一套采样节奏
+     * 调参面板；真觉得采样太吵，直接关掉 [KEY_ADAPTIVE_INTERVAL] 就行。
+     * 放在这里而不是 MonitorEngine：它和 [ADAPTIVE_MIN_FACTOR] 是一对，分开容易只改一半
+     * —— 步长改小了却不改下限，间隔就会一步撞到底。
+     */
+    const val ADAPTIVE_STEP_FACTOR = 0.8f
+
+    /**
+     * 缩短的下限：最多缩到配置间隔的一半，且永不突破技术下限 15 秒。
+     *
+     * 用「比例」而不是绝对秒数：[KEY_INTERVAL] 允许把间隔设到 1800 秒，一个绝对值下限
+     * 对 15 秒和 1800 秒的含义完全不同（前者会被下限顶住等于没自适应，后者会缩到极密），
+     * 比例下限对两端都成立。
+     */
+    const val ADAPTIVE_MIN_FACTOR = 0.5f
     /**
      * 读取整型配置。
      *
@@ -103,6 +134,8 @@ object MonitorSettings {
         toggleEndc = ConfigState.bool(KEY_TOGGLE_ENDC, false),
         weakRsrpThreshold = effectiveWeakRsrp(),
         downgradeOnWeakSignal = ConfigState.bool(KEY_WEAK_SIGNAL, DEFAULT_WEAK_SIGNAL),
+        adaptiveIntervalEnabled = ConfigState.bool(KEY_ADAPTIVE_INTERVAL, DEFAULT_ADAPTIVE_INTERVAL),
+        adaptiveMarginDbm = intValue(KEY_ADAPTIVE_MARGIN, DEFAULT_ADAPTIVE_MARGIN),
     )
 
     /**

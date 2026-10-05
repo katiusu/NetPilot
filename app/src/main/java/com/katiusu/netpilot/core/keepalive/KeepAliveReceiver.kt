@@ -1,5 +1,6 @@
 package com.katiusu.netpilot.core.keepalive
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -67,11 +68,38 @@ class KeepAliveReceiver : BroadcastReceiver() {
             LogStore.debug(TAG, "$reason：监控循环已在运行，无需处理")
             return
         }
-        // Android 12+ 在后台启动前台服务受限，这里可能抛
-        // ForegroundServiceStartNotAllowedException —— 交给 runCatching 记日志即可：
-        // 重试同样会被拦，让用户能在日志页看到真实原因比静默失败强。
-        ContextCompat.startForegroundService(app, Intent(app, MonitorService::class.java))
-        LogStore.info(TAG, "$reason：已拉起监控前台服务")
+        // Android 12+ 在后台启动前台服务受限，可能抛 ForegroundServiceStartNotAllowedException。
+        //
+        // 为什么必须单独 catch 这一种：外层 onReceive 的 runCatching 会把所有异常统一记成
+        // 「保活广播处理失败：xxx」——用户只看到一句笼统的失败，既不知道是权限问题、也不知道
+        // 自己能做什么。而这条异常有明确且用户可自解的成因（没关闭电池优化），所以它值得
+        // 一条自己的、带下一步建议的 ERROR。重试没有意义（同样的后台状态会被同样拦下），
+        // 能改善的只有「把原因说清楚」这一点。
+        val started = runCatching {
+            ContextCompat.startForegroundService(app, Intent(app, MonitorService::class.java))
+        }.fold(
+            onSuccess = { true },
+            onFailure = { e ->
+                if (e is ForegroundServiceStartNotAllowedException) {
+                    LogStore.error(
+                        TAG,
+                        "$reason：系统拒绝了后台启动前台服务（未授予「忽略电池优化」）。" +
+                            "重试同样会被拒绝，请到系统设置里为本应用关闭电池优化，等下一次心跳",
+                    )
+                } else {
+                    LogStore.warn(
+                        TAG,
+                        "$reason：拉起前台服务失败：${e.message ?: e.javaClass.simpleName}",
+                    )
+                }
+                false
+            },
+        )
+        // 只有真的起来了才记「已拉起」：原实现在调用之后无条件记成功，一旦被系统拦住，
+        // 日志里会同时留下一条 ERROR 和一条「已拉起」，排查时自相矛盾。
+        if (started) {
+            LogStore.info(TAG, "$reason：已拉起监控前台服务")
+        }
     }
 
     private companion object {
