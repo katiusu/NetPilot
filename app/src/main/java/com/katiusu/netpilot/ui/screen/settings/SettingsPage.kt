@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.katiusu.netpilot.AppSettings
 import com.katiusu.netpilot.LocaleHelper
 import com.katiusu.netpilot.R
 import com.katiusu.netpilot.core.NetPilot
@@ -44,6 +45,7 @@ import com.katiusu.netpilot.core.ServicesGate
 import com.katiusu.netpilot.core.keepalive.KeepAliveScheduler
 import com.katiusu.netpilot.core.monitor.MonitorEngine
 import com.katiusu.netpilot.core.priv.SystemCompatInfo
+import com.katiusu.netpilot.core.priv.WriteDiag
 import com.katiusu.netpilot.core.priv.WriteVerification
 import com.katiusu.netpilot.ui.screen.about.AboutActivity
 import com.katiusu.netpilot.prefs.ConfigBackup
@@ -360,6 +362,9 @@ fun SettingsPageView(
 
                         // ---------- 系统兼容性 ----------
                         var verifyWrite by remember { mutableStateOf(WriteVerification.enabled(context)) }
+                        // 详细诊断日志（默认关）：把 core/priv 写入链路的每一步都记进日志页。
+                        // 与上面的回读校验相邻，因为两者回答的是同一类问题：写下去到底有没有生效。
+                        var verboseLog by remember { mutableStateOf(WriteDiag.enabled(context)) }
                         // 机型信息一整个生命周期都不变，remember 一次即可（读取要反射，别每帧做）。
                         val compat = remember { SystemCompatInfo.read(context) }
                         val unknownText = stringResource(R.string.ka_compat_unknown)
@@ -367,6 +372,16 @@ fun SettingsPageView(
                         val noChannelText = stringResource(R.string.ka_compat_channel_none)
                         val readNoValueText = stringResource(R.string.ka_compat_read_no_value)
                         val probed = compatProbe
+                        // 1.5.0：两项都是「真探测出来的值」，null 时按现有约定显示「检测中…」/「未知」。
+                        val authStoreText = probed?.authStore?.ifBlank { unknownText }
+                            ?: if (compatProbing) probingText else unknownText
+                        val writeMethodsText = probed?.writeMethods?.ifBlank { unknownText }
+                            ?: if (compatProbing) probingText else unknownText
+                        // 运营商识别（1.5.0）：由当前默认数据卡的 simOperator（MCC+MNC）反查，
+                        // 识别不出时写「不在内置运营商表中」而不是「未知」—— 那句话本身就是排查线索，
+                        // 它说明表里缺这张卡，而不是这台机器读不到卡。
+                        val carrierText = probed?.carrierInfo?.ifBlank { unknownText }
+                            ?: if (compatProbing) probingText else unknownText
                         // 直接显示系统报出来的型号，不做拼接、不补市场名：用户要的就是
                         // 「这台机器是什么」，加括号补一个名字反而像两行信息挤在一格里。
                         val modelText = compat.model.ifBlank { unknownText }
@@ -430,6 +445,21 @@ fun SettingsPageView(
                                     style = MiuixTheme.textStyles.footnote2,
                                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
                                 )
+                                SwitchPreference(
+                                    title = stringResource(R.string.ka_verbose_title),
+                                    summary = stringResource(R.string.ka_verbose_summary),
+                                    checked = verboseLog,
+                                    onCheckedChange = { on ->
+                                        verboseLog = on
+                                        WriteDiag.setEnabled(context, on)
+                                    }
+                                )
+                                MiuixText(
+                                    text = stringResource(R.string.ka_verbose_hint),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                                )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_vendor),
                                     summary = compat.vendor.ifBlank { unknownText },
@@ -453,12 +483,24 @@ fun SettingsPageView(
                                     summary = channelText,
                                 )
                                 CompatInfoRow(
+                                    title = stringResource(R.string.ka_compat_carrier),
+                                    summary = carrierText,
+                                )
+                                CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_write),
                                     summary = writeText,
                                 )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_read),
                                     summary = readText,
+                                )
+                                CompatInfoRow(
+                                    title = stringResource(R.string.ka_compat_write_methods),
+                                    summary = writeMethodsText,
+                                )
+                                CompatInfoRow(
+                                    title = stringResource(R.string.ka_compat_auth_store),
+                                    summary = authStoreText,
                                 )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_verify_state),
@@ -502,6 +544,31 @@ fun SettingsPageView(
                                     color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                     style = MiuixTheme.textStyles.footnote2,
                                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
+
+                        // ---------- 更新（自动检查） ----------
+                        // 为什么默认开：检查只在应用被打开时跑一次（MainActivity 的 LaunchedEffect），
+                        // 完全不起后台轮询，所以打开它不会给这一轮「削后台唤醒」的目标加项。
+                        // 回写用 copy：整对象覆盖会把主题、语言等字段一起冲成默认值。
+                        var autoUpdate by remember { mutableStateOf(AppSettings.load(context).checkUpdateOnLaunch) }
+                        SmallTitle(text = stringResource(R.string.settings_update))
+                        Card(
+                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)
+                        ) {
+                            Column {
+                                SwitchPreference(
+                                    title = stringResource(R.string.check_update_on_launch),
+                                    summary = stringResource(R.string.check_update_on_launch_summary),
+                                    checked = autoUpdate,
+                                    onCheckedChange = { on ->
+                                        autoUpdate = on
+                                        AppSettings.save(
+                                            context,
+                                            AppSettings.load(context).copy(checkUpdateOnLaunch = on)
+                                        )
+                                    }
                                 )
                             }
                         }

@@ -8,9 +8,11 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import android.util.Log
 import com.katiusu.netpilot.core.mode.NetworkMode
+import com.katiusu.netpilot.core.priv.AuthStore
 import com.katiusu.netpilot.core.priv.ChannelStatus
 import com.katiusu.netpilot.core.priv.ControlMethod
 import com.katiusu.netpilot.core.priv.NetworkControlChannel
+import com.katiusu.netpilot.core.priv.WriteDiag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -88,6 +90,22 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
 
     override suspend fun setMode(subId: Int, mode: NetworkMode): Boolean =
         call(false) { it.setNetworkMode(subId, mode.value) }
+
+    override suspend fun readAuthStore(subId: Int): AuthStore.Read = AuthStore.decodeRead(
+        call(AuthStore.encodeRead(AuthStore.Read.Unavailable("Shizuku 用户服务未绑定"))) { it.readAuthStore(subId) }
+    ).also { read ->
+        // 详细日志：这一层出错时，应用进程侧只看到「读不到」，无法区分「用户服务没绑上」
+        // （binder 根本没发出去）和「provider 拒绝了」（binder 发出去了、返回 DENIED）。
+        WriteDiag.detail("shizuku 权威存储读取：subId=$subId -> ${AuthStore.describeRead(read)}")
+    }
+
+    override suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write = AuthStore.decodeWrite(
+        call(AuthStore.encodeWrite(AuthStore.Write.Failed("Shizuku 用户服务未绑定"))) { it.writeAuthStore(subId, networkTypes) }
+    ).also { write ->
+        WriteDiag.detail(
+            "shizuku 权威存储写入：subId=$subId 目标=$networkTypes -> ${AuthStore.describeWrite(write)}"
+        )
+    }
 
     override suspend fun getDefaultSlot(): Int = call(-1) { it.getDefaultSlot() }
 

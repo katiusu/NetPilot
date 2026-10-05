@@ -52,11 +52,16 @@ class NetworkModeBitmaskMapper(
         }
     }.toLongArray()
 
-    /** RIL mode -> bitmask. Modes outside the table (including negatives) get everything. */
-    fun toBitmask(networkMode: Int): Long {
-        val families = MODE_FAMILIES.getOrNull(networkMode) ?: return ALL_NETWORK_TYPES
-        return expand(families)
-    }
+    /**
+     * RIL mode -> bitmask；**本机映射表里没有这个模式时返回 null**。
+     *
+     * 为什么不再「表外一律返回全部网络类型」（1.5.0 的行为变更）：旧写法会把一个算不出掩码的
+     * 模式写成 `ALL_NETWORK_TYPES`，也就是**把这张卡放开到所有制式**。于是「锁 5G」这样的请求
+     * 可能变成「不限制任何制式」，方向与用户意图完全相反，而且没有任何提示。现在把
+     * 「这个模式我算不出掩码」如实交回调用方，由它拒绝写入并把事实记进日志。
+     */
+    fun toBitmask(networkMode: Int): Long? =
+        MODE_FAMILIES.getOrNull(networkMode)?.let { expand(it) }
 
     /** Unites the bitmask constants of every family marked in [families]. */
     private fun expand(families: Int): Long {
@@ -117,7 +122,12 @@ class NetworkModeBitmaskMapper(
         /** Highest RIL mode the family table defines. */
         const val MAX_NETWORK_MODE = 33
 
-        /** Union of every bit the RIL mode table can produce; used for unknown modes. */
+        /**
+         * 表内所有模式能产生的位并集（31 位）。
+         *
+         * 1.5.0 起**不再**作为「表外模式的返回值」使用（见 [toBitmask]）；保留它是为了给
+         * 「全部网络类型」这个位掩码一个有名有据的常量，诊断与文档都要引用它。
+         */
         const val ALL_NETWORK_TYPES = (1L shl 31) - 1
 
         private const val TELEPHONY_MANAGER = "android.telephony.TelephonyManager"

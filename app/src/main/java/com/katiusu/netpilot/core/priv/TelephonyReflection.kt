@@ -3,6 +3,7 @@ package com.katiusu.netpilot.core.priv
 import android.content.Context
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.util.Log
 import com.katiusu.netpilot.core.mode.NetworkModeBitmaskMapper
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -31,6 +32,13 @@ object TelephonyReflection {
 
     /** subId / 卡槽 / 网络模式共用的失败哨兵，沿用上游 API「-1 表示没有」的约定。 */
     private const val UNAVAILABLE = -1
+
+    /** [describeWriteMethods] 要汇报的三条写入方法，顺序与 [setNetworkMode] 的尝试顺序一致。 */
+    private val WRITE_METHODS = arrayOf(
+        "setAllowedNetworkTypesForReason",
+        "setAllowedNetworkTypes",
+        "setPreferredNetworkType"
+    )
 
     private val bitmaskMapper get() = NetworkModeBitmaskMapper.platform
     private val userReason get() = NetworkModeBitmaskMapper.reasonUser
@@ -135,6 +143,8 @@ object TelephonyReflection {
         is Binding.Ready -> binding.stub
         is Binding.Broken -> {
             Log.e(TAG, "$caller 反射获取 ITelephony 失败：${binding.reason}")
+            // 这是整条写入链的第一个断点，必须让它在应用内日志页可见。
+            WriteDiag.warn("$caller 反射获取 ITelephony 失败：${binding.reason}")
             null
         }
     }
@@ -170,20 +180,65 @@ object TelephonyReflection {
      * 两个维度都必须试：同一方法名可能有多个重载，而同一个重载还可能因为形参类型与本机固件
      * 不符、或者要到 invoke 时才暴露问题而失败。所以一次失败只意味着换下一个组合，绝不外抛。
      */
-    private fun dispatch(receiver: Any, target: String, candidates: List<Candidate>): CallResult {
+    private fun dispatch(
+        receiver: Any,
+        target: String,
+        candidates: List<Candidate>,
+        trace: ((String) -> Unit)? = null,
+        onDenied: ((String) -> Unit)? = null
+    ): CallResult {
+        var overloads = 0
         for (method in receiver.javaClass.methods) {
             if (method.name != target) continue
+            overloads++
             for (candidate in candidates) {
                 if (!candidate.fits(method.parameterTypes)) continue
                 try {
-                    return CallResult.Hit(candidate.fire(receiver, method))
-                } catch (_: Exception) {
-                    // 该组合在本机不可用，继续试下一个
+                    val value = candidate.fire(receiver, method)
+                    trace?.invoke("$target(${describeTypes(method.parameterTypes)}) 调用成功 -> $value")
+                    return CallResult.Hit(value)
+                } catch (failure: Exception) {
+                    // 该组合在本机不可用，继续试下一个。
+                    // 为什么失败也要留痕：这里的失败原因（多数是 SecurityException:
+                    // MODIFY_PHONE_STATE）正是「回读通过却切不动」最关键的证据，
+                    // 改造前它被 catch (_: Exception) 完全吞掉，连 logcat 都查不到。
+                    // 1.5.0：权限类失败单独交给 onDenied 无条件记录 —— 它不是「某个重载不适用」，
+                    // 而是「这个身份根本不允许写」，是两种性质完全不同的失败。
+                    permissionDenial(failure)?.let { denial -> onDenied?.invoke("$target $denial") }
+                    trace?.invoke("$target(${describeTypes(method.parameterTypes)}) 抛异常 ${describe(failure)}")
                 }
             }
         }
+        trace?.invoke(
+            if (overloads == 0) "$target 在本机 ITelephony 上不存在"
+            else "$target 的 $overloads 个重载都不匹配或全部抛异常"
+        )
         return CallResult.Miss
     }
+
+    /**
+     * 把「权限不够」从一堆失败里认出来，并连当前 uid 一起说清楚。
+     *
+     * 为什么值得单独做：`MODIFY_PHONE_STATE` 是 `signature|privileged` 权限，`com.android.shell`
+     * （Shizuku 无线调试的 uid 2000）**不持有**；而 `settings put` 只需要 shell/root 的
+     * `WRITE_SECURE_SETTINGS`。所以「制式完全没切，写入与回读却一路绿灯」是一个可以精确指认的
+     * 状态，不该被压成一句笼统的「写入失败」。
+     */
+    private fun permissionDenial(failure: Throwable): String? {
+        var cause: Throwable? = failure
+        while (cause != null) {
+            if (cause is SecurityException) {
+                return "被权限拦下：SecurityException: " + cause.message + "（本进程 uid=" + Process.myUid() +
+                    "；写入需要 MODIFY_PHONE_STATE，它是 signature|privileged，当前身份不持有）"
+            }
+            cause = cause.cause
+        }
+        return null
+    }
+
+    /** 把方法形参类型压成一行短文本，供诊断日志记录「是哪个重载」失败了。 */
+    private fun describeTypes(parameterTypes: Array<Class<*>>): String =
+        parameterTypes.joinToString(", ") { it.simpleName }
 
     // ── 五种目标方法各自的形参形态 ────────────────────────────────────────
 
@@ -319,38 +374,98 @@ object TelephonyReflection {
     }
 
     /**
+     * 如实报告本机 `ITelephony` 上「写入」相关方法各存在几个重载。
+     *
+     * 为什么要设备自己说：[setNetworkMode] 里那「三条策略」是按 AOSP 的历史版本写出来的，
+     * 而 Android 14 起 `setAllowedNetworkTypes(long)` 与 `setPreferredNetworkType(int)` 在
+     * `ITelephony` 上已经不存在了。这件事以前只能靠读 AOSP 源码推断，现在由运行中的设备报告。
+     * 只做方法枚举，不需要任何权限（拿 binder 也不需要），因此应用进程也能调。
+     */
+    fun describeWriteMethods(): String {
+        val stub = when (val binding = bindTelephony()) {
+            is Binding.Ready -> binding.stub
+            is Binding.Broken -> return "ITelephony 不可达（" + binding.reason + "）"
+        }
+        return WRITE_METHODS.joinToString("；") { name ->
+            val overloads = stub.javaClass.methods.filter { it.name == name }
+            if (overloads.isEmpty()) {
+                name + " 不存在"
+            } else {
+                name + " " + overloads.size + " 个重载（" +
+                    overloads.joinToString(" / ") { describeTypes(it.parameterTypes) } + "）"
+            }
+        }
+    }
+
+    /**
      * 写入 [networkMode]，返回三条策略里是否有任意一条成功。
      *
-     * 三条策略按「新接口 -> 旧接口 -> 更旧接口」的顺序试，先成功即返回，不校验调制解调器是否
-     * 真的接受了这个模式。
+     * 三条策略按「新接口 -> 旧接口 -> 更旧接口」的顺序试，先成功即返回。
+     *
+     * 诊断口径（重要）：`setAllowedNetworkTypesForReason` 的返回值**就是调制解调器有没有
+     * 接受这个模式**，本方法只把它记进日志，**不参与返回值判定**。改成「modem 说 false 就算
+     * 失败」会改变降级/恢复的判定语义（外层会因此回落到 settings 写入或把这次切换标记为
+     * 失败），属于行为变更，必须先由用户确认。所以这里先把事实记全，让「到底卡在哪一步」可查。
      */
     fun setNetworkMode(subId: Int, networkMode: Int, caller: String): Boolean {
-        val stub = telephonyStub(caller) ?: return false
+        val stub = telephonyStub(caller)
+        if (stub == null) {
+            WriteDiag.warn("$caller 没有可用的 ITelephony 通道，写入未执行 subId=$subId mode=$networkMode")
+            return false
+        }
         return try {
             val networkTypes = bitmaskMapper.toBitmask(networkMode)
+            if (networkTypes == null) {
+                // 1.5.0：表外模式以前会被当成 ALL_NETWORK_TYPES 写下去 —— 一次「锁 5G」会变成
+                // 「不限制任何制式」。现在直接拒绝，并把「为什么没写」记进日志页。
+                WriteDiag.warn(
+                    "$caller 模式 $networkMode 不在本机位掩码表内（表内 0..${NetworkModeBitmaskMapper.MAX_NETWORK_MODE}），" +
+                        "已拒绝写入：继续写会把这张卡放开到全部制式"
+                )
+                return false
+            }
+            WriteDiag.detail("$caller 目标 subId=$subId mode=$networkMode -> 位掩码=$networkTypes")
+            // 逐候选的追踪只在详细模式开启时才构造；常态下 trace 为 null，零额外开销。
+            val trace: ((String) -> Unit)? = if (WriteDiag.isVerbose) { { WriteDiag.detail(it) } } else null
+            // 权限被拒时无条件记录（不受详细模式开关影响）：它是「写不进去」的直接根因。
+            val onDenied: (String) -> Unit = { WriteDiag.warn("$caller ITelephony 写入 $it") }
 
-            val reasonWrite = dispatch(stub, "setAllowedNetworkTypesForReason", allowedTypeWrites(subId, networkTypes))
+            val reasonWrite = dispatch(stub, "setAllowedNetworkTypesForReason", allowedTypeWrites(subId, networkTypes), trace, onDenied)
             if (reasonWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setAllowedNetworkTypesForReason 写入成功 subId=$subId mode=$networkMode")
+                WriteDiag.always(
+                    "$caller 策略1 setAllowedNetworkTypesForReason(subId=$subId, REASON_USER, $networkTypes) " +
+                        "已调用，modem 返回 ${reasonWrite.value}"
+                )
                 return true
             }
 
-            val legacyWrite = dispatch(stub, "setAllowedNetworkTypes", legacyAllowedTypeWrites(subId, networkTypes))
+            val legacyWrite = dispatch(stub, "setAllowedNetworkTypes", legacyAllowedTypeWrites(subId, networkTypes), trace, onDenied)
             if (legacyWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setAllowedNetworkTypes 写入成功 subId=$subId networkTypes=$networkTypes")
+                WriteDiag.always("$caller 策略2 setAllowedNetworkTypes(subId=$subId, $networkTypes) 已调用，返回 ${legacyWrite.value}")
                 return true
             }
 
-            val modeWrite = dispatch(stub, "setPreferredNetworkType", preferredTypeWrites(subId, networkMode))
+            val modeWrite = dispatch(stub, "setPreferredNetworkType", preferredTypeWrites(subId, networkMode), trace, onDenied)
             if (modeWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setPreferredNetworkType 写入成功 subId=$subId mode=$networkMode")
+                WriteDiag.always("$caller 策略3 setPreferredNetworkType(subId=$subId, $networkMode) 已调用，返回 ${modeWrite.value}")
                 return true
             }
 
             Log.w(TAG, "$caller 三条写入策略全部失败 subId=$subId mode=$networkMode")
+            // 1.5.0：把「本机实际有几条可用」一起报出来。AOSP 14 起 ITelephony 上只剩
+            // setAllowedNetworkTypesForReason，另两条已不存在 —— 也就是说这里的「三条策略」
+            // 在多数新机上是**一条**，不写清楚会被误读成「三条都试过了所以没辙」。
+            WriteDiag.warn(
+                "$caller ITelephony 写入策略全部失败 subId=$subId mode=$networkMode；本机实际可用：" +
+                    describeWriteMethods()
+            )
             false
         } catch (failure: Throwable) {
             Log.e(TAG, "$caller 写入网络模式时抛异常", failure)
+            WriteDiag.warn("$caller 写入网络模式抛异常：${describe(failure)}")
             false
         }
     }

@@ -216,6 +216,47 @@ object CarrierInfo {
      * 同样是 @hide。SIM 未就绪时 `simOperator` 会是空串，交给 [NetworkMode.carrierDefault] 兜底。
      */
     fun defaultModeForActiveSubscription(context: Context, subId: Int): Int {
+        val (mcc, mnc) = simMccMnc(context, subId)
+        val mode = runCatching { NetworkMode.carrierDefault(mcc, mnc) }.getOrNull()
+        return (mode ?: NetworkMode.fromValue(26))?.value ?: 26
+    }
+
+    /**
+     * 识别到的运营商名（「中国移动」…），识别不出返回空串。
+     *
+     * 为什么单独暴露一段：设置页要能显示「这台机器把这个号段认成了哪家」。运营商默认值表
+     * 本质是猜，猜得对不对必须看得见，否则改错了也没人知道。
+     * 用的是同一份 MCC/MNC，所以它和 [defaultModeForActiveSubscription] 的结果永远一致。
+     */
+    fun activeCarrierName(context: Context, subId: Int): String {
+        val (mcc, mnc) = simMccMnc(context, subId)
+        return runCatching { NetworkMode.carrierName(mcc, mnc) }.getOrNull().orEmpty()
+    }
+
+    /**
+     * 一行「识别结果 + 会用的默认制式」，给设置页的兼容性卡片用（1.5.0 新增）。
+     *
+     * 格式：`中国移动（46000）→ 32 NR/LTE/TDSCDMA/GSM`。表里没有这张卡时**明确写出来**，
+     * 而不是悄悄回落到 26 —— 回落是代码行为，但只有被看见才可能被发现是错的。
+     * 与 [defaultModeForActiveSubscription] 用同一份 MCC/MNC，两者结果永远一致。
+     */
+    fun activeCarrierSummary(context: Context, subId: Int): String {
+        val (mcc, mnc) = simMccMnc(context, subId)
+        if (mcc == null || mnc == null) return "读不到 SIM 的 MCC/MNC"
+        val mccMnc = mcc + mnc
+        val mode = runCatching { NetworkMode.carrierDefault(mcc, mnc) }.getOrNull()
+            ?: return "读到了 MCC/MNC（$mccMnc）但取不到默认制式"
+        val label = runCatching { NetworkMode.shortLabelOf(mode.value) }.getOrDefault("")
+        val name = runCatching { NetworkMode.carrierName(mcc, mnc) }.getOrNull()
+        return if (name != null) {
+            "$name（$mccMnc）→ ${mode.value} $label"
+        } else {
+            "不在内置运营商表中（$mccMnc）→ 回落 ${mode.value} $label"
+        }
+    }
+
+    /** `getSimOperator()` 的 MCC/MNC 拆分；长度不足（SIM 未就绪）时两者都是 null。 */
+    private fun simMccMnc(context: Context, subId: Int): Pair<String?, String?> {
         val mccMnc = runCatching {
             val manager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
             val scoped = if (subId >= 0) manager?.createForSubscriptionId(subId) else manager
@@ -223,8 +264,7 @@ object CarrierInfo {
         }.getOrDefault("")
         val mcc = if (mccMnc.length >= 5) mccMnc.substring(0, 3) else null
         val mnc = if (mccMnc.length >= 5) mccMnc.substring(3) else null
-        val mode = runCatching { NetworkMode.carrierDefault(mcc, mnc) }.getOrNull()
-        return (mode ?: NetworkMode.fromValue(26))?.value ?: 26
+        return mcc to mnc
     }
 
     /** 运营商展示名，读不到返回空串。 */

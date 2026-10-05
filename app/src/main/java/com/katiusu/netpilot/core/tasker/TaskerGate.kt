@@ -66,6 +66,23 @@ object TaskerGate {
                 apply(pm, ComponentName(app.packageName, app.packageName + suffix), enabled)
             }
         }
+        // 接口开着才接线事件出口。为什么「关着时连订阅都不建立」，而不是只靠发送侧判断：
+        // 两道门都要 —— 组件禁用只挡住「外面叫醒我们」，发送侧的门控（TaskerEventSender.broadcast）
+        // 才挡住「我们主动播出去」；而这里少建立两个常驻收集协程，关着时这块后台开销严格为零。
+        if (enabled) TaskerBridge.init(app)
+    }
+
+    /**
+     * 当前接口是否开启。事件出口（[TaskerEventSender]）在每次发送前查一次。
+     *
+     * 为什么用「查询」而不是「订阅」：发送是低频动作，一次 `ConfigState.bool` 只是读内存里的
+     * map；订阅要多存一份状态、还要在开关变化时同步它，一旦同步漏了，表现就是「接口关了、
+     * 事件照发」——最不容易发现的那种坏法。
+     */
+    fun isEnabled(context: Context): Boolean {
+        val app = context.applicationContext
+        runCatching { ConfigState.init(app) }
+        return ConfigState.bool(KEY_ENABLED, DEFAULT_ENABLED)
     }
 
     private fun apply(pm: PackageManager, component: ComponentName, enabled: Boolean) {

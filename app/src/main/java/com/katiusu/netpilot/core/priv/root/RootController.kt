@@ -4,12 +4,15 @@ import android.content.Context
 import android.telephony.SubscriptionManager
 import android.util.Log
 import com.katiusu.netpilot.core.mode.NetworkMode
+import com.katiusu.netpilot.core.mode.NetworkModeBitmaskMapper
+import com.katiusu.netpilot.core.priv.AuthStore
 import com.katiusu.netpilot.core.priv.ChannelStatus
 import com.katiusu.netpilot.core.priv.ControlMethod
 import com.katiusu.netpilot.core.priv.NetworkControlChannel
 import com.katiusu.netpilot.core.priv.RootShell
 import com.katiusu.netpilot.core.priv.SubscriptionSwitcher
 import com.katiusu.netpilot.core.priv.WriteVerification
+import com.katiusu.netpilot.core.priv.WriteDiag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -78,8 +81,29 @@ class RootController(private val context: Context) : NetworkControlChannel {
 
     override suspend fun setMode(subId: Int, mode: NetworkMode): Boolean {
         if (cliUsable) {
-            val viaCli = parseBool(runCli("setmode", subId.toString(), mode.value.toString()), SETMOD)
-            if (viaCli) return true
+            // 只有 setmode 才带详细诊断标志：getMode 每个采样周期都会调，
+            // 给它带上会让日志页被逐轮淹没，也平白多出跨进程输出。
+            val cliArgs = buildList {
+                add("setmode")
+                add(subId.toString())
+                add(mode.value.toString())
+                if (WriteDiag.isVerbose) add(WriteDiag.CLI_VERBOSE)
+            }
+            val viaCli = parseBool(runCli(*cliArgs.toTypedArray()), SETMOD)
+            if (viaCli) {
+                WriteDiag.always("Root 通道：app_process 子进程返回 SETMOD true（subId=$subId mode=${mode.value}）")
+                return true
+            }
+            WriteDiag.detail("Root 通道：app_process 未返回 true，回落 settings 兜底")
+        }
+        // 1.5.0：ITelephony 走不通（或 app_process 不可用）时，先写**权威存储**
+        // （TelephonyProvider 的 siminfo.allowed_network_types），再退到 settings。
+        // 理由见 PrivilegedCli.writeAuthStore：settings 里的 preferred_network_mode 是遗留兼容
+        // 字段，写完回读必然一致，根本发现不了「制式没变」。
+        val viaAuthStore = withContext(Dispatchers.IO) { authStoreSetMode(subId, mode.value) }
+        if (viaAuthStore) {
+            WriteDiag.always("Root 通道：已写入权威存储 siminfo.allowed_network_types（subId=$subId mode=${mode.value}）")
+            return true
         }
         val viaSettings = withContext(Dispatchers.IO) { settingsSetMode(subId, mode.value) }
         if (viaSettings) {
@@ -149,6 +173,11 @@ class RootController(private val context: Context) : NetworkControlChannel {
             "cli [${args.joinToString(" ")}] code=${result.code} " +
                 "out=${result.stdout.trim()} err=${result.stderr.trim()}"
         )
+        // 子进程没有 LogStore 上下文，它的详细诊断只能由这里逐行搬回应用内日志页。
+        // 只认 DIAG 前缀：MODE/SETMOD/SLOT 那些结果行是给解析用的，不进日志。
+        for (line in result.stdout.lineSequence()) {
+            if (line.trim().startsWith(WriteDiag.CLI_PREFIX)) WriteDiag.forwardCliLine(line)
+        }
         result.stdout.trim()
     }
 
@@ -201,15 +230,114 @@ class RootController(private val context: Context) : NetworkControlChannel {
         val verify = WriteVerification.enabled(context)
         if (!verify) Log.i(TAG, "回读校验已关闭：settings put 写一次即视为成功")
         val suffix = slotSuffix(subId)
+        WriteDiag.detail("settings 兜底：写入键 global preferred_network_mode$suffix = $modeValue（回读校验=$verify）")
         RootShell.exec("settings put global preferred_network_mode$suffix $modeValue")
-        if (!verify) return true
-        if (settingsGetMode(subId) == modeValue) return true
+        if (!verify) {
+            WriteDiag.always("settings 兜底：回读校验已关闭，settings put 执行完即视为成功（未验证 modem 是否接受）")
+            return true
+        }
+        val readBack = settingsGetMode(subId)
+        if (readBack == modeValue) {
+            // 为什么要把这句写进日志：这一条「成功」只证明 SettingsProvider 存下了这个值，
+            // 完全不能证明 modem 换了制式 —— 这正是「回读通过却切不动」最常见的误判来源。
+            WriteDiag.always(
+                "settings 兜底：回读一致（global preferred_network_mode$suffix 读回 $readBack）。" +
+                    "注意这只证明设置对象存下了该值，不等于调制解调器已接受"
+            )
+            return true
+        }
+        WriteDiag.detail("settings 兜底：回读不一致，键后缀='$suffix' 读回=$readBack 期望=$modeValue")
         if (suffix.isNotEmpty()) {
             RootShell.exec("settings put global preferred_network_mode $modeValue")
-            if (settingsGetMode(-1) == modeValue) return true
+            val readBackNoSuffix = settingsGetMode(-1)
+            if (readBackNoSuffix == modeValue) {
+                WriteDiag.always("settings 兜底：退回无后缀键 preferred_network_mode 后回读一致（读回 $readBackNoSuffix）")
+                return true
+            }
+            WriteDiag.detail("settings 兜底：无后缀键回读仍不一致（读回=$readBackNoSuffix 期望=$modeValue）")
         }
+        WriteDiag.warn("settings 兜底写入失败：回读始终拿不到 $modeValue（subId=$subId 键后缀='$suffix'）")
         return false
     }
+
+    /**
+     * 走 `su` 执行 `content update` 写权威存储，并做写后回读。
+     *
+     * 为什么放在这里而不是应用进程：这一列在 `siminfo` 里，写它需要特权身份；
+     * 应用进程既没有权限、也拿不到 provider（见 [AuthStore] 的注释）。
+     */
+    private suspend fun authStoreSetMode(subId: Int, modeValue: Int): Boolean {
+        val networkTypes = NetworkModeBitmaskMapper.platform.toBitmask(modeValue) ?: run {
+            WriteDiag.warn(
+                "Root 通道：模式 $modeValue 不在本机位掩码表内（表内 0..${NetworkModeBitmaskMapper.MAX_NETWORK_MODE}），" +
+                    "跳过权威存储写入"
+            )
+            return false
+        }
+        WriteDiag.detail("权威存储：目标 subId=$subId mode=$modeValue -> 位掩码=$networkTypes；开始 content update")
+        val result = RootShell.exec(AuthStore.updateCommand(networkTypes, subId))
+        // 详细日志：把退出码与两路原始输出都留下。「命令拼错」「provider 拒绝」「列不存在」
+        // 三种原因在上一层的分类里分别落到 Failed/Denied/Unavailable，但具体是哪一句，
+        // 只有原文说得清。
+        WriteDiag.detail(
+            "权威存储更新原始结果：exit=${result.code} " +
+                "stdout=${result.stdout.trim().take(240)} stderr=${result.stderr.trim().take(240)}"
+        )
+        val updated = AuthStore.classifyUpdate(result.code, result.stdout, result.stderr)
+        if (updated !is AuthStore.Write.Ok) {
+            WriteDiag.warn("权威存储写入未成功：${AuthStore.describeWrite(updated)}")
+            return false
+        }
+        return when (val back = readAuthStore(subId)) {
+            is AuthStore.Read.Value -> {
+                val matched = back.networkTypes == networkTypes
+                WriteDiag.always(
+                    "权威存储回读：${back.networkTypes}（期望 $networkTypes）-> ${if (matched) "一致" else "不一致"}；" +
+                        "注意这只说明权威存储里的值已更新，不等于调制解调器已接受"
+                )
+                matched
+            }
+            else -> {
+                WriteDiag.warn("权威存储写入后无法回读确认：${AuthStore.describeRead(back)}")
+                false
+            }
+        }
+    }
+
+    override suspend fun readAuthStore(subId: Int): AuthStore.Read = withContext(Dispatchers.IO) {
+        if (!RootShell.hasRoot()) return@withContext AuthStore.Read.Unavailable("未获得 Root 授权")
+        var last: AuthStore.Read = AuthStore.Read.Unavailable("没有可用的列")
+        for (column in AuthStore.CANDIDATE_COLUMNS) {
+            WriteDiag.detail("权威存储读取：subId=$subId 试探列 $column")
+            val result = RootShell.exec(AuthStore.queryCommand(column, subId))
+            WriteDiag.detail(
+                "权威存储读取原始结果：列=$column exit=${result.code} " +
+                    "stdout=${result.stdout.trim().take(240)} stderr=${result.stderr.trim().take(240)}"
+            )
+            val read = AuthStore.classifyQuery(result.code, result.stdout, result.stderr, column)
+            if (read is AuthStore.Read.Value || read is AuthStore.Read.Unset) return@withContext read
+            last = read
+        }
+        last
+    }
+
+    override suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write =
+        withContext(Dispatchers.IO) {
+            if (!RootShell.hasRoot()) return@withContext AuthStore.Write.Denied("未获得 Root 授权")
+            val result = RootShell.exec(AuthStore.updateCommand(networkTypes, subId))
+            WriteDiag.detail(
+                "权威存储写入原始结果：exit=${result.code} stdout=${result.stdout.trim().take(240)} " +
+                    "stderr=${result.stderr.trim().take(240)}"
+            )
+            val updated = AuthStore.classifyUpdate(result.code, result.stdout, result.stderr)
+            if (updated !is AuthStore.Write.Ok) return@withContext updated
+            when (val back = readAuthStore(subId)) {
+                is AuthStore.Read.Value ->
+                    if (back.networkTypes == networkTypes) AuthStore.Write.Ok
+                    else AuthStore.Write.Mismatch(back.networkTypes, networkTypes)
+                else -> AuthStore.Write.NotVerified(AuthStore.describeRead(back))
+            }
+        }
 
     private fun settingsGetDefaultSlot(): Int {
         val subId = RootShell.exec("settings get global multi_sim_data_call").stdout.trim().toIntOrNull()

@@ -18,6 +18,7 @@ import com.katiusu.netpilot.core.monitor.MonitorEngine
 import com.katiusu.netpilot.core.monitor.MonitorSettings
 import com.katiusu.netpilot.core.monitor.SignalSnapshot
 import com.katiusu.netpilot.core.priv.ControlManager
+import com.katiusu.netpilot.core.priv.WriteDiag
 import com.katiusu.netpilot.prefs.ConfigState
 import com.katiusu.netpilot.prefs.PrefsStore
 
@@ -50,6 +51,12 @@ object NetPilot {
         ConfigState.init(app)
         ControlManager.init(app)
         MonitorEngine.init(app)
+        // 为什么：LogStore 的落盘与冷启动回填都挂在 appContext 上 —— persist() 第一句就是
+        // `appContext ?: return`，load() 同理。此前这里只接线了 MonitorEngine，
+        // 唯独漏掉 LogStore.init ⇒ 应用内日志从来没有落过盘，每次冷启动日志页都是空的。
+        LogStore.init(app)
+        // 详细诊断开关同样要在启动时读进内存，否则第一次打点会被当成「关」。
+        WriteDiag.attach(app)
         NetPilotEvents.onSample = { ctx, snap -> DataCardEngine.onSample(ctx, snap) }
         // 反向门控：网络质量降级的执行者在 monitor 侧，但「当前默认数据卡开没开这条
         // 策略」在 datacard 侧。这里把判定注入 hub，engine 只问结果，不 import datacard，

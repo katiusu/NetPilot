@@ -45,5 +45,19 @@ interface NetworkControlChannel {
     /** (slot, subId) 列表 */
     suspend fun activeSlots(): List<Pair<Int, Int>>
 
+    /**
+     * 读一次**权威存储**（Android 11+ 是 TelephonyProvider 的 `siminfo.allowed_network_types`，
+     * 不是 `Settings.Global.preferred_network_mode`）。见 [AuthStore]。
+     *
+     * 给默认实现而不是抽象方法：这个接口有很多只读用途，没实现它的通道应当如实回答「未实现」，
+     * 而不是因为少一个方法编译不过 —— 更不该假装读到了一个值。
+     */
+    suspend fun readAuthStore(subId: Int): AuthStore.Read =
+        AuthStore.Read.Unavailable("通道 $label 未实现权威存储读取")
+
+    /** 写权威存储；默认未实现，同样返回事实而不是抛异常。 */
+    suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write =
+        AuthStore.Write.Failed("通道 $label 未实现权威存储写入")
+
     fun destroy()
 }

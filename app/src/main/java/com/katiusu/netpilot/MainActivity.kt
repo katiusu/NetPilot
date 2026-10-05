@@ -132,9 +132,6 @@ class MainActivity : ComponentActivity() {
 
         val savedSettings = AppSettings.load(this)
 
-        // 同步桌面图标可见状态，避免偏好与系统组件状态不一致。
-        LauncherIconController.apply(this, savedSettings.hideLauncherIcon)
-
         // 覆盖 XML 主题的窗口背景，兼容「系统浅色但应用内手动强制深色」的情况，避免启动白屏闪烁。
         applyWindowBackground(savedSettings.themeMode)
 
@@ -224,14 +221,16 @@ class MainActivity : ComponentActivity() {
             }
 
             fun persistState() {
+                // 为什么先 load 再 copy：这里只该覆盖界面上这几个偏好。若直接构造一个新的
+                // AppSettings，其它字段会退回 data class 默认值 —— 用户在设置页刚改的
+                // 「自动检查更新」会在下次改主题时被悄悄重置。
                 AppSettings.save(
                     this@MainActivity,
-                    AppSettings(
+                    AppSettings.load(this@MainActivity).copy(
                         themeMode = themeMode.name,
                         isFloatingNavbar = isFloatingNavbar,
                         isLiquidGlass = isLiquidGlass,
                         isBlurEnabled = isBlurEnabled,
-                        hideLauncherIcon = savedSettings.hideLauncherIcon,
                         language = LocaleHelper.getSavedLanguage(this@MainActivity).code,
                     )
                 )

@@ -73,6 +73,15 @@ object TaskerEventSender {
      * 绝不反过来影响主流程。
      */
     private fun broadcast(context: Context, action: String, fill: Intent.() -> Unit) {
+        // 1.5.0：接口关着时一个事件都不发。
+        //
+        // 为什么不靠 [TaskerGate] 的组件禁用就够了：那三个 `setComponentEnabledSetting` 管的是
+        // 「外面能不能叫醒我们」（收广播），管不了「我们主动播出去」。本工程有五条发送路径
+        // （制式 / 降级 / 恢复 / 换卡 / 每次采样），它们全部汇到这一个函数；接口关着时旧版照样
+        // 每次采样都 `sendBroadcast` 一次 —— 用户侧只是「Tasker 收不到」，而广播本身仍会唤醒
+        // 别的监听者、仍算一次系统调用，还会往日志页写一行「已发送事件」。
+        // 门控放在这个唯一收口点上：一个判断覆盖全部五条路径，也不存在漏改某条调用链的可能。
+        if (!TaskerGate.isEnabled(context)) return
         runCatching {
             val intent = Intent(action)
             intent.fill()

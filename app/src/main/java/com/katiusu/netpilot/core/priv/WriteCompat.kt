@@ -3,6 +3,7 @@ package com.katiusu.netpilot.core.priv
 import android.content.Context
 import android.os.Build
 import android.telephony.SubscriptionManager
+import com.katiusu.netpilot.core.monitor.CarrierInfo
 import com.katiusu.netpilot.core.monitor.LogStore
 import com.katiusu.netpilot.prefs.ConfigState
 import com.katiusu.netpilot.util.SystemVersionDetector
@@ -137,6 +138,23 @@ object SystemCompatInfo {
         val readRaw: String,
         /** 读取失败时的原始 stderr / 说明；空串由 UI 补一句通用解释。 */
         val readNote: String,
+        /**
+         * 权威存储（TelephonyProvider `siminfo.allowed_network_types`）的读取结果，一行文本。
+         *
+         * 为什么要它：这是「回读通过却切不动」唯一能给交叉证据的地方 —— 上面的 [readState]
+         * 读的是 `Settings.Global.preferred_network_mode`，一个写完回读必然一致的遗留兼容字段。
+         */
+        val authStore: String,
+        /** 本机 `ITelephony` 上实际存在哪几条写入方法（Android 14 起只剩一条）。 */
+        val writeMethods: String,
+        /**
+         * 本机识别到的运营商 + 它对应的默认制式，一行文本（1.5.0 新增）。
+         *
+         * 为什么要它：`NetworkMode.carrierDefault` 的 MCC/MNC 表在 1.5.0 按四个公开来源重写过，
+         * 而这张表直接决定「解除锁 5G 时回到哪个制式」。把识别结果摊在设置页，换张卡就能立刻
+         * 看出表里有没有这张卡 —— 否则表错了也永远是个看不见的猜测。
+         */
+        val carrierInfo: String,
     )
 
     private const val UNKNOWN = "" // 空串由 UI 渲染成「未知」，这里不引入资源依赖
@@ -182,6 +200,13 @@ object SystemCompatInfo {
         // 只探测一次 —— 再探一次的代价是十几秒白等。
         val notes = runCatching { ControlManager.statuses() }.getOrDefault(emptyList())
         val channel = ControlManager.cached()
+        // 只做方法枚举（不需要任何权限），因此三个分支都能报出「本机实际有几条写入路径」。
+        val writeMethods = runCatching { TelephonyReflection.describeWriteMethods() }.getOrDefault(UNKNOWN)
+
+        // 运营商识别放在最前面：即使下面立刻早返回（没有通道 / 没有写入目标），
+        // 「这张卡是谁、会回落到哪个制式」也是能读到的 —— 它不需要任何写入权限。
+        val subId = runCatching { ControlManager.getDefaultDataSubId() }.getOrDefault(-1)
+        val carrierInfo = runCatching { CarrierInfo.activeCarrierSummary(app, subId) }.getOrDefault(UNKNOWN)
 
         if (channel == null) {
             return@withContext Probe(
@@ -196,12 +221,14 @@ object SystemCompatInfo {
                 readState = ReadState.SKIPPED,
                 readRaw = UNKNOWN,
                 readNote = UNKNOWN,
+                authStore = UNKNOWN,
+                writeMethods = writeMethods,
+                carrierInfo = carrierInfo,
             )
         }
 
         // 写入目标：当前默认数据卡 → subId → 卡槽，与 RootController.slotSuffix 用同一套映射。
         // 推导不出来就整块显示「未知」，绝不编一个「1」出来 —— 那正是这次要消灭的假值。
-        val subId = runCatching { ControlManager.getDefaultDataSubId() }.getOrDefault(-1)
         val slot = if (subId >= 0) {
             runCatching { SubscriptionManager.getSlotIndex(subId) }.getOrDefault(-1)
         } else {
@@ -223,6 +250,9 @@ object SystemCompatInfo {
                 readState = ReadState.NO_TARGET,
                 readRaw = UNKNOWN,
                 readNote = UNKNOWN,
+                authStore = UNKNOWN,
+                writeMethods = writeMethods,
+                carrierInfo = carrierInfo,
             )
         }
 
@@ -285,6 +315,10 @@ object SystemCompatInfo {
             ControlMethod.NONE -> Unit
         }
 
+        // 权威存储的读法优先走通道（Root 用 su 执行 content query、Shizuku 用特权进程的
+        // ContentResolver）；通道给不出真值时再由应用进程自己查一次，并把两条路径各自的原因都写出来。
+        val authStore = runCatching { describeAuthStore(channel, subId, app) }.getOrDefault(UNKNOWN)
+
         Probe(
             channelLabel = channel.label,
             channelReason = UNKNOWN,
@@ -295,7 +329,37 @@ object SystemCompatInfo {
             readState = readState,
             readRaw = readRaw,
             readNote = readNote,
+            authStore = authStore,
+            writeMethods = writeMethods,
+            carrierInfo = carrierInfo,
         )
+    }
+
+    /**
+     * 读一次权威存储并渲染成一行。
+     *
+     * 「读不到」和「读到但是空的」是两件不同的事，不能合并成一句「未知」：
+     * 前者说明权限或列名有问题，后者说明这张卡从来没被设置过 —— 排查方向完全相反。
+     */
+    private suspend fun describeAuthStore(
+        channel: NetworkControlChannel,
+        subId: Int,
+        context: Context
+    ): String {
+        val viaChannel = runCatching { channel.readAuthStore(subId) }.getOrNull()
+        if (viaChannel is AuthStore.Read.Value) {
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaChannel.networkTypes}（经 ${channel.label} 读回）"
+        }
+        if (viaChannel is AuthStore.Read.Unset) {
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} ${AuthStore.describeRead(viaChannel)}（经 ${channel.label} 读回）"
+        }
+        val viaApp = runCatching { AuthStore.read(context.contentResolver, subId) }.getOrNull()
+        if (viaApp is AuthStore.Read.Value) {
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaApp.networkTypes}（应用进程直接读回）"
+        }
+        val channelReason = viaChannel?.let { AuthStore.describeRead(it) } ?: "通道未实现"
+        val appReason = viaApp?.let { AuthStore.describeRead(it) } ?: "应用进程未执行"
+        return "读不到（${channel.label}：$channelReason；应用进程：$appReason）"
     }
 
     /**

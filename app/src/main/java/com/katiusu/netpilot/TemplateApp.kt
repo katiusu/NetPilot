@@ -9,7 +9,6 @@ import com.katiusu.netpilot.prefs.PrefsStore
 import com.katiusu.netpilot.ui.screen.features.featureSpecs
 import com.katiusu.netpilot.core.NetPilot
 import com.katiusu.netpilot.core.priv.ControlManager
-import com.katiusu.netpilot.core.tasker.TaskerBridge
 import com.katiusu.netpilot.core.tasker.TaskerGate
 import kotlinx.coroutines.runBlocking
 
@@ -24,10 +23,13 @@ class TemplateApp : Application() {
         XposedServiceManager.init()
         // NetPilot 核心：日志、监控引擎、数据卡规则接线（幂等）
         NetPilot.install(this)
-        // Tasker/Locale 事件上报（订阅 MonitorEngine 的 StateFlow，幂等）
-        TaskerBridge.init(this)
         // Tasker / Locale 接口总开关（默认关）：把系统里的组件启用状态对齐到配置。
         // 关闭时这两个接收器在系统层面就是禁用的，Tasker 广播不会拉起本进程。
+        //
+        // 1.5.0：事件出口的接线（TaskerBridge.init）从这一行挪进了 TaskerGate.sync ——
+        // 接口默认关，那就连「订阅采样/降级 StateFlow」都不要建立；等用户在设置里打开开关时，
+        // ConfigState 的回调会触发 sync，那时再接线。接收器与编辑界面里仍各留一次
+        // TaskerBridge.init 补调（进程可能刚被广播冷启动，那时 Application 还没跑完）。
         TaskerGate.install(this)
         pruneShizukuOrphans()
     }

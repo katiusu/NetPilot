@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.4.0**（`versionName = "1.4.0"`，`versionCode = 2026100503`） |
+| 版本 | **1.5.0**（`versionName = "1.5.0"`，`versionCode = 2026100504`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 36） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -149,7 +149,8 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 - **自适应采样间隔（1.3.0 起，默认开）**：读数靠近任一判定门限时，采样间隔逐轮按「自适应缩短倍率」缩短（1.4.0 起默认 0.85，即每轮缩 15%，可在功能页调；示例 60s → 51s → 43s → 37s），最多缩到设置值的一半；一旦远离就立刻恢复成设置值。它只决定「多久采一次」，**不参与判定** —— 门限比较仍然用原始读数，所以自适应不可能改变降级/恢复结果（证明见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6）。远离门限时不产生任何额外开销。
 - **SINR 读不到时不再是干巴巴的「未知」**：显示结构化原因（未插卡 / 缺 `READ_PHONE_STATE` / 缺定位权限 / 定位服务未开 / 当前制式不上报 SINR 等），并且 SINR 先试 `signalStrength`、再回退 `allCellInfo`。
 - **「判定标准（当前生效值）」区**：把两条规则用当前生效阈值拼成人话，含「过差规则已关闭」这种状态。
-- **日志页**：最近 400 条运行记录，可清空。
+- **日志页**：最近 400 条运行记录，可清空。**1.5.0 修了一个真 bug：日志此前从不落盘，冷启动后日志页必然空白**（`LogStore.init()` 全工程零处调用，详见 §16）；现在重开应用能看到上次退出前约 120 条。
+- **写入诊断（1.5.0，开关默认关）**：设置页「系统兼容性」里新增「写入详细诊断日志」。打开后，「开关拨了但网络没变」这类问题能一路查到：命中了哪个反射重载、调制解调器返回了什么、`settings put` 的退出码、回读读到什么、哪一步抛了什么异常。
 
 ### 8. 系统兼容性：全部实测，**刻意不做厂商分支**
 
@@ -215,7 +216,7 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 
 **降级判定语义没有变**——「跳过探测」只在「屏幕关 + 状态机空闲 + 信号不强于阈值」三个条件同时成立时才发生；信号强时 `Ping` 会参与假满格判定，此时**照常探测**。逐分支的真值表证明见报告 §3。
 
-**自动更新（新）**：关于页新增「检查更新」入口，启动时也会按设置项（默认开）检查一次 [Releases](../../releases)。**只查、只提示**：有新版会弹出对话框显示版本号与更新说明，点「立即更新」用浏览器打开 Releases 页——不静默下载、不自动安装、不做任何后台轮询。
+**自动更新（新）**：关于页新增「检查更新」入口，启动时也会按设置项（默认开）检查一次 [Releases](../../releases)。**只查、只提示**：有新版会弹出对话框显示版本号与更新说明，点「立即更新」用浏览器打开 Releases 页——不静默下载、不自动安装、不做任何后台轮询。**设置页「更新」小节有「自动检查更新」开关（默认开）**；这个偏好从 1.2.0 起就存在，但到 1.5.0 才有可点的 UI 入口。
 
 **合规（1.2.0）**：`targetSdk` 34 → **36**（`compileSdk` 保持 37）。已逐条核对 edge-to-edge、预测性返回、前台服务 `specialUse`、BOOT_COMPLETED 限制、16 KB 页对齐（`zipalign -c -P 16` 实测通过），本应用均无需额外改动。
 
@@ -255,6 +256,152 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 **新增配置项（1.4.0）**：`np_fake5g_nr_only` 默认**开**、`np_fake5g_adaptive_step` 默认 **0.85**；`np_fake5g_ping` 默认 **300 ms**、`np_fake5g_cooldown` 默认 **120 秒**、`np_fake5g_adaptive_margin` 默认 **20 dBm**。
 
 ---
+
+### 16. 1.5.0（一）日志落盘修复 + 写入诊断 + 桌面图标清理 + 自动更新开关
+
+这三件都是「代码在那儿但没接上」的缺陷，不是新功能。
+
+**16.1 日志从不落盘（真 bug）**
+
+`LogStore` 的 `appContext` 只在 `LogStore.init(context)` 里赋值，而这个调用**全工程零处引用** —— 每次 `persist()` 都在第一句 `val ctx = appContext ?: return` 直接返回。后果：日志页只有本进程内存里的记录，**冷启动后必然空白**，`load()` 也从没执行过。1.5.0 在 `core/NetPilot.kt` 的 `Application.onCreate` 里补上 `LogStore.init(app)`，与已有的 `PrefsStore` / `ConfigState` / `ControlManager` / `MonitorEngine` 初始化并列。
+
+**16.2 写入链路只有 logcat 看得见**
+
+一次制式切换要穿过「反射拿 ITelephony → 三条写入策略 → `settings put` 兜底 → 回读」四层，而这条链路上几乎只用 `android.util.Log`（只有 logcat 可见）；`TelephonyReflection.dispatch` 更是把每个候选组合抛出的异常**直接吞掉**，连 logcat 里都没有失败原因。所以从外面只能看到「开关拨了、网络没变」。
+
+1.5.0 新增 `core/priv/WriteDiag.kt` 作为这条链路的日志出口，并把四层的关键节点接进去：反射失败原因、命中的是哪条策略、**调制解调器返回了什么**、`settings put` 的键与退出码、回读值。
+
+**16.3 详细诊断开关（默认关）**
+
+设置页「系统兼容性」新增「写入详细诊断日志」（配置键 `np_verbose_log`，默认**关**），打开后额外记录逐候选的反射尝试与异常原文。Root 通道下诊断要从 `app_process` 子进程搬回应用进程（子进程 stdout 加 `DIAG ` 前缀，由 `RootController` 逐行转发），属于纯诊断开销，所以默认关。
+
+**判定语义没有任何变化**：`setAllowedNetworkTypesForReason` 的返回值就是调制解调器接不接受这个模式，1.5.0 只把它**记进日志**，不改判定（把它当成「写入失败」会改变降级/恢复语义，那一步留给你决定，见报告 §8.3）。
+
+**16.4 桌面上有两个图标**
+
+`AndroidManifest.xml` 里 `MainActivity` 与 `activity-alias .LauncherAlias` **各带一份** MAIN/LAUNCHER 过滤器 ⇒ 装完未启动前桌面上就是两个图标；而「隐藏桌面图标」只禁用别名，对 `MainActivity` 自己的入口无效 —— 所以那个开关既藏不住图标、也从来没接到任何 UI 上。1.5.0 删掉别名整块、`LauncherIconController.kt`、`AppSettings.hideLauncherIcon` 及其持久化字段（旧导出 JSON 里的该键会被忽略）。
+
+**16.5 自动更新开关的 UI 入口**
+
+`AppSettings.checkUpdateOnLaunch`（默认开）从 1.2.0 起就存在并生效，但**没有任何 UI 开关**。1.5.0 在设置页新增「更新」小节与「自动检查更新」开关。同时修掉一个会被这个开关立刻暴露出来的旧缺陷：`MainActivity.persistState()` 原本直接构造新的 `AppSettings`，会把界面上没暴露的字段（`checkUpdateOnLaunch`）**重置成默认值**；现在改为 `AppSettings.load(this).copy(...)`。
+
+验收步骤见 [`docs/TESTING.md`](docs/TESTING.md) §19，量化与代码级论证见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8。
+
+### 17. 1.5.0（二）写入链路：修掉六处「看得见的假成功」
+
+第 16 节让写入链路**看得见**了；这里修链路里**真正错的地方**。所有改动只落在
+「观测」与「真 bug」两件事上，**不动**降级 / 恢复 / 冷却 / 无网回退的任何阈值与默认值。
+
+**17.1 「允许的网络类型」的权威存储不是 `settings`**
+
+Android 11 起，一张卡允许哪些制式由 TelephonyProvider 的 `siminfo.allowed_network_types` 决定，
+`Settings.Global.preferred_network_mode` 在多数 ROM 上只是遗留兼容字段。旧代码的
+「写入 → 回读 settings → 一致 → 认为成功」是一个**闭环**：写的是它、读的也是它，
+因此在结构上永远发现不了「设置对象变了、系统根本没读」。本版新增
+`core/priv/AuthStore.kt`，让两条通道都能读**另一个源**，并在写入后做跨源回读；
+写入顺序改为 **ITelephony → 权威存储（siminfo）→ settings**。
+
+**17.2 表外模式不再被当成「放开全部制式」**
+
+`NetworkModeBitmaskMapper.toBitmask()` 以前对映射表之外（含负数）的 RIL mode 一律返回
+`ALL_NETWORK_TYPES = (1 shl 31) - 1` —— 也就是**把这张卡放开到所有制式**。于是一次「锁 5G」
+可能变成「不限制任何制式」，方向与用户意图相反且没有任何提示。本版改为返回 `null`，
+由调用方拒绝写入，并在日志页写明「模式 N 不在本机位掩码表内，已拒绝写入」。
+
+**17.3 权限被拒不再只是一句「写入失败」**
+
+`MODIFY_PHONE_STATE` 是 `signature|privileged` 权限，`com.android.shell`（Shizuku 无线调试的
+uid 2000）**不持有**；而 `settings put` 只需要 shell/root 的 `WRITE_SECURE_SETTINGS`。
+这正是「制式完全没切，写入与回读却一路绿灯」的成因。本版让
+`TelephonyReflection.dispatch` 把 `SecurityException` 单独挑出来，**无条件**记进日志页
+（不受「详细诊断」开关影响），并带上当前 `Process.myUid()`，直接写明缺的是哪个权限。
+
+**17.4 「三条写入策略」到底还剩几条，由设备自己说**
+
+`setAllowedNetworkTypes(long)` 与 `setPreferredNetworkType(int)` 在 Android 14 的 `ITelephony`
+上**已经不存在**，旧代码里那两条是死代码 —— 所谓「三条策略」在新机上是**一条**。
+本版新增 `TelephonyReflection.describeWriteMethods()`，运行时枚举本机 `ITelephony` 上的写入方法
+及其重载形参列表（只做方法枚举、不需要任何权限），显示在设置页「系统兼容性」卡片里；
+三条全失败时的日志也会把这份结果一起打出来。
+
+**17.5 设置页新增两行只读事实**
+
+「系统兼容性」卡片新增「本机可用的写入方法」与「权威存储（TelephonyProvider）」两行。
+后者会写明这个值是**经哪条通道**读到的；读不到时把「通道侧的原因」与「应用进程侧的原因」分别列出 ——
+「读不到」和「读到但是空的（未设置）」是两件事，不能合并成一句「未知」。
+
+**17.6 新增直接写权威存储的写入路径**
+
+- **Root 通道**：`su -c content update --uri content://telephony/siminfo --where sub_id=<id> --bind allowed_network_types:l:<掩码>`，
+  随后 `content query` 回读比对（`content` 的退出码只说明命令跑通，不代表那一列真的变了）。
+- **Shizuku 通道**：在 user service 进程（uid 是 shell/root）里用 `ContentResolver.update` 写同一列。
+- **`app_process` CLI 侧**：走同一条 `content` 命令，所以「有 Root 且 `app_process` 可用」的机器上，
+  一次 `setmode` 就能完成 ITelephony → siminfo → settings 三级尝试。
+
+> **如实说明**：`siminfo.allowed_network_types` 是权威存储，但**写进去不等于调制解调器立刻接受** ——
+> 是否重新下发取决于电话进程有没有观察这张表，部分 ROM 要到重启才生效。所以本版日志会明确写
+> 「已写入权威存储；是否下发到调制解调器仍取决于电话进程」，不做任何超出证据的承诺。
+
+验收步骤见 [`docs/TESTING.md`](docs/TESTING.md) §19，六条缺陷的逐条代码级论证见
+[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8。
+
+### 18. 1.5.0（三）运营商默认值修正与识别 + Tasker 事件门控 + 详细日志扩展 + 权威存储失败分类修正
+
+**18.1 运营商默认值表按公开来源重核**
+
+`NetworkMode.OPERATOR_DEFAULTS` 决定「解除锁 5G 时回落到哪个制式」（功能页把该项设成「跟随运营商」时生效）。
+旧表有三处不对：
+
+- 漏了 **46005（中国电信 CDMA）** —— 这张卡会落到兜底 26（联通档），**静默地回错制式**；
+- 漏了 **46020（中国铁通，2008 年并入移动）**；
+- 多出 `46010`（旧表记作联通）与 `46027`（旧表记作电信）—— 这两个 MNC 在四个独立来源
+  （`musalbas/mcc-mnc-table`、`pbakondy/mcc-mnc-list`、`mcc-mnc.org`、ITU-T E.212 公报 OB 1280）里**一个都查不到**。
+
+现在：电信 `3/5/11` → 27、移动 `""`(46000)/`2/4/7/8/20` → 32、联通 `1/6/9` → 26、广电 `15` → 33，
+制式数值逐个对应 AOSP `RILConstants.java` 的 `NETWORK_MODE_*`。
+非国内卡或表外号段仍取兜底 26（语义未变）；删掉查不到的键的代价（万一 `46027` 真在某张卡上，现在落到 26 而不是 27）
+已如实写在 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.10。
+
+**18.2 新增运营商识别，而且在设置页看得到**
+
+新增 `Carrier` 枚举（中国移动 / 联通 / 电信 / 广电）、`NetworkMode.carrierOf(mcc, mnc)`、
+`carrierName(mcc, mnc)`，以及 `CarrierInfo.activeCarrierName()` / `activeCarrierSummary()`。
+设置页「系统兼容性」卡片新增只读行**「运营商识别」**，值形如 `中国移动（46000）→ 32 NR/LTE/TDSCDMA/GSM`；
+号段不在表内时明确写 `不在内置运营商表中（460xx）→ 回落 26 NR/LTE/GSM/WCDMA`。
+**这张表本质是猜，猜错不会报错、只会安静地回到错的制式** —— 摊在设置页，换一张卡就能立刻验证。
+
+**18.3 Tasker 接口关闭时，不再外发任何事件**
+
+`TaskerGate` 只管**组件启用状态**（`pm.setComponentEnabledSetting`），而五条事件发送路径
+（信号采样 / 降级 / 恢复 / 制式变化 / 数据卡变化）全部汇到 `TaskerEventSender.broadcast()`，
+那里**没有开关判断**；再叠加 `TemplateApp.onCreate` 里无条件的 `TaskerBridge.init(this)`，
+于是「接口关着」时快照与降级事件照样广播出去 —— 开关形同虚设，而且每轮采样都要白构造一次 `Intent`。
+
+本版把门控加在**唯一的收口点** `broadcast()` 首行（`if (!TaskerGate.isEnabled(context)) return`），
+`TaskerGate.sync()` 改成「开关打开才 `TaskerBridge.init`」，并删掉 `TemplateApp` 里的无条件接线。
+`np_tasker_enabled` 默认 false（既有默认值，未改），打开后行为与之前**完全一致**。
+
+**18.4 详细诊断日志的覆盖面扩展**
+
+「写入详细诊断日志」开关（`np_verbose_log`，默认关）控制的 `WriteDiag.detail()`，
+在本版新增的写入路径上**一处都没有**（`core/priv/AuthStore.kt` 与 `core/priv/shizuku/ShizukuController.kt` 各 0 条）。
+本版补齐：`content query` / `content update` 的**命令原文**、结果分类、`content update` 的原始
+exit/stdout/stderr、逐列试探（`allowed_network_types` → `allowed_network_type`）、AIDL 返回的编码字符串、
+「三条 ITelephony 都没成、转写权威存储」等。全部走 `detail()`：**开关关闭时一行都不写**；
+`always()` / `warn()`（例如权限被拒）仍然无条件记录，语义未变。
+
+**18.5 同一版本的补丁：Shizuku 通道读权威存储的失败原因不再是「被拒绝」**
+
+真机日志里出现过 `被拒绝：… Unable to find app for caller … when getting content provider telephony`。
+这句 `SecurityException` **与权限无关**：`ContentResolver` 会先让 AMS 按调用方 pid 找一条**应用进程记录**，
+而 Shizuku 用户服务进程由守护进程用 `app_process` 拉起、从未 `attachApplication`，AMS 侧没有它的记录 ——
+补多少权限都过不去。旧版把它和 `Permission Denial` 一起归成「被拒绝」，等于把人引向「去授权」这条死路。
+本补丁新增 `AuthStore.isNoAppRecord()`，把它单独归成 `Read.Unavailable` / `Write.Failed`，
+文案写明「补授权无效；读写权威存储只能用 Root 通道」；真缺权限时仍然是「被拒绝」。只改分类与文案，
+不改判定、不改写入顺序（详见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.13）。
+
+验收步骤见 [`docs/TESTING.md`](docs/TESTING.md) §19.12–§19.14 与 §19.16，来源对照与代价见
+[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.10–§8.13。
 
 ## 权限一览
 

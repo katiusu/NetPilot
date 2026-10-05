@@ -648,7 +648,396 @@ bash _build.sh :app:assembleRelease --no-configuration-cache   # === EXIT=0 === 
 2. **5G 上仍能触发**：把 ping 上限调到很低（例如 50 ms）制造判定，确认假满格照常降级。
 3. **关掉「假满格只在 5G / 5G+ 判定」后回到旧行为**：4G 上应重新能触发，且解释行消失。
 
+## 8. 1.5.0 增补（日志落盘 + 写入链路修复与权威存储 + 桌面图标清理 + 自动更新开关 + 运营商表修正 + Tasker 事件门控）
+
+> 先把与省电主题的关系说清楚：**这一版几乎没有省电收益**，它的价值是把「看不见」变成「看得见」。
+> 1.5.0 之前用户问的是「回读检验通过了为什么还是切不动制式」—— 这个问题之所以难回答，正是因为
+> 写入链路在应用内日志里完全不可见。§8.3 是这个问题本身的代码级结论，§8.4 逐项说明本版对
+> 耗电与资源的实际影响（其中**含一处会如实增加 I/O 的项**）。
+
+### 8.1 起因：三处「代码在那儿但没接上」
+
+| # | 现象 | 根因（已核实） |
+|---|---|---|
+| 1 | 日志页冷启动后必然空白，重启应用看不到上次记录 | `LogStore.init(context)` 全工程零处调用 ⇒ `appContext` 永远为 null ⇒ `persist()` 第一句 `val ctx = appContext ?: return` 直接返回，`load()` 也从未执行 |
+| 2 | 「开关拨了但网络没变」时无法判断卡在哪一步 | `core/priv/**` 几乎只用 `android.util.Log`（只有 logcat 可见）；`TelephonyReflection.dispatch` 把每个候选组合抛出的异常**静默吞掉** |
+| 3 | 装完未启动前桌面有两个图标，且「隐藏图标」开关无效 | `AndroidManifest.xml` 的 `MainActivity` 与 `activity-alias .LauncherAlias` 各带一份 MAIN/LAUNCHER 过滤器；隐藏逻辑只禁用别名，`MainActivity` 自己的入口仍在 |
+
+另有一处尚未被触发的缺陷（C17，见 §8.2）：`MainActivity.persistState()` 直接构造新的 `AppSettings`，
+会把界面上没有暴露的字段重置成 data class 默认值。
+
+### 8.2 改动清单（C14 – C17）
+
+| # | 改动文件 | 级别 | 为什么 | 验证方式 | 回滚 |
+|---|---|---|---|---|---|
+| C14 | `core/NetPilot.kt`、新建 `core/priv/WriteDiag.kt` | 修复 | 补 `LogStore.init(app)`；新增诊断出口 | 冷启动后日志页非空（§8.5） | 删掉那一行 init + 删新文件 |
+| C15 | `core/priv/TelephonyReflection.kt`、`core/priv/PrivilegedCli.kt`、`core/priv/root/RootController.kt` | 可观测性 | 把写入链路四层的关键节点接进日志页 | TESTING §19.2 | 逐处还原；诊断默认关，不改变任何判定 |
+| C16 | `app/src/main/AndroidManifest.xml`、删 `LauncherIconController.kt`、`MainActivity.kt`、`AppSettings.kt` | 修复 | 删掉重复的 LAUNCHER 入口 | 装完未启动前只有一个图标 | 还原别名与控制器 |
+| C17 | `MainActivity.kt`（`persistState`）、`ui/screen/settings/SettingsPage.kt`、两个 `strings_keepalive.xml` | 修复 + 新开关 | `persistState` 改 `AppSettings.load(this).copy(...)`；新增「写入详细诊断日志」（`np_verbose_log`，默认关）与「自动检查更新」两个开关 | TESTING §19.3 / §19.4 | 还原 `persistState` 的构造式；删两个开关 |
+
+C15 接进去的节点共 4 层：
+
+| 层 | 改前 | 改后 |
+|---|---|---|
+| 反射拿 ITelephony | 只有 logcat 一行 | 同时进日志页（`WriteDiag.warn`） |
+| 三条写入策略 | 只记「走了哪条」，**调制解调器返回值被丢弃** | 记「走了哪条」+ **`CallResult.Hit.value`（modem 的答案）** |
+| `settings put` 兜底 | 只有 logcat | 键、值、命令退出码、回读值 |
+| 回读校验 | 只有「一致/不一致」 | 「回读一致」时明确标注**这只证明设置对象存下了该值，不等于调制解调器已接受** |
+
+### 8.3 回读检验的工作流程与「通过了仍切不动」的六条机制
+
+先分清两件被混称「回读检验」的东西 —— 用户困惑的根源就在这里：
+
+| | ① 写后回读校验 | ② 设置页「系统兼容性」的读取探测 |
+|---|---|---|
+| 入口 | 开关 `np_verify_write`（默认 true），文案「写入后回读校验」 | 同卡片下方的只读信息行，文案「成功，读回 %1$s」 |
+| 实现 | `core/priv/root/RootController.kt:200-212 settingsSetMode` | `core/priv/WriteCompat.kt:177-299 SystemCompatInfo.probe` |
+| 会写吗 | 会（`settings put` 后 `settings get` 比对） | **一个字节都不写**（纯只读探测） |
+
+② 的 `ReadState.OK` 只证明「读得到当前值」，与「写下去能不能生效」**没有因果关系**。① 之所以能
+「通过」，有六条互相独立的机制：
+
+1. **闭环里没有电话进程 / RIL / 调制解调器**：写是 `SettingsProvider.update()`、读是 `SettingsProvider.get()`，同一个 provider、同一个字段。而且 Android 11+ 起权威存储已搬到 TelephonyProvider 的 `allowed_network_types`，`preferred_network_mode` 在不少 ROM 上只是遗留兼容字段，可能根本没人读。
+2. **真正该回读的那条路没有回读**：`core/priv/TelephonyReflection.kt:327-356 setNetworkMode` 只判断 `dispatch` 有没有抛异常就 `return true`；而 AOSP Android 14 的 `setAllowedNetworkTypesForReason` **本身就是返回 modem 是否接受的 boolean** —— 我们拿到了这个返回值却丢掉了。（1.5.0 起改为写进日志，但**仍不参与判定**，理由见 §8.4。）
+3. **三条策略在 Android 14 上实际只剩一条**：`ITelephony` 上 `setAllowedNetworkTypes(long)` 与 `setPreferredNetworkType(int)` **已不存在**（AOSP `android14-release` 与 main 分支都只有 `setAllowedNetworkTypesForReason`；`grep` 结果为空），后两条是死代码，没有真正的降级余地。
+4. **生效值是多个 reason 的合成结果**：`getAllowedNetworkTypesForReason(subId, REASON_USER)` 只回读 USER 一维。能读合成值的 `getAllowedNetworkTypesBitmask(subId)` 要求 `READ_PRIVILEGED_PHONE_STATE`（signature-only），普通应用拿不到。
+5. **值未变时提前 `return true`**：AOSP 实现里有 `if (allowedNetworkTypes == phone.getAllowedNetworkTypes(reason)) return true;`。我们的 `core/mode/NetworkModeBitmaskMapper.kt:56-59 toBitmask` 用自己的表算掩码，与 ROM 取值对不上时可能算出与当前相同的掩码 ⇒ 「成功」但零动作。
+6. **无权限与「回读一致」可以同时成立**：`setAllowedNetworkTypesForReason` 第一句就是 `TelephonyPermissions.enforceCallingOrSelfModifyPermissionOrCarrierPrivilege(...)`，`MODIFY_PHONE_STATE` 是 `signature|privileged`，`com.android.shell`（Shizuku 无线调试的 uid 2000）不持有；而 `settings put` 只需要 shell/root 的 `WRITE_SECURE_SETTINGS` ⇒ **制式没切，写入与回读却一路绿灯**。
+
+**结论**：① 的成功条件与「制式真的换了」之间没有因果关系，它在结构上就无法回答那个问题。
+1.5.0 没有改这个判定（改成「modem 说 false 就算失败」会改变降级/恢复语义：外层会因此回落到
+`settings` 写入，或把这次切换标记为失败），而是把链路每一步都记进日志，让真验证成为可能：
+
+```bash
+# 1) 切一次制式，看 radio 日志里到底有没有 RIL 请求（决定性证据）
+adb logcat -b radio | grep -iE "SET_ALLOWED_NETWORK|setAllowedNetworkTypes|PREFERRED_NETWORK"
+#    若只有 settings 写入、没有任何 RIL 请求 ⇒「写进了 SettingsProvider 但没人理」当场成立
+# 2) 看数据网络制式是否真的变了
+adb shell dumpsys telephony.registry | grep -i mDataConnectionState
+# 3) 对照系统设置里的「启用 5G」开关（vivo 等 ROM 用它做自有布尔门，不在这套 reason 维度里）
+```
+
+### 8.4 与耗电 / 资源的关系（逐项，含一处如实增加的开销）
+
+| 项 | 影响 | 说明 |
+|---|---|---|
+| C14 日志落盘 | **增加**（如实记录） | 修好之前落盘等于没发生；修好之后「每 30 秒最多一次、最多 120 条的整体写入」回来了。这正是 1.2.0「日志落盘减量」的**既有设计**，本版只是让它真正生效 —— 净效果是「回到 1.2.0 设计的那条基线」，不是新增设计。不需要历史日志的用户可在日志页清空，落盘随即只剩空数组 |
+| C15 诊断日志（`always` / `warn`） | **常态零开销** | 只在切换制式时写入，而切换制式本来就要起一次 shell；不新增任何定时任务或轮询 |
+| C15 诊断日志（`detail`） | **默认关 ⇒ 0** | 逐候选 trace 用 `val trace: ((String) -> Unit)? = if (WriteDiag.isVerbose) { { … } } else null` 构造，**未开启时连 lambda 都不创建**，反射调用路径与 1.4.0 完全一致 |
+| C15 子进程 `DIAG ` 行 | **仅详细模式** | 只有 `setmode` 才追加 `--verbose`；`getMode` 每个采样周期都会调用，刻意不带该标志，避免逐轮跨进程输出 |
+| C15 modem 返回值只记日志 | 0 | 判定分支、shell 调用次数、返回的 Boolean 与 1.4.0 逐字节一致 |
+| C16 删除 `activity-alias` | 无（略减） | 少一个组件声明，少一条 `setComponentEnabledSetting` 调用 |
+| C17 `persistState` 改 `load().copy()` | 可忽略 | 改主题 / 导航栏 / 玻璃时才多读一次 SharedPreferences |
+
+**本版仍然没有引入唤醒锁、精确闹钟、第二个前台服务通知，也没有新增任何依赖。**
+
+### 8.5 量化对照（1.4.0 → 1.5.0）
+
+| 项 | 1.4.0 | 1.5.0 | 说明 |
+|---|---|---|---|
+| 冷启动后日志页条目数 | **0** | 约 120（上次落盘内容） | C14 的直接可观测结果 |
+| 写入链路在应用内日志的可见节点数 | 0 | 4 层 / 8 类事件 | 仅在真的切换制式时产生 |
+| 详细诊断开启时每次 `setmode` 的额外日志行数 | — | 约 5–15 行 | 默认关 ⇒ 0 |
+| 桌面图标数（干净安装、未启动） | 2 | **1** | C16 |
+| 设置页开关数 | 6 | 8 | 新增「写入详细诊断日志」「自动检查更新」 |
+| `AndroidManifest.xml` 组件数 | — | −1（`activity-alias`） | C16 |
+| 新增依赖 | — | **0** | |
+| `versionCode` / `versionName` | 2026100503 / 1.4.0 | **2026100504 / 1.5.0** | 为什么不是需求的「20261004」：它比上一版**小**，会被 `INSTALL_FAILED_VERSION_DOWNGRADE` 拒绝，见 TESTING §19.0 |
+| 判定语义（降级 / 恢复 / 冷却 / 无网回退 / 假满格门控） | — | **逐字节不变** | 本版只加日志、只加 UI 开关 |
+
+### 8.6 写入链路修复：起因（六条代码级结论）
+
+**与耗电的关系先说清楚**：这一版对耗电与资源**几乎没有影响**（见 §9.4），它修的是正确性与可观测性。
+之所以仍然写进这份报告，是因为它决定了「之前那些省电改动到底有没有真的生效」能不能被验证 ——
+一个写不进制式的开关，讨论它的省电收益没有意义。
+
+### 8.6.1 六条结论（原文保留）
+
+用户把 1.5.0 之前那轮诊断的六条结论逐条带回来，要求逐条修复。六条按「证据强度」排列：
+
+| # | 结论 | 证据 |
+|---|---|---|
+| 1 | 回读是「自己写自己读」，闭环里没有电话进程 / RIL / 调制解调器 | Android 11 起权威存储从 `Settings.Global` 搬到 TelephonyProvider；写 `settings` 与读 `settings` 是同一个 provider、同一行 |
+| 2 | 真正该被回读的返回值拿到了却丢掉 | AOSP Android 14 `PhoneInterfaceManager.setAllowedNetworkTypesForReason` 结尾 `return success;`，`success` 即调制解调器是否接受；旧代码只看 `invoke` 有没有抛异常 |
+| 3 | 三条写入策略在 Android 14 实际只剩一条 | `setAllowedNetworkTypes(long)` 与 `setPreferredNetworkType(int)` 在 `ITelephony` 上已不存在（AOSP `android14-release` 与 main 都只有 `setAllowedNetworkTypesForReason`） |
+| 4 | 允许的网络类型是 `REASON_USER/CARRIER/MODEM` 多维求交，只回读 USER 一维 | 能读合成值的 `getAllowedNetworkTypesBitmask` 要求 `READ_PRIVILEGED_PHONE_STATE`（signature-only） |
+| 5 | 值未变时提前短路 | AOSP 实现里有 `if (allowedNetworkTypes == phone.getAllowedNetworkTypes(reason)) return true;`；而 `toBitmask()` 用自建 `MODE_FAMILIES` 表，表外落到 `ALL_NETWORK_TYPES` 时可能正好等于当前值 |
+| 6 | 无权限与「回读一致」可以同时成立 | `MODIFY_PHONE_STATE` 是 `signature\|privileged`，`com.android.shell`（uid 2000）不持有；而 `settings put` 只需 `WRITE_SECURE_SETTINGS` |
+
+本版**只修观测层与真 bug**（用户选定的范围）：第 1、2、3、6 条变成日志与设置页里的事实，
+第 5 条按「表外即拒绝」修掉，**第 2 条的返回值仍然只记录、不改判定** ——
+把调制解调器的 `false` 当成「写入失败」会改变降级 / 恢复语义，那不在本版授权范围内。
+
+### 8.7 改动清单（C18 – C23）
+
+| # | 改动文件 | 级别 | 为什么 | 验证方式 | 回滚 |
+|---|---|---|---|---|---|
+| C18 | `core/mode/NetworkModeBitmaskMapper.kt`、`core/priv/TelephonyReflection.kt` | 真 bug | `toBitmask` 表外返回 `null`，`setNetworkMode` 拒绝写入 —— 旧行为会把「锁 5G」变成「放开全部制式」 | TESTING §20.2 | 恢复 `?: return ALL_NETWORK_TYPES` 与该调用点 |
+| C19 | `core/priv/TelephonyReflection.kt` | 观测 | `dispatch` 新增 `onDenied`，`SecurityException` 单独挑出并带上 `Process.myUid()`，无条件记录 | TESTING §20.3 | 删 `permissionDenial` 与三处 `onDenied` 实参 |
+| C20 | `core/priv/TelephonyReflection.kt`、`core/priv/WriteCompat.kt` | 观测 | `describeWriteMethods()` 运行时枚举 `ITelephony` 写入方法，三条全失败时一并报出 | TESTING §20.1 | 删方法与该调用点 |
+| C21 | 新建 `core/priv/AuthStore.kt`、`core/priv/NetworkControlChannel.kt` | 观测 | 权威存储的读写与结果分类；接口加两个带默认实现的方法（未实现就如实说未实现） | TESTING §20.1 / §20.4 | 删新文件与接口两方法 |
+| C22 | `core/priv/root/RootController.kt`、`core/priv/PrivilegedCli.kt`、`core/priv/shizuku/ShizukuController(Service).kt`、`IShizukuController.aidl` | 新增路径 | 直接写 `siminfo.allowed_network_types`；写入顺序 ITelephony → siminfo → settings | TESTING §20.4 | 逐处还原；AIDL 删两条 |
+| C23 | `ui/screen/settings/SettingsPage.kt`、两个 `strings_keepalive.xml` | 观测 | 设置页「系统兼容性」加两行只读事实 | TESTING §20.1 | 删两行与两条文案 |
+
+### 8.8 权威存储到底是什么（本版的事实基础）
+
+- **它是一张小表里的一列，不是独立 provider**：AOSP main
+  `packages/providers/TelephonyProvider/src/com/android/providers/telephony/TelephonyProvider.java`
+  的建表语句里，`allowed_network_types` 与 `allowed_network_types_for_reasons` 是 **`siminfo` 表的列**
+  （`COLUMN_ALLOWED_NETWORK_TYPES + " BIGINT DEFAULT -1,"`）；URI 由
+  `s_urlMatcher.addURI("telephony", "siminfo", URL_SIMINFO)` 与
+  `addURI("telephony", "siminfo/#", URL_SIMINFO_USING_SUBID)` 注册（`#` 是 subId）。
+- **provider 自己不做权限检查**：同一目录的 `AndroidManifest.xml` 里
+  `<provider android:name="TelephonyProvider" android:authorities="telephony" android:exported="true" ... />`
+  **没有声明 `readPermission` / `writePermission`**（对比同文件的 `SmsProvider` / `MmsSmsProvider`
+  都写了 `android:readPermission="android.permission.READ_SMS"`；
+  `CarrierProvider` 写了 `writePermission="android.permission.MODIFY_PHONE_STATE"`）。
+  也就是说**门槛来自调用方**（`PhoneInterfaceManager` 的 `enforceCallingOrSelfModifyPermissionOrCarrierPrivilege`），
+  而不是 provider 自己 —— 这解释了为什么 root 渠道的 `content update` 能写进去，而应用进程反射
+  `ITelephony` 会被拒。
+- **列名字面量已在真机核实**：Redmi K40 / Android 15 的
+  `/system/framework/framework.jar` 的 dex 字符串池里能直接 grep 到 `allowed_network_types`、
+  `allowed_network_types_for_reasons`、`NETWORK_TYPE_BITMASK_NR`、`MODIFY_PHONE_STATE`
+  （`adb-shell grep -a -o -m 1 '<字面量>' /system/framework/framework.jar` 全部命中），
+  不需要反编译。
+- **取不到的东西也如实记下**：`/system/framework/telephony-common.jar` 在 Android 15 上被剥离，
+  自写 DEX 解析器读出它**不含 `Lcom/android/internal/telephony/ITelephony;`**，
+  因此「本机 `ITelephony` 到底有哪些方法」不可能靠静态分析回答 ——
+  这正是 C20 改成**运行时反射枚举**的原因。
+
+### 8.9 与耗电 / 资源的关系（写入链路部分）
+
+| 项 | 影响 | 说明 |
+|---|---|---|
+| C21 / C23 读取权威存储 | **设置页打开时 1 次** | 只在用户进「系统兼容性」卡片、或打开详细诊断时执行一次 `content query` / 一次 `ContentResolver.query`，不在主循环、不在采样周期 |
+| C22 写权威存储 | **仅制式切换时**（低频） | 一次 `content update` + 一次 `content query` 回读；这是用户主动操作触发的路径，与 1.5.0 的 `settings put` 同级 |
+| C19 / C20 日志 | 常态零开销 | `onDenied` 只在真的被权限拦下时触发；`describeWriteMethods()` 只在「三条全失败」或设置页探测时调用，**不在**每次写入路径上 |
+| C18 | 无 | 一次 null 判断 |
+| 新增唤醒锁 / 闹钟 / 服务 / 依赖 | **无** | 本版没有新增任何后台组件、权限或第三方依赖 |
+
+**净结论**：本版对空闲耗电没有可测量的影响，对「切换制式」这一次操作的耗时增加约一次 `content`
+进程启动（与已有的 `settings put` 同量级）。这是为了让「写没写进去」第一次真的有据可查。
+
+### 8.10 运营商识别与默认制式表：按公开来源重新核对（本轮新增）
+
+**起因**：`core/mode/NetworkMode.kt` 的 `OPERATOR_DEFAULTS`（MNC → 默认制式）决定「解除锁 5G 时回落到哪个制式」
+—— `core/NetPilot.kt` 的 `lockLte(off)` 在用户选「跟随运营商」时取的就是它，`core/monitor/AutoDowngradeEngine.kt:299`
+的恢复路径也取它。旧表把 `46010` 记作联通、`46027` 记作电信，而这两个 MNC 在任何公开来源里都查不到；
+反过来 `46005`（电信 CDMA）与 `46020`（铁通，2008 并入移动）确实存在却漏了 ——
+前者的后果是**这张卡落到兜底 26（联通档）**，静默地回错了制式。
+
+**四个独立来源（MCC 460）的核对结果**：
+
+| 来源 | 覆盖的 460 号段 |
+|---|---|
+| `musalbas/mcc-mnc-table` | 00 移动、01 联通、02 移动、03 电信、04 卫星、05 电信、06 联通、07 移动（共 9 条） |
+| `pbakondy/mcc-mnc-list` | 在上面基础上另有 08 移动、09 联通、11 电信、**15 广电（在用）**、**20 铁通（在用）**（共 13 条） |
+| `mcc-mnc.org/mcc/460` | 00/02/04/07/08 移动、01/06/09 联通、03/05/11 电信、20 铁通（**不含 15**） |
+| ITU-T E.212 公报 OB 1280（2023） | 只登记 `460 00` China Mobile、`460 01` China Unicom、`460 03` China Unicom CDMA、`460 04` China Satellite Global Star |
+
+**没有任何一个来源出现 `46010` 或 `46027`**；`46015` 只出现在 pbakondy 的在用列表里（与 192 号段 2022 年商用的事实吻合）
+—— 说明「只查一个来源就会漏」在两个方向上都成立。
+
+**改了什么**：
+
+| 运营商 | 去前导零后的 MNC 键 | 默认制式 |
+|---|---|---|
+| 中国电信 | `3` / **`5`（新增）** / `11` | 27 `NR/LTE/CDMA/EVDO/GSM/WCDMA` |
+| 中国移动 | `""`（46000）/ `2` / `4` / `7` / `8` / **`20`（新增）** | 32 `NR/LTE/TDSCDMA/GSM/WCDMA` |
+| 中国联通 | `1` / `6` / `9`（**删掉 `10`**） | 26 `NR/LTE/GSM/WCDMA` |
+| 中国广电 | `15` | 33 `NR/LTE/TDSCDMA/CDMA/EVDO/GSM/WCDMA` |
+
+- 上表的制式数值逐个对应 AOSP `RILConstants.java` 的 `NETWORK_MODE_*`（权威定义，未改）；
+- **删掉查不到的键的代价如实写在这里**：万一 `46027` 真的存在于某张电信卡上，它现在落到兜底 26 而不是 27 ——
+  与「它本来就没有权威归属」一致，因此不算回归；
+- 非国内卡、或国内号段不在表内时仍取兜底 26（原有语义不变）。
+
+**识别能力（新增，并且能被看见）**：新增 `Carrier` 枚举（中国移动 / 联通 / 电信 / 广电）、
+`carrierOf(mcc, mnc)`、`carrierName(mcc, mnc)`；`CarrierInfo`（`core/monitor/MonitorSettings.kt:207`）新增
+`activeCarrierName(context, subId)` 与 `activeCarrierSummary(context, subId)`；设置页「系统兼容性」卡片新增只读行
+「运营商识别」，值形如 `中国移动（46000）→ 32 NR/LTE/TDSCDMA/GSM`，表里没有的号段会明确显示
+`不在内置运营商表中（460xx）→ 回落 26 NR/LTE/GSM/WCDMA`。
+
+**为什么要显示出来**：这张表本质是猜，猜错不会报错、只会安静地回到错的制式。摊在设置页后，换一张卡就能立刻验证。
+
+### 8.11 Tasker 事件出口：接口关闭时不再外发（本轮新增）
+
+**起因**：`TaskerGate` 只管**组件启用状态**，而五条事件发送路径（`signalSampled` / `downgraded` / `recovered` /
+`modeChanged` / `dataSimChanged`）全部汇到 `TaskerEventSender.broadcast()`，那里**没有任何开关判断**；
+再加上 `TemplateApp.kt:28` 无条件 `TaskerBridge.init(this)`，于是「Tasker 接口关着」时快照与降级事件照样
+`sendBroadcast` 出去 —— 开关形同虚设，而且每轮信号采样都要白构造一次 `Intent` 再广播（纯浪费）。
+
+**改法**（三处，都在 `core/tasker`）：
+
+| 位置 | 改动 | 为什么选这里 |
+|---|---|---|
+| `TaskerEventSender.broadcast()` | 首行 `if (!TaskerGate.isEnabled(context)) return` | 五条路径唯一的收口点，一次覆盖全部事件；将来新增事件也不会漏 |
+| `TaskerGate` | 新增 `isEnabled(context)`；`sync(context)` 末尾 `if (enabled) TaskerBridge.init(app)` | 开关打开时才接线；`ConfigState.observe(KEY_ENABLED)` 本来就会在开关变化时回调 `sync` |
+| `TemplateApp.onCreate` | 删掉无条件的 `TaskerBridge.init(this)` | 无条件接线正是「关着也发」的第二个入口 |
+
+**语义**：`np_tasker_enabled` 默认 false（既有默认值，未改）⇒ 默认状态下不再有任何 Tasker 广播；
+打开开关后行为与之前**完全一致**（`TaskerGate.install` 会立即 `sync` 一次并接线）。
+`TaskerBridge.init` 内部的 `started` 幂等保护仍然在，重复调用不会重复订阅。
+
+### 8.12 详细诊断日志：覆盖面扩展（本轮新增）
+
+`WriteDiag.detail()` 是唯一受「写入诊断日志」开关（`np_verbose_log`，默认**关**）控制的级别；
+`always()` / `warn()` 无条件记录（原有语义，未改）。本轮把**一处日志都没有**的两个文件补上，
+并把已有几处补到「能据此定位」的粒度：
+
+| 文件 | 补了什么 |
+|---|---|
+| `core/priv/AuthStore.kt` | 原来 0 处。现在记：`content query` / `content update` 的**完整命令原文**、分类结果（`Read` / `Write` 的判定）、未定论时附 stdout/stderr、ContentResolver 读写结果 —— 这是本版新增的写入路径，之前出问题只能靠猜 |
+| `core/priv/root/RootController.kt` | `authStoreSetMode` 记「命令原文 + `content update` 的原始 exit/stdout/stderr」；`readAuthStore` 记**逐列试探**（`allowed_network_types` → `allowed_network_type`）与每列原始输出；`writeAuthStore` 记原始结果 |
+| `core/priv/PrivilegedCli.kt` | `writeAuthStore` 记「目标 mode → 位掩码」「被拒时的原始输出」「回读原文 + 解析值」 |
+| `core/priv/shizuku/ShizukuControllerService.kt` | 记「三条 ITelephony 都没成、转写权威存储」「ContentResolver 是否就绪」「写入失败原因」 |
+| `core/priv/shizuku/ShizukuController.kt` | 记 AIDL 调用返回的编码字符串（区分「用户服务没绑上」与「provider 拒绝」） |
+
+**代价**：全部走 `detail()`，开关关闭时**一行都不写**；打开后单次切换最多新增十几行，
+日志页仍是 `MAX_ENTRIES = 400` / `MAX_MESSAGE_CHARS = 2000` / 落盘 120 条的既有上限。
+**未验证**：真机上这些行的实际内容见 [`TESTING.md`](TESTING.md) §19.14。
+
+### 8.13 补丁（同一版本内，未改版本号）：把「AMS 不认调用方进程」与「缺权限」分开
+
+**起因**：真机（Android 15 / Shizuku 通道）日志页出现
+
+`shizuku 权威存储读取：subId=1 -> 被拒绝：allowed_network_types: Unable to find app for caller android.app.IApplicationThread$Stub$Proxy@a67e245 (pid=28246) when getting content provider telephony`
+
+**为什么不只是文案问题**：这句 `SecurityException` 与权限无关。`ContentResolver.acquireProvider` 会先让 AMS
+按**调用方 pid** 找一条应用进程记录（`getRecordForApp`），找不到就直接抛异常 —— Shizuku 用户服务进程由
+Shizuku 守护进程用 `app_process` 拉起，从未 `attachApplication`，AMS 侧没有它的记录，**给多少权限都过不去**。
+旧版把这一句与 `Permission Denial` 一起归成「被拒绝」，等于把用户引向「去授权」这条走不通的路。
+
+**反证（解释 Root 通道为什么没这个问题）**：Root 通道走 `/system/bin/content`，`cmd content` 内部用的是
+隐藏 API `IActivityManager.getContentProviderExternal`，那个入口不需要应用进程记录。开源先例（同结论的注释）：
+[darkclad/uxspace@1d83515](https://github.com/darkclad/uxspace/commit/1d835151c6004e9daf0b4ec9704b66534cab7093) ——
+「needs a registered application record for the calling pid, which only AMS-launched processes have.
+Our shell-uid app_process server has none.」
+
+**改动**（`app/src/main/java/com/katiusu/netpilot/core/priv/AuthStore.kt`，C27）：
+
+| 判据 / 出口 | 旧 | 新 |
+|---|---|---|
+| 输出或异常消息含 `Unable to find app for caller` / `when getting content provider`（`isNoAppRecord`） | 与权限失败同归 `Denied` | `Read.Unavailable` / `Write.Failed`，并带上 `NO_APP_RECORD_HINT`（「…补授权无效；读写权威存储只能用 Root 通道」） |
+| 其它 `SecurityException` / `Permission Denial` | `Denied` | 不变（仍是「被拒绝：」） |
+| `describeRead` / `describeWrite` | 「被拒绝：」/「失败：」混在一起 | 分别为「读不到：」与「失败：」，与「被拒绝：」在设置页和日志页一眼可分 |
+
+**边界**：只改**分类与文案**，不改任何判定、重试或写入顺序；`encodeRead/decodeRead`、`encodeWrite/decodeWrite`
+早已覆盖 `UNAVAILABLE` / `FAILED`，跨 binder 不需要新增编码分支。代价：每次读写多一次字符串 `contains`（可忽略）。
+
+**验证**：真机复现与判读步骤见 [`TESTING.md`](TESTING.md) §19.9 第 5–6 条与 §19.16。
+
+### 8.14 量化对照（同一版内：改动前 → 改动后）
+
+| 项 | 改动前 | 改动后 | 说明 |
+|---|---|---|---|
+| 写入路径层数 | 2（ITelephony → settings） | **3**（ITelephony → siminfo → settings） | 新增权威存储层 |
+| 能读到的「允许的网络类型」数据源 | 1（`settings`） | **3**（`settings` / `siminfo`（经通道）/ `siminfo`（应用进程）） | 交叉回读 |
+| 表外模式的后果 | 写入 `(1 shl 31) - 1`（放开全部制式） | 拒绝写入 + 日志说明 | C18 |
+| 权限被拒时的日志 | 无（被 catch 吞掉） | `SecurityException` + `Process.myUid()` + 缺失权限名 | C19 |
+| 「三条策略」剩余条数 | 未知（靠读 AOSP 推断） | 由设备运行时报告 | C20 |
+| 设置页「系统兼容性」只读行数 | 4 | **7** | 新增「本机可用的写入方法」「权威存储」「运营商识别」 |
+| 新增依赖 | — | **0** | |
+| `versionCode` / `versionName` | 2026100504 / 1.5.0 | **2026100504 / 1.5.0（不变）** | 1.5.0 从未发布过：后续几批改动并入本版，不占新版本号 |
+
+### 8.15 产物与验收（1.5.0 / 2026100504，最终）
+
+**8.15.1 产物**
+
+| 文件 | 大小 | SHA-256 |
+|---|---|---|
+| `NetPilot-1.5.0-2026100504-release.apk` | 33,221,389 B | `048e94ec9230df709c24b78b8a65acd42380bf2fc5459bb7a323f5e4b66f06f9` |
+| `NetPilot-1.5.0-2026100504-debug.apk` | 43,848,575 B | `ea6b9a97367422172577cc1af867afa66c5613c2724cef96800737a9c8812856` |
+
+上表是 **C27（§8.13 的失败分类补丁）之后重新构建**的值：`versionCode` / `versionName` 按要求**保持不变**，
+所以这是本节唯一的最终交付值（构建时间 2026-10-05）。
+新代码确实进了产物 —— 解包两个 APK 的 `classes*.dex` 后 `grep -a`：
+`Unable to find app for caller` 命中 1 次、`补授权无效` 命中 2 次（release 在 `classes2.dex`，debug 在 `classes14.dex`）。
+
+两个 APK 均由 `bash _build.sh :app:<task> --no-configuration-cache` 产出后复制到项目根目录。
+项目根目录下**同名的旧 1.5.0 产物已被这两个文件覆盖** —— 1.5.0 从未发布过，不存在「两个不同的 1.5.0」。
+**APK 只交付、不安装**（agent 不自行安装到任何设备）。
+
+**8.15.2 复现命令**
+
+```bash
+bash _build.sh :app:assembleRelease --no-configuration-cache
+bash _build.sh :app:assembleDebug   --no-configuration-cache
+BT=/opt/android-sdk/build-tools/36.0.0
+$BT/aapt2 dump badging NetPilot-1.5.0-2026100504-release.apk | head -1
+$BT/aapt2 dump xmltree --file AndroidManifest.xml NetPilot-1.5.0-2026100504-release.apk | grep -c 'android.intent.action.MAIN'
+$BT/aapt2 dump xmltree --file AndroidManifest.xml NetPilot-1.5.0-2026100504-release.apk | grep -c 'enabled.*false'
+/opt/android-sdk/build-tools/37.0.0/apksigner verify --print-certs NetPilot-1.5.0-2026100504-release.apk
+$BT/zipalign -c -P 16 -v 4 NetPilot-1.5.0-2026100504-release.apk
+python3 tools/check_provenance.py
+```
+
+**8.15.3 实测结果**
+
+| 检查项 | 结果 |
+|---|---|
+| `aapt2 dump badging` | `versionCode='2026100504' versionName='1.5.0'`、`targetSdkVersion:'36'`、`compileSdkVersion:'37'`、`native-code: 'arm64-v8a' 'armeabi-v7a' 'x86' 'x86_64'`（release 与 debug 一致） |
+| 启动入口 | `launchable-activity: name='com.katiusu.netpilot.MainActivity'` |
+| 清单里 `android.intent.action.MAIN` 计数 | **1**（release 与 debug 均 1；1.4.0 为 2，本版起为 1） |
+| Tasker 组件 `android:enabled=false` 计数 | **3**（release 与 debug 均 3）⇒ C26 只改代码、没有动 `AndroidManifest.xml`，组件禁用机制与 1.4.0 一致 |
+| 清单里 `LauncherAlias` 计数 | **0**（C16 的清理保持） |
+| `apksigner verify --print-certs` | 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c` —— 与 1.3.0 / 1.4.0 **同一把 key** ⇒ 可直接覆盖安装（`SharedPreferences` 不清） |
+| `zipalign -c -P 16 -v 4` | `Verification successful`（release 与 debug 均通过） |
+| C27 新代码是否在产物里 | 解包 `classes*.dex` 后 `grep -a "Unable to find app for caller"` = 1 次、`grep -a "补授权无效"` = 2 次（release 与 debug 均命中）⇒ 交付的 APK 含本次分类修正 |
+| `python3 tools/check_provenance.py` | `EXIT=0`，`checked 7 pair(s), worst duplicated share 27.2% (threshold 25%)`；唯一 REVIEW 项仍是既有的 `ShizukuControllerService.kt`（已标注 reviewed）。逐项：`NetworkMode.kt` 0.220 / `NetworkModeBitmaskMapper.kt` 0.297（重复段 12.1%）/ `TelephonyReflection.kt` 0.231（11.0%）/ `ControlManager.kt` 0.073 / `ShizukuController.kt` 0.159 / `ShizukuControllerService.kt` 0.265（27.2%，已 reviewed）/ `IShizukuController.aidl` 0.544（签名契约）；本版新增的 `AuthStore.kt` 不在比对集内 |
+| 架构自检（root=`app/src/main/java/com/katiusu/netpilot`） | `scannedFiles: 108`、`cycles: []`；超大模块 5 个：`MonitorPage.kt` 710、`MainActivity.kt` 643、`SettingsPage.kt` **607**（本轮新增「运营商识别」一行后又长了 9 行）、`TaskerEditActivity.kt` 547、`LiquidGlassNavigationBar.kt` 533 |
+
+> 「无环」在此只能算**弱证据**：该自检工具解析不出 Kotlin 的包级导入（`moduleCount: 0` / `importEdges: 0`），
+> 它报告的 `cycles: []` 不构成完整的依赖图证明。
+
+**8.15.4 构建过程中发现并修掉的一个构建系统问题（值得留档）**
+
+第一次 `:app:assembleDebug` 用的是**默认的 configuration cache**（`gradle.properties` 里
+`org.gradle.configuration-cache=true`），结果 `processDebugManifestForPackage` 被判为 `UP-TO-DATE`，
+**合并清单里还是上一批构建写下的旧 `versionCode`**：产出的 debug APK 经 `aapt2 dump badging`
+如实报告旧版本号，而同一份 `app/build.gradle.kts` 产出的 release APK 却是新版本号。
+即 **「构建成功」不等于「产物是这一版的」**。修法是删掉 debug 变体的清单中间产物后用
+`--no-configuration-cache` 重跑：
+
+```bash
+rm -rf app/build/intermediates/merged_manifest/debug \
+       app/build/intermediates/merged_manifests/debug \
+       app/build/intermediates/packaged_manifests/debug \
+       app/build/intermediates/manifest_merge_blame_file/debug \
+       app/build/intermediates/compatible_screen_manifest/debug \
+       app/build/outputs/apk/debug
+bash _build.sh :app:assembleDebug --no-configuration-cache
+```
+
+重跑后 `output-metadata.json` 与 `aapt2 dump badging` 都变成了 `app/build.gradle.kts` 里的那一个版本号。
+**结论：凡带版本号发布的构建，一律加 `--no-configuration-cache`，并在复制产物前核对 `versionCode`。**
+
+**本版实战**：版本号切回 `2026100504 / 1.5.0` 之后，release 与 debug 都带 `--no-configuration-cache` 重跑
+（debug 先删掉 5 个清单中间产物目录）。值得一提的是 debug 这一次 `processDebugManifestForPackage` 是
+`FROM-CACHE`，**正是这个坑最容易复发的时刻** —— 所以复制产物后仍然逐个核对了 badging 第一行，
+两个产物都报 `versionCode='2026100504' versionName='1.5.0'`（见 §8.15.3）。
+
+**未做（需要真机）**：本版所有需在设备上观察的结论 —— 设置页三行只读事实（写入方法 / 权威存储 /
+运营商识别）的实际取值、表外模式拒绝写入的日志、Shizuku 通道的 `SecurityException` 长什么样、
+权威存储写入与回读的顺序、Tasker 开关关闭时确实没有广播、详细诊断日志的实际内容 —— 全部写在
+[`TESTING.md`](TESTING.md) §19（19.1–19.16）。`siminfo` 的读写在本环境被 DSHA 策略拦截
+（`content query --uri content://telephony/...` → `[POLICY_BLOCKED] 短信授权不包含其他内容提供者或 URI 参数`），
+**无法在 agent 侧真机验证**。
+
 ## 附录 A：改动文件与回滚
+
+**1.5.0 新增文件（2 个）**
+
+```
+app/src/main/java/com/katiusu/netpilot/core/priv/WriteDiag.kt   C15
+app/src/main/java/com/katiusu/netpilot/core/priv/AuthStore.kt   C21 / C22
+```
+
+**1.5.0 删除文件（1 个）**
+
+```
+app/src/main/java/com/katiusu/netpilot/LauncherIconController.kt   C16
+```
 
 **1.3.0 新增文件（1 个）**
 
@@ -661,6 +1050,30 @@ app/src/main/java/com/katiusu/netpilot/core/tasker/TaskerGate.kt   C9
 ```
 app/src/main/java/com/katiusu/netpilot/core/update/UpdateChecker.kt
 app/src/main/java/com/katiusu/netpilot/ui/component/UpdateDialog.kt
+```
+
+**1.5.0 合并批次额外改动的文件**（后续几批并入 1.5.0，故单列在这里）
+
+```
+app/build.gradle.kts                                            C24（版本号回到 1.5.0 / 2026100504）
+app/src/main/aidl/.../shizuku/IShizukuController.aidl           C21 / C22
+core/mode/NetworkMode.kt                                        C25（运营商表按公开来源重核）
+core/mode/NetworkModeBitmaskMapper.kt                           C18（表外返回 null）
+core/monitor/MonitorSettings.kt                                 C25（运营商识别 / activeCarrierSummary）
+core/priv/AuthStore.kt                                          C21 / C22（新增）
+core/priv/NetworkControlChannel.kt                              C21（readAuthStore / writeAuthStore 默认实现）
+core/priv/PrivilegedCli.kt                                      C20 / C22
+core/priv/TelephonyReflection.kt                                C18 / C19 / C20
+core/priv/WriteCompat.kt                                        C19 / C20 / C25（兼容性卡片新增只读行）
+core/priv/root/RootController.kt                                C20 / C21 / C22
+core/priv/shizuku/ShizukuController.kt                          C21 / C22
+core/priv/shizuku/ShizukuControllerService.kt                   C18–C22
+core/tasker/TaskerEventSender.kt                                C26（事件出口门控）
+core/tasker/TaskerGate.kt                                       C26（isEnabled + 按需接线）
+TemplateApp.kt                                                  C26（去掉无条件 TaskerBridge.init）
+ui/screen/settings/SettingsPage.kt                              C15 / C19 / C20 / C25
+res/values/strings_keepalive.xml                                C15 / C19 / C20 / C25
+res/values-en/strings_keepalive.xml                             C15 / C19 / C20 / C25
 ```
 
 **修改文件**
@@ -697,10 +1110,10 @@ res/values-en/strings_np.xml                                    C8 / C9 / C10
 
 | 粒度 | 做法 |
 |---|---|
-| 全部回滚 | `git checkout -- .` + 删除三个新增的 `.kt` 文件（`git status` 就能看到全部改动） |
+| 全部回滚 | `git checkout -- .` + 删除两个新增的 `.kt` 文件（`WriteDiag.kt`、`AuthStore.kt`；`git status` 就能看到全部改动） |
 | 只回滚某一项 | 按 §2 / §6.1 每行的「回滚」列操作，都是 1–3 处的定点还原 |
 | 不改代码就能关掉的项 | C2：把 `MonitorEngine` 主循环的 `e.tick(allowProbeSkip = true)` 改回 `e.tick()`（唯一的代码级开关）；C9：设置里关掉「Tasker / Locale 接口」；C10：设置里关掉「自适应采样间隔」 |
-| 真机回滚 | 同一把签名 key，可直接覆盖安装任一旧版 APK（`SharedPreferences` 不会被清）：`NetPilot-1.3.0-2026100502-{debug,release}.apk`、`NetPilot-1.2.0-2026100501-{debug,release}.apk`、`NetPilot-1.1.0-2026100500-{debug,release}.apk` |
+| 真机回滚 | 同一把签名 key，可直接覆盖安装任一旧版 APK（`SharedPreferences` 不会被清）：`NetPilot-1.5.0-2026100504-{debug,release}.apk`、`NetPilot-1.4.0-2026100503-{debug,release}.apk`、`NetPilot-1.3.0-2026100502-{debug,release}.apk`、`NetPilot-1.2.0-2026100501-{debug,release}.apk`、`NetPilot-1.1.0-2026100500-{debug,release}.apk` |
 
 ## 附录 B：报告里每张表的复现命令
 

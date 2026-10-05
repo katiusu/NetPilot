@@ -105,17 +105,51 @@ enum class NetworkMode(val value: Int, val label: String, val gen: Int) {
             3 to "3G 自动",
         )
 
+        /** 中国大陆运营商（用于默认模式、日志与设置页展示）。 */
+        enum class Carrier(val display: String) {
+            CHINA_MOBILE("中国移动"),
+            CHINA_UNICOM("中国联通"),
+            CHINA_TELECOM("中国电信"),
+            CHINA_BROADNET("中国广电"),
+        }
+
+        /** 一行一个运营商：识别用的 MNC 集合 + 该运营商的默认「全网通」模式。 */
+        private data class OperatorEntry(
+            val carrier: Carrier,
+            val mncKeys: Set<String>,
+            val mode: NetworkMode,
+        )
+
         /**
-         * 运营商默认模式对照表：一行一个运营商，键是去掉前导零后的 MNC，先命中的行胜出。
+         * 运营商默认模式对照表：键是**去掉前导零后的 MNC**，一行一个运营商，先命中的行胜出。
          *
-         * 号段取自 MCC 460 下的公开分配：电信 3/11/27，移动 2/4/7/8（原 00/02/04/07/08，
-         * 其中 00 去零后是空串），联通 1/6/9/10，广电 15。
+         * 号段依据（1.5.0 重新核对）：以 MCC 460 的公开分配为准，拿五个互相独立的来源交叉验证 ——
+         * musalbas/mcc-mnc-table、pbakondy/mcc-mnc-list、mcc-mnc.org 的 460 页、ITU-T E.212
+         * 公报 OB 1280（2023）、以及运营商侧资料。ITU 那份只登记了 00/01/03/04 四条，
+         * 粒度不足以定运营商，只当「这些号段确实存在」的下限核对用。
+         *
+         * | 运营商 | MCC+MNC | 去零后的键 |
+         * | --- | --- | --- |
+         * | 中国移动 | 46000 / 46002 / 46004 / 46007 / 46008 / 46020（铁通，2008 并入移动） | "" / 2 / 4 / 7 / 8 / 20 |
+         * | 中国联通 | 46001 / 46006 / 46009 | 1 / 6 / 9 |
+         * | 中国电信 | 46003 / 46005（CDMA 遗留）/ 46011 | 3 / 5 / 11 |
+         * | 中国广电 | 46015 | 15 |
+         *
+         * 1.5.0 改了什么（都记在这里，因为这张表本质是「猜」，必须能追溯）：
+         *  - **补 `5`（电信）**：46005 在三个来源里都在，旧表漏了它 —— 这张卡会落到兜底 26
+         *    （联通档），这是本轮查出的第一处真错值。
+         *  - **补 `20`（移动）**：46020 铁通，2008 年并入移动，来源里明确标注在用；旧表同样漏了。
+         *  - **删 `10`（旧表当联通）与 `27`（旧表当电信）**：这两个号段在五个来源里一个都查不到。
+         *    不存在的 MNC 永远不会命中，留着唯一的后果是让这张表看起来「有依据」；删掉之后万一
+         *    真有，结果是落到兜底 26 —— 与「它本来就没有权威归属」一致，不算回归。
+         *  - `15`（广电）旧表就对：46015 在 pbakondy 列表里是在用状态，与 192 号段 2022 年商用
+         *    的事实吻合；注意 mcc-mnc.org 没收录它 —— 所以不能只看一个来源。
          */
-        private val OPERATOR_DEFAULTS: List<Pair<Set<String>, NetworkMode>> = listOf(
-            setOf("3", "11", "27") to NR_LTE_CDMA_EVDO_GSM_WCDMA,
-            setOf("", "2", "4", "7", "8") to NR_LTE_TDSCDMA_GSM_WCDMA,
-            setOf("1", "6", "9", "10") to NR_LTE_GSM_WCDMA,
-            setOf("15") to NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA,
+        private val OPERATOR_DEFAULTS: List<OperatorEntry> = listOf(
+            OperatorEntry(Carrier.CHINA_TELECOM, setOf("3", "5", "11"), NR_LTE_CDMA_EVDO_GSM_WCDMA),
+            OperatorEntry(Carrier.CHINA_MOBILE, setOf("", "2", "4", "7", "8", "20"), NR_LTE_TDSCDMA_GSM_WCDMA),
+            OperatorEntry(Carrier.CHINA_UNICOM, setOf("1", "6", "9"), NR_LTE_GSM_WCDMA),
+            OperatorEntry(Carrier.CHINA_BROADNET, setOf("15"), NR_LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA),
         )
 
         /** 取值反查；0..33 之外返回 null。 */
@@ -129,19 +163,41 @@ enum class NetworkMode(val value: Int, val label: String, val gen: Int) {
             .mapNotNull { fromValue(it) }
 
         /**
+         * MCC 是否属于中国大陆。缺失也算国内：多数机型拿得到 MCC，拿不到时按国内处理更贴合本工程
+         * 的用户分布；而境外卡一定有 MCC，不会因此被误判成国内卡。
+         */
+        private fun isDomestic(mcc: String?): Boolean =
+            mcc == null || mcc.trim().trimStart('0') == MCC_CHINA
+
+        /** MNC 归一化：去空白、去前导零（`"00"` 与 `""` 因此等价，`"03"` 与 `"3"` 等价）。 */
+        private fun mncKey(mnc: String?): String = mnc?.trim()?.trimStart('0').orEmpty()
+
+        /** 命中运营商表；境外卡或表内没有的号段返回 null（不猜）。 */
+        private fun operatorEntry(mcc: String?, mnc: String?): OperatorEntry? {
+            if (!isDomestic(mcc)) return null
+            val key = mncKey(mnc)
+            return OPERATOR_DEFAULTS.firstOrNull { key in it.mncKeys }
+        }
+
+        /**
+         * 识别 (mcc, mnc) 属于哪家国内运营商；识别不出（境外卡 / 未收录号段）返回 null。
+         *
+         * 为什么与 [carrierDefault] 分开：本函数只回答「是谁」，可以被日志与设置页直接展示，
+         * 不关心它对应哪个制式；[carrierDefault] 才回答「该给它什么默认模式」。
+         */
+        fun carrierOf(mcc: String?, mnc: String?): Carrier? = operatorEntry(mcc, mnc)?.carrier
+
+        /** 识别结果的展示名（「中国移动」…）；识别不出返回 null。 */
+        fun carrierName(mcc: String?, mnc: String?): String? = carrierOf(mcc, mnc)?.display
+
+        /**
          * 按 (mcc, mnc) 猜测运营商默认模式。
          *
-         * MCC 缺失或去前导零后为 460 才算国内卡；境外卡直接取 [FALLBACK]。国内卡把 MNC
-         * 去前导零后在 [OPERATOR_DEFAULTS] 里找第一行命中，表内没有的组合同样取 [FALLBACK]。
+         * 非国内卡、或国内号码段不在 [OPERATOR_DEFAULTS] 里时取 [FALLBACK]（模式 26 =
+         * NR|LTE|GSM|WCDMA）—— 这是「不清楚就挑兼容性最好的自动模式」，不是「按运营商猜」。
          */
-        fun carrierDefault(mcc: String?, mnc: String?): NetworkMode {
-            val domestic = mcc == null || mcc.trim().trimStart('0') == MCC_CHINA
-            if (!domestic) return BY_VALUE.getValue(FALLBACK)
-
-            val mncKey = mnc?.trim()?.trimStart('0').orEmpty()
-            return OPERATOR_DEFAULTS.firstOrNull { mncKey in it.first }?.second
-                ?: BY_VALUE.getValue(FALLBACK)
-        }
+        fun carrierDefault(mcc: String?, mnc: String?): NetworkMode =
+            operatorEntry(mcc, mnc)?.mode ?: BY_VALUE.getValue(FALLBACK)
 
         /** 制式值 → 可读长名（列表/日志用）；未知值不抛异常，而是显式提示。 */
         fun labelOf(value: Int): String = BY_VALUE[value]?.label ?: "未知模式($value)"
