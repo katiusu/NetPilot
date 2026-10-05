@@ -77,7 +77,20 @@ android {
             } else {
                 signingConfigs.getByName("debug")
             }
-            isMinifyEnabled = false
+            // 与参考模板 MiuixGuiExample（/sdcard/Project/MiuixGui）的 release 配置一致：
+            // R8 代码压缩 + proguard-android-optimize 优化。
+            // 为什么本版才开：示例工程把「切页掉帧」逐页对比过，页面代码逐行相同 —— 掉帧
+            // 不是页面写法问题，而是构建层没做优化（debug 式 dex：无内联、无裁剪、类/常量池
+            // 全量保留）。因此 1.5.2 把为流畅度做的写法改动全部回滚，改由这里承担。
+            //
+            // 注意：本工程有两处入口是**由外部进程按类名加载**的（root 的 app_process
+            // 命令行、Shizuku 用户服务），keep 规则见 app/proguard-rules.pro；漏了不会编译
+            // 报错，只会在真机上静默失效（自检失败 / 用户服务绑不上）。
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
         }
     }
 

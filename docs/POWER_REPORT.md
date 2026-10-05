@@ -1445,21 +1445,22 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
 
 ---
 
-## 10. 1.5.2 增补（Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + 卡顿 / 内存优化）
+## 10. 1.5.2 增补（Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + 孤儿清扫修复 + release 开 R8）
 
 > 版本：`versionName = "1.5.2"`、`versionCode = 2026100600`（对比基线 1.5.1 / 2026100505）。
 > **先说清楚口径**：本节**没有任何真机 profiler 数据**（本轮无法采集 `dumpsys gfxinfo` / 内存快照前后对照），
 > 所有量级都是**按代码上限推算**或**机制级推断**，并逐条标注了推算依据。请把它当「预期量级」而不是「实测结果」读；
 > 真机验收步骤见 [`TESTING.md`](TESTING.md) §21。
 
-### 10.1 本轮要修的四件事
+### 10.1 本轮要修的五件事
 
 | # | 用户可见现象 | 归因结论 |
 | --- | --- | --- |
 | 1 | Shizuku 通道下日志几乎空白（只剩一句 `false`） | 用户服务跑在独立进程 `com.katiusu.netpilot:np_service`（Shizuku 用 `app_process` 拉起），**没有 `Application`、没有本应用的 `Context`**，那边的 `WriteDiag` 只写进该进程内存，应用的 `LogStore`（日志页数据源）永远收不到 |
 | 2 | 「应该能在界面里切制式」，且实际内置制式远多于界面暴露的几个 | 功能页两处下拉只列了 `9 / 11 / 12 / 26(/27)` 几个值；实测 `core/mode/NetworkMode.kt` 定义 **0..33 共 34 种**，`NetworkModeBitmaskMapper.MAX_NETWORK_MODE = 33`，全部都在位掩码表内、都写得了 —— 缺的只是入口（源码里也**没有任何地方**提到过 37） |
-| 3 | 1.5.1 起界面变卡（1.5.0 正常） | 见 §10.2：1.5.1 的 UI 改动只有 2 个文件（`LogPage.kt` +182、`SettingsPage.kt` +30），真正的放大器是「日志条目变长 + 日志页倒序重写 + 导出」叠加两个 1.5.0 就存在的放大器 |
-| 4 | 后台内存占用偏高 | 见 §10.4：**没有泄漏**（无累积集合、缓冲上限固定），是「同一个 400/120 槽位里装的内容变长变多」+ Shizuku 远端缓冲 400 行白占 |
+| 3 | 1.5.1 起界面变卡（1.5.0 正常） | 见 §10.2 的机制分析 + §10.7 的处置：**写法改动不是根因** —— 本版把 1.5.2 早期为流畅度做的写法改动（C41）**全部回滚**，改由**构建层**承担：release 按参考模板 MiuixGuiExample 开 R8（C44） |
+| 4 | 后台内存占用偏高 | 见 §10.4：**没有泄漏**（无累积集合、缓冲上限固定），是「同一个 400/120 槽位里装的内容变长变多」+ Shizuku 远端缓冲白占；但**真正的大头是 Shizuku 孤儿用户服务进程**（每个约 40 MB，见第 5 行与 §10.7） |
+| 5 | 后台残留多个 `com.katiusu.netpilot:np_service` 进程（每个约 40 MB） | 见 §10.4 与 §10.7：两条孤儿清扫路径**共用同一个 `pruneOnce` 标志**，同进程内 CAS 先到者赢 ⇒ 启动清扫（`TemplateApp.onCreate` 立刻起线程）几乎总先赢，「`probe()` 成功后清扫」这条实际从不生效（本版 C45 修） |
 
 ### 10.2 「卡」的机制分析（只读侦察，未跑 profiler）
 
@@ -1485,14 +1486,23 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
   而紧跟着的 `detail(...)` 在简要模式下会直接 return，即这次求值**零收益**，只是让每次写入尝试（用户拨开关 + 后台自动降级）
   白白多两次全量反射、并把字符串拼得更长。
 
-### 10.3 改动清单（C38 – C43）
+> **本节结论在本版的最终状态**：上面「1.5.1 新增的三处叠加」在最终交付的 1.5.2 里**仍然存在** ——
+> 因为本版把为它们做的写法修复（C41：稳定 key / 跟随判断 / 导出走 IO）**全部回滚**了（见 §10.7），
+> 卡顿改由**构建层**承担（C44：release 开 R8）。本节的行号描述的是 1.5.1 与当前文件（回滚后与 1.5.1 同形）。
+> 唯一被修掉的「浪费」是最后一段的反射枚举：`TelephonyReflection.kt:436-437` 现在被 `if (WriteDiag.isVerbose)` 包住；
+> **失败路径 `:499` 的那次 `describeWriteMethods()` 刻意保留**（写失败时正需要它），未做任何削弱。
+
+### 10.3 改动清单（C38 – C46）
 
 | 编号 | 改动 | 文件 |
 | --- | --- | --- |
 | C38 | 用户服务侧远端日志缓冲 + AIDL `drainDiag()` + 每次 binder 调用后取回；Shizuku 全链路（`probe` / `getCurrentNetworkMode` / `setNetworkMode` / `readAuthStore` / `writeAuthStore` / `getDefaultSlot` / `setDefaultSlot` / `activeSlots` / `pruneStaleProcesses` / `destroy`）补打点；`ControlManager.acquire()` 四条通道决策路径补打点 | `IShizukuController.aidl`、`WriteDiag.kt`、`ShizukuControllerService.kt`、`ShizukuController.kt`、`ControlManager.kt` |
 | C39 | 删除日志页「详细」筛选档；新增「正序 / 倒序」切换（Miuix `Sort` 图标），**默认正序** | `LogPage.kt`、`strings_monitor.xml`（zh/en） |
 | C40 | 功能页「策略」段新增「切换网络制式」入口，弹窗列出**全部 34 种**制式（按 5G/4G/3G/2G 分组，当前值带 `✓`），点按写入当前默认数据卡 | `FeaturesPage.kt`、`strings_np.xml`（zh/en） |
-| C41 | 日志 `LogEntry.seq` 稳定 key + 滚动「只在贴着最新端时跟随」+ `scrollToItem` 取代 `animateScrollToItem` + `derivedStateOf` 缓存筛选 + 导出改到 `Dispatchers.IO` | `LogStore.kt`、`LogPage.kt` |
+| ~~C41~~ | ~~日志 `LogEntry.seq` 稳定 key + 滚动「只在贴着最新端时跟随」+ `scrollToItem` 取代 `animateScrollToItem` + `derivedStateOf` 缓存筛选 + 导出改到 `Dispatchers.IO`~~ —— **本版已全部回滚**：`LogStore.kt` 用 `git checkout 90b2709` 还原到 1.5.1 原样，`LogPage.kt` 的 11 处写法用脚本还原；理由见 §10.7 | `LogStore.kt`、`LogPage.kt` |
+| C44 | release 构建按参考模板 MiuixGuiExample 开 R8：`isMinifyEnabled = true` + `getDefaultProguardFile("proguard-android-optimize.txt")`，新增 `proguard-rules.pro`（只保留两处「被外部进程按类名加载」的入口，共 5 条 keep） | `app/build.gradle.kts`、`app/proguard-rules.pro`（新增） |
+| C45 | 修 Shizuku 孤儿清扫失效：`pruneStaleServices()` 与 `pruneOrphanedServices()` 各用一个独立的 `AtomicBoolean`（原来共用 `pruneOnce`，先到者赢） | `core/priv/shizuku/ShizukuController.kt` |
+| C46 | 日志导出改**流式**写文件（`OutputStream.bufferedWriter` 逐条 append），不再 `buildFileText().toByteArray()`；`buildFileText()` 拆出只拼头部的 `fileHeader()`，输出逐字节不变 | `ui/screen/log/LogPage.kt` |
 | C42 | Shizuku 远端缓冲 400 行 → 120 行；简要模式跳过 `describeWriteMethods()`；`explainNoRow` 整表枚举 30 秒记忆化 + 写后回读不再触发枚举 | `WriteDiag.kt`、`TelephonyReflection.kt`、`RootController.kt` |
 | C43 | 版本号 → `1.5.2` / `2026100600` | `app/build.gradle.kts` |
 
@@ -1507,7 +1517,8 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
 | `LogStore` 落盘 | 最近 120 条拼 JSON 后 `commit()` | 120 × ≤2000 字符 ≈ **≤24 万字符**（1.5.0 ≈1–2 万） | **不改**（守护线程内，不阻塞主线程） |
 | 简要模式下的写入方法枚举 | `stub.javaClass.methods` 全量数组 + filter + 类型串拼接，每次写入尝试 2 次，结果只服务详细模式被丢弃 | 每次写入尝试省下 2 次全量反射 + 若干字符串分配 | C42 用 `if (WriteDiag.isVerbose)` 门控，**零行为变化** |
 | `siminfo` 整表枚举 | 读不到目标行时 fork 一次 `su -c content query`（子进程 + 百 ms 级），写后回读也会触发 | 每次「读不到」多一次 su fork；写路径每次都多一次 | C42 加 30 秒记忆化 + 写后回读传 `explain=false` |
-| 导出日志 | 主线程持有 String + byte[] | ≤80 万字符 String + ≤240 万字节数组**在主线程**存活到写完 | C41 移到 `Dispatchers.IO`（峰值不变，主线程不再承担） |
+| **Shizuku 孤儿用户服务进程** | 客户端被系统杀掉时来不及 `unbindUserService(remove = true)`，`:np_service` 变 PPID=1 孤儿长期驻留 | **每个约 40 MB**（项目内实测：曾累积 4 个 ≈ 180–200 MB，而主进程 16 MB）—— **这是后台内存里唯一的 MB 级项** | C45 拆掉两条清扫路径共用的标志，让「`probe()` 成功后清扫」这条真正生效 |
+| 导出日志 | 主线程一次性持有 StringBuilder 的 char[] + `toString()` 的 String + `toByteArray(UTF_8)` 的 byte[] | 上限 80 万字符 ⇒ char[] 1.6 MB（扩容瞬时 ~2.4 MB）+ String 1.6 MB + byte[] ≤2.4 MB ≈ **峰值 4–5.6 MB，且全在主线程** | C46 改流式逐条写（峰值只跟「一行」有关）；导出文件内容与旧写法**逐字节一致** |
 
 **泄漏结论（明确）**：本版与 1.5.1 都**不存在内存泄漏** —— 没有累积集合，`LogStore` 缓冲上限固定 400 条、
 远端缓冲固定行数、`lastFailure` 是单值；「后台内存升高」的来源是槽位内**内容长度**上升，不是条目无界增长。
@@ -1517,12 +1528,16 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
 | 指标 | 1.5.1 | 1.5.2 | 依据 |
 | --- | --- | --- | --- |
 | Shizuku 通道下用户服务日志条数（可见于日志页） | **0**（只留应用进程自己的少数行） | 每次 binder 调用把该进程的 ≤120 行取回（实际通常个位数 ~ 数十行） | C38 设计：`drainDiag()` + 每次调用后 drain |
-| 日志页每次追加导致的重组行数 | 全部可见行（无 key，头部插入位移） | 只有新增行（稳定 key） | C41 `key = { it.seq }` |
-| 每条新日志触发的滚动动画次数 | 1 次无条件重启 | 0 次（除非用户本来就贴着最新端） | C41 跟随条件 + `scrollToItem` |
+| 日志页每次追加导致的重组行数 | 全部可见行（无 key，头部插入位移） | **与 1.5.1 相同**（C41 的稳定 key 已回滚；流畅度改由 C44 的 R8 承担，见 §10.7） | §10.7 |
+| 每条新日志触发的滚动动画次数 | 1 次无条件重启 | **与 1.5.1 相同**（C41 的跟随条件与 `scrollToItem` 已回滚） | §10.7 |
 | 界面内可切换制式数 | 0（功能页无入口；磁贴仅 4 种循环） | **34**（0..33 全部） | C40 + `NetworkMode.kt` / `NetworkModeBitmaskMapper.MAX_NETWORK_MODE = 33` |
 | 简短模式下每次写入的写入方法枚举次数 | 2 次 | 0 次 | C42 `WriteDiag.isVerbose` 门控 |
 | 「读不到 siminfo 行」时的整表枚举次数（60 秒内多次读） | 每次 1 次（含写后回读） | ≤2 次（30 秒记忆化；写后回读 0 次） | C42 `NO_ROW_MEMO_MS = 30_000L` |
-| 导出日志的主线程字节数 | ≤2.4 MB | 0（仅列表快照引用） | C41 `withContext(Dispatchers.IO)` |
+| 导出日志的主线程峰值 | ≈4–5.6 MB（char[] + String + byte[]） | **只跟单行有关（KB 级）**，不再拼整串、不再一次转 byte[] | C46 流式写 |
+| APK 体积 | 33 283 737 B（pre-R8 包） | **4 152 623 B** | **实测**（C44 R8；zip 直接量） |
+| dex 合计 / dex 文件数 | 32 272 936 B / 3 个 | **3 147 820 B / 1 个** | **实测**（C44 R8） |
+| dex 方法引用数 / 类定义数 | 143 536 / 20 326 | **15 408 / 3 157** | **实测**（C44 R8；读 dex 头） |
+| 后台 Shizuku 孤儿用户服务进程数 | 实测曾累积 4 个 ≈ 180–200 MB | 两条清扫路径都生效后回到「最多 0 个」 | C45 |
 
 > 上面每一行都是**代码可复现的设计值或上限推算**，不是真机测量值。真机口径（PSS、janky frames）请按
 > [`TESTING.md`](TESTING.md) §21.4–§21.5 自测采集；本报告不宣称任何「省了百分之多少电」。
@@ -1533,10 +1548,58 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
 
 | 文件 | 大小（字节） | MD5 | SHA-256 |
 | --- | --- | --- | --- |
-| `NetPilot-1.5.2-2026100600-release.apk` | 33 283 737 | `f9d70f4d41ca9aba4a868573794ae396` | `336bda9711788187d543b916b131595852b591e1dbc8cd63ed24cbfcbe94f472` |
+| `NetPilot-1.5.2-2026100600-release.apk` | 4 152 623 | `e67e539a2f77163cf6c4fb6993bdfb92` | `7b1692384ee7df0175cb01f3b3af2ea736fa40aa4716a72d9ffa601dda7a81b9` |
 
-- 构建命令：`bash _build.sh :app:assembleRelease --no-configuration-cache` → `BUILD SUCCESSFUL in 8m 22s`（44 tasks）。
+- 构建命令：`bash _build.sh :app:assembleRelease --no-configuration-cache` → 首次（仅回滚 + 开 R8）`BUILD SUCCESSFUL in 7m 45s`；
+  加上 C45 / C46 后重建 `BUILD SUCCESSFUL in 6m 24s`（`Task :app:minifyReleaseWithR8` 再次执行，成品 dex 合计 3 148 116 B）。release 现在带 R8（`Task :app:minifyReleaseWithR8`），
+  keep 规则见 `app/proguard-rules.pro`，映射表 `app/build/outputs/mapping/release/mapping.txt`（306 113 行）可用于崩溃栈还原。
 - release 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.3.0 以来同一把 key）。
 - 可覆盖安装 1.5.1（同一把 release key，versionCode 更高）；APK **只交付、不安装**。
 - 本次**未创建 GitHub Release**（按用户要求只提交并推送代码）。
 - 验收步骤： [`TESTING.md`](TESTING.md) §21.0–§21.6。
+
+### 10.7 为什么回滚 1.5.2 的流畅度写法改动，改成 release 开 R8
+
+用户在同一轮里先要求改，随后明确要求回滚并换做法：
+
+> 「回滚关于流畅度的更改，在构建 release 时按照 miuixguiexample 做（这加了优化）。降低内存开销。不改版本号。只做 release 版本」
+
+**回滚的判据来自参考模板本身，不是猜测。** 参考工程 `/sdcard/Project/MiuixGui`（MiuixGuiExample，即用户口中的
+miuixguiexample）在 `a5e3999 build(release): 开启 R8 代码压缩与优化，修正 release 构建` 里留下的结论原文是：
+
+> 「逐页对比参考模板：页面代码逐行相同，切页掉帧不是页面写法问题」
+
+把 NetPilot 的页面代码与模板逐行对照，两者**逐行相同**而掉帧仍复现 —— 那么问题就不在页面写法上，而在构建层：
+`isMinifyEnabled = false` 的 release 交付给用户的是未内联、未裁剪、类与常量池全量保留的「debug 式 dex」。
+因此本版处置如下：
+
+| 处置 | 内容 |
+| --- | --- |
+| **回滚** | C41 全部（`LogStore.seq`、滚动跟随判断、`derivedStateOf`、导出到 `Dispatchers.IO`）：`LogStore.kt` 用 `git checkout 90b2709` 还原到 1.5.1 原样，`LogPage.kt` 的 11 处写法用脚本还原，残留引用检查全部为 0 |
+| **保留** | C38（Shizuku 日志补全）、C39（正序/倒序切换，属功能而非流畅度写法）、C40（界面内制式切换）、C42（远端缓冲 400→120 等） |
+| **承担** | C44：release 开 R8（`isMinifyEnabled = true` + `proguard-android-optimize.txt`），与模板 `a5e3999` 的配置一致；**未开** `isShrinkResources`，也沿用既有的 `android.enableResourceOptimizations=false`（模板踩过的坑：build-tools 36.0.0 的 aarch64 aapt2 会静默产出空的 `resources-release-optimize.ap_`，打出没有 manifest / `resources.arsc` 的坏包） |
+| **新增** | C45（修孤儿清扫标志冲突）、C46（导出流式写 —— 属内存项，不是流畅度写法） |
+
+**为什么 keep 规则只有这两处。** 本工程与纯 GUI 模板的关键差别是：有**两处入口由外部进程按类名加载** ——
+root 侧的 `app_process` 命令行（类名写死在 `core/priv/WriteCompat.kt` 的 `MAIN_CLASS`），以及 Shizuku 用户服务
+（类名由 `core/priv/shizuku/ShizukuController.kt:339` 的 `ComponentName` 交给 Shizuku，由另一个进程反射实例化）。
+这两处一旦被 R8 改名或裁掉**不会编译报错**，只会在真机上表现为「Root 自检失败 / 用户服务绑不上」，所以显式保留：
+
+- `-keep class com.katiusu.netpilot.core.priv.PrivilegedCli { public static void main(java.lang.String[]); }`
+- `-keep class com.katiusu.netpilot.core.priv.shizuku.ShizukuControllerService { <init>(); *; }`
+- `-keep interface com.katiusu.netpilot.core.priv.shizuku.IShizukuController { *; }`
+- `-keep class com.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub { *; }`
+- `-keep class com.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub$Proxy { *; }`
+
+其余反射目标全是 boot classpath 里的系统 / OEM 类（`android.os.SystemProperties`、`miui.os.Build`、
+`android.app.ActivityThread`、各版本 `ITelephony`），R8 不会改名它们；manifest 里的 8 个 Activity / Service /
+Receiver / Provider 由 AGP 默认规则保留。**构建后已核对**：上述 5 个类名都在成品 dex 的字符串池里，
+`MainActivity` / `MonitorService` / `BootReceiver` 也都在，`apksigner verify` 与 `aapt2 dump badging` 均通过。
+
+**R8 的量化收益是实测（见表 §10.5 末尾四行）**：APK -87.5%、dex -90.2%（3 个 → 1 个）、方法引用 -89.3%、
+类定义 -84.5%。这也解释了 pre-R8 的 release 包为何会到 33 MB 且切页发顿。
+
+**诚实说明**：R8 对**流畅度**的改善同样没有真机 profiler 数据支撑（本轮无法采集 `dumpsys gfxinfo` / janky frames）；
+体积与 dex 规模是硬测量，但「体感是否更流畅」必须由用户按 [`TESTING.md`](TESTING.md) §21.4 自测。
+若真机自测发现 R8 导致任何通道失效（Root 自检 / Shizuku 绑定），第一处置是把 `isMinifyEnabled` 改回 `false`
+重新打包；keep 规则与本次回滚脚本、改动清单都在本节与 §10.3 有据可查。

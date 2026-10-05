@@ -974,11 +974,15 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
 
 ---
 
-## 21. 1.5.2：Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + 卡顿 / 内存优化
+## 21. 1.5.2：Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + Shizuku 孤儿清扫修复 + release 开 R8
 
 > 本版 `versionName = "1.5.2"`、`versionCode = 2026100600`；只出 release 包（`NetPilot-1.5.2-2026100600-release.apk`）。
 > 判定语义、默认值、写入顺序（ITelephony → 权威存储 → settings）与写后回读校验一律未变。
 > 本次没有真机 profiler 数据可用，§10.5 的量级全部是**按代码上限推算**并已标注 —— 请按下面各条自测确认。
+>
+> **1.5.2 后期按用户要求改了两件事**：① 把为「卡顿」做的**日志页写法改动全部回滚**（`LogStore.kt` 回到 1.5.1、
+> `LogPage.kt` 还原 11 处）；② release 改用参考模板 MiuixGuiExample 的配置**开启 R8**（`isMinifyEnabled = true`）。
+> 理由、keep 规则与实测体积 / 方法数对照见 [`POWER_REPORT.md`](POWER_REPORT.md) §10.7。
 
 ### 21.0 本版到底改了什么（一句话版）
 
@@ -987,9 +991,11 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
 | Shizuku 通道日志 | 用户服务进程（`com.katiusu.netpilot:np_service`）里写的诊断日志只进该进程内存，**应用日志页看不到**（1.5.1 之前用户只看到 `false`） | 用户服务把日志缓存在自己进程内，每次 binder 调用结束后被应用进程 `drainDiag()` 取回并写进日志页 |
 | 日志页筛选 | 「全部 / 警告及以上 / 仅错误 / **详细**」四档 | 「全部 / 警告及以上 / 仅错误」三档 + **正序 / 倒序切换**（默认**正序**，旧 → 新） |
 | 手动切制式 | 只有快捷磁贴能切，且只能循环 4 种；功能页没有入口 | 功能页 →「策略」→「**切换网络制式**」，一次列出**全部 34 种**内置制式 |
-| 日志页列表 | 无 key，倒序时每次来新日志都让所有可见行位移重组 | 每条日志有自增 `seq` 作为 key；滚动只在「用户本来就贴着最新端」时才跟随 |
-| 导出日志 | 编码 + 写文件**在主线程**（最长约 240 万字节） | 只把列表快照留在主线程，编码与写出走 `Dispatchers.IO` |
+| 日志页列表 | 无 key，倒序时每次来新日志都让所有可见行位移重组 | **已回滚**：与 1.5.1 相同（无 key、每条新日志重启一次滚动动画）；「切页发顿」改由下面最后一行的 release R8 承担，自测口径见 §21.4 |
+| 导出日志 | 先把整份日志拼成 String 再 `toByteArray(UTF_8)`（上限 80 万字符 ⇒ 峰值 4–5.6 MB，且全在主线程） | **流式逐条写文件**（`bufferedWriter` 边遍历边写），峰值只跟「一行」有关；导出文件内容与旧写法**逐字节一致** |
 | 后台内存 | Shizuku 远端日志缓冲 400 行 × 2000 字符 | 120 行（每次调用都会 drain，400 行纯属白占内存） |
+| **后台残留进程** | Shizuku 孤儿用户服务（`:np_service`）有两条清扫路径，却**共用同一个 `pruneOnce` 标志** ⇒ 启动清扫几乎总先赢，「`probe()` 成功后清扫」实际从不生效 | 两条路径各用一个独立 `AtomicBoolean`；实测孤儿每个约 40 MB、曾累积 4 个 ≈ 180–200 MB —— 这是后台内存里唯一的 MB 级项 |
+| **release 构建** | `isMinifyEnabled = false`：交付的是未裁剪、未内联的「debug 式 dex」 | 按参考模板 MiuixGuiExample 开 **R8**（`proguard-android-optimize.txt` + `app/proguard-rules.pro` 的 5 条 keep）：APK 33.28 MB → **4.15 MB**、dex 方法引用 143 536 → **15 408** |
 | 简要模式下的无用反射 | 每次写入尝试都会枚举一遍 `ITelephony` 写入方法并拼字符串（结果只给详细模式用） | 只有详细模式才做这次枚举 |
 | `siminfo` 整表枚举 | 读不到目标行时每次都 fork 一次 `su -c content query`；写后回读也会触发 | 30 秒内复用上次枚举结果；写后回读不再触发枚举 |
 
@@ -1040,29 +1046,45 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
    - 切换后回首页：状态卡片里的「当前制式」应显示刚写入的值。
    - 故意在「飞行模式」或双卡都没就绪时打开选择框 → 应看到禁用提示，不应静默失败。
 
-### 21.4 「1.5.1 起界面变卡」的修复点（自测口径）
+### 21.4 「1.5.1 起界面变卡」的处理：回滚写法改动 + release 开 R8（自测口径）
 
-1. 修复的三处：
-   - 日志列表**加了稳定 key**（`LogEntry.seq`）：倒序时新日志插在头部不再让所有可见行整体位移重组。
-   - 滚动跟随**加了「用户是否贴着最新端」判断**，并把带动画的 `animateScrollToItem` 换成即时 `scrollToItem`
-     （以前每来一条新日志都会重启一次滚动动画，连用户手动往上翻也会被拽回去）。
-   - 日志筛选结果用 `derivedStateOf` 缓存，不再每次重组都重算一遍。
-2. 自测：停在日志页，或停在**别的标签页**（日志页仍在组合状态）时拨一次制式、让后台写入几条日志，
-   观察界面是否还出现明显掉帧/卡顿；再快速左右切换标签页，确认没有之前那种「切页整体发顿」。
-3. 说明：日志量大（详细模式长条目）时日志页本身仍会较重 —— 这是「失败要留证据」的代价，
-   本版只去掉了**无谓的重复重组与动画**，没有减少日志内容。
+1. **写法改动全部回滚**：本版一度为卡顿改过日志页的写法（`LogEntry.seq` 稳定 key、滚动跟随判断、
+   `derivedStateOf` 缓存筛选、导出移到 `Dispatchers.IO`）—— 现已**全部还原**：`LogStore.kt` 回到 1.5.1 原样
+   （不再有 `seq`），`LogPage.kt` 的 11 处写法还原（无 key、`animateScrollToItem`、每次重组重算筛选、导出回主线程）。
+   理由见 [`POWER_REPORT.md`](POWER_REPORT.md) §10.7：参考模板逐页对比的结论是「页面代码逐行相同，掉帧不是页面写法问题」。
+2. **改由构建层承担**：release 现在与 MiuixGuiExample 一致地开 R8（`isMinifyEnabled = true` +
+   `proguard-android-optimize.txt` + 新增 `app/proguard-rules.pro` 的 5 条 keep）。实测：APK 33 283 737 B →
+   4 152 623 B；dex 由 3 个变 1 个、方法引用 143 536 → 15 408、类定义 20 326 → 3 157。
+3. **自测必须用 release 包**（别用 debug 包）：debug 构建带调试信息、也不含依赖库的基线配置，
+   在 Compose 下本来就更慢，用它测流畅度没有意义。
+   - 停在日志页，或停在**别的标签页**（`beyondViewportPageCount = 1`，日志页仍在组合状态）时拨一次制式、
+     让后台写入几条日志，观察是否还有明显掉帧；再快速左右切换标签页，确认「切页整体发顿」是否消失。
+   - 可选量化：`adb shell dumpsys gfxinfo com.katiusu.netpilot framestats`（切页 / 滚动前后各采一次）。
+   - 本轮**没有**真机 profiler 数据，验收以你的体感为准。
+4. 说明：日志量大（长条目）时日志页本身仍会较重 —— 这是「失败要留证据」的代价；导出也不再在主线程拼整份日志（见 §21.5）。
+5. **R8 回归自测（本版新增，必须做）**：Root 与 Shizuku 两条通道各自跑一次「通道自检 / 切一次制式」，
+   确认没有因为混淆而失效 —— 那两处入口是**按类名被外部进程加载**的，漏 keep 不会编译报错（见 §10.7）。
 
 ### 21.5 后台内存
 
-1. 改动：Shizuku 用户服务侧的远端日志缓冲 400 行 → **120 行**（每次调用后都会 drain，
-   400 行没有任何机会被读走，纯属白占内存）；简要模式下不再做无用的 `ITelephony` 写入方法枚举
-   （那次枚举只服务详细模式那一行，简要模式本来就会把它丢掉）；`explainNoRow` 的整表枚举加 30 秒记忆化，
-   写后回读不再触发第二次 `su` 子进程。
-2. 明确**没有**改的：日志内存上限（400 条 / 落盘 120 条 / 单条 2000 字符）与「失败即刻落盘」策略本身。
-   1.5.1 起常驻内存偏高的主因是**同一个 400 条槽位里装的内容变长变多**（失败条目 200–1200 字符、
+1. 改动：
+   - Shizuku 用户服务侧的远端日志缓冲 400 行 → **120 行**（每次调用后都会 drain，400 行没有任何机会被读走，纯属白占内存）；
+   - 简要模式下不再做无用的 `ITelephony` 写入方法枚举（那次枚举只服务详细模式那一行，简要模式本来就会把它丢掉）；
+     `explainNoRow` 的整表枚举加 30 秒记忆化，写后回读不再触发第二次 `su` 子进程；
+   - **修掉 Shizuku 孤儿清扫失效**（本版最大的一项）：两条清扫路径原来共用同一个 `pruneOnce` 标志，同进程内
+     CAS 先到者赢 ⇒ 启动清扫（`TemplateApp.onCreate` 立刻起线程）几乎总先赢，「`probe()` 成功后清扫」这条
+     实际从不生效。现在两条路径各用一个独立 `AtomicBoolean`。为什么重要：孤儿用户服务进程每个约 40 MB，
+     项目内实测曾累积 4 个（≈180–200 MB），而主进程只有 16 MB；
+   - **日志导出改流式写**：不再先把整份日志拼成 String 再 `toByteArray(UTF_8)`（上限 80 万字符 ⇒ 峰值 4–5.6 MB），
+     改成 `bufferedWriter` 逐条 append，峰值只跟「一行」有关；**导出文件内容与旧写法逐字节一致**。
+2. 明确**没有**改的：日志内存上限（400 条 / 落盘 120 条 / 单条 2000 字符）、「失败即刻落盘」策略、判定语义与默认值。
+   1.5.1 起常驻内存偏高的一个来源是**同一个 400 条槽位里装的内容变长变多**（失败条目 200–1200 字符、
    详细模式 1600 字符一块），属既有设计，不在本版改动范围。
-3. 自测：`adb shell dumpsys meminfo com.katiusu.netpilot` 记录应用空闲 10 分钟后的 PSS，与 1.5.1 对比；
-   同时 `adb shell ps -A | grep np_service` 确认没有多个残留用户服务进程。
+3. 自测：
+   - 冷启动应用（或让系统把应用杀掉后重开）两三次，再 `adb shell ps -A | grep np_service` ——
+     期望**最多 0 个**残留用户服务进程（修好清扫之前会攒到 2–4 个）。
+   - `adb shell dumpsys meminfo com.katiusu.netpilot` 记录应用空闲 10 分钟后的 PSS，与 1.5.1 对比。
+   - 导出一次日志（日志页 →「导出」），打开文件确认 5 行头部、条目顺序与内容跟以前一致。
 
 ### 21.6 版本与产物
 
@@ -1071,8 +1093,11 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
 
 | 文件 | 大小（字节） | SHA-256 |
 | --- | --- | --- |
-| `NetPilot-1.5.2-2026100600-release.apk` | 33 283 737 | `336bda9711788187d543b916b131595852b591e1dbc8cd63ed24cbfcbe94f472` |
+| `NetPilot-1.5.2-2026100600-release.apk` | 4 152 623 | `7b1692384ee7df0175cb01f3b3af2ea736fa40aa4716a72d9ffa601dda7a81b9` |
 
-- 构建命令：`bash _build.sh :app:assembleRelease --no-configuration-cache`。
+> 该包为**开启 R8 后**重新构建（体积从 33 283 737 B 降到上表值）；映射表留在
+> `app/build/outputs/mapping/release/mapping.txt`，崩溃栈可用它还原。
+
+- 构建命令：`bash _build.sh :app:assembleRelease --no-configuration-cache`（release 含 R8：`Task :app:minifyReleaseWithR8`）。
 - 可以直接覆盖安装 1.5.1（同一个 release key、versionCode 更高）。
 - 量化对照与机制分析见 [`POWER_REPORT.md`](POWER_REPORT.md) §10。

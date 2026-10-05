@@ -107,7 +107,7 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 | 1.4.0 | 2026100503 | Fake full bars judged on 5G / 5G+ only; detection defaults revised. |
 | 1.5.0 | 2026100504 | Log persistence fix; write diagnostics; duplicate launcher icon removed; six visible false successes on the write path fixed; carrier defaults corrected; Tasker event gating. |
 | 1.5.1 | 2026100505 | Three distinct "cannot read" causes in the authoritative store separated; log conclusions carry their reason; brief/detailed log modes; newest-first log page; log export to file. |
-| 1.5.2 | 2026100600 | Shizuku-channel logs completed; log page gets an oldest/newest order toggle (oldest first by default); all 34 network modes switchable from the UI; log page and background memory optimised. |
+| 1.5.2 | 2026100600 | Shizuku-channel logs completed; log page gets an oldest/newest order toggle (oldest first by default); all 34 network modes switchable from the UI; fixed stale Shizuku user-service pruning (each orphan ~40 MB); log export now streams to disk; release build now enables R8 (APK 33.3 MB -> 4.15 MB). |
 
 > Per-version details are no longer duplicated here: measurements live in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) and acceptance steps in [`docs/TESTING.md`](docs/TESTING.md) (both Chinese).
 > Licence: copies distributed as 1.0.1 and earlier (including the 1.0.1 APK in Releases) remain GPL-3.0 and that grant cannot be revoked; from 1.1.0 onwards this project is released under Apache-2.0 — see [`docs/PROVENANCE.md`](docs/PROVENANCE.md).

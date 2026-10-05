@@ -9,7 +9,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 
 enum class LogLevel { DEBUG, INFO, WARN, ERROR }
 
@@ -18,14 +17,6 @@ data class LogEntry(
     val level: LogLevel,
     val tag: String,
     val message: String,
-    /**
-     * 进程内单调递增的序号（1.5.2 新增），**只服务于界面**。
-     *
-     * 日志页用它当 `items` 的 key：没有 key 时「在头部插入一条」会让所有可见行的索引
-     * 整体位移，Compose 只能把可见行全部重建（1.5.1 改成倒序显示后，这件事被放大成
-     * 「每来一条日志就重排一次界面」）。它不参与任何判定，也不落盘 —— 重启后重新编号。
-     */
-    val seq: Long = 0L,
 ) {
     fun timeText(): String = FORMATTER.get()!!.format(Date(timeMs))
 
@@ -80,9 +71,6 @@ object LogStore {
 
     private val buffer = mutableStateListOf<LogEntry>()
 
-    /** [LogEntry.seq] 的来源；[log] 会被多个线程调用（主线程、监控 IO 线程），所以用原子量。 */
-    private val seqCounter = AtomicLong(0L)
-
     /**
      * 单线程落盘器（守护线程）。
      *
@@ -127,8 +115,6 @@ object LogStore {
                         .getOrDefault(LogLevel.INFO),
                     tag = obj.optString("g", ""),
                     message = obj.optString("m", ""),
-                    // 落盘格式里没有 seq：恢复时按读到的顺序重新编号，保证 key 唯一。
-                    seq = seqCounter.incrementAndGet(),
                 )
             }
             buffer.clear()
@@ -137,13 +123,7 @@ object LogStore {
     }
 
     fun log(tag: String, message: String, level: LogLevel = LogLevel.INFO) {
-        val entry = LogEntry(
-            System.currentTimeMillis(),
-            level,
-            tag,
-            message.take(MAX_MESSAGE_CHARS),
-            seqCounter.incrementAndGet(),
-        )
+        val entry = LogEntry(System.currentTimeMillis(), level, tag, message.take(MAX_MESSAGE_CHARS))
         buffer += entry
         while (buffer.size > MAX_ENTRIES) buffer.removeAt(0)
         dirty = true

@@ -203,11 +203,13 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
      *
      * 用户服务是 root/shell 权限的独立进程（`<包名>:np_service`），客户端被系统杀掉时
      * 来不及 `unbindUserService(remove = true)`，它就会变成 PPID=1 的孤儿长期驻留，
-     * 每个约 40 MB（实测累积到 4 个 / ~180 MB）。每个应用进程只做一次；
+     * 每个约 40 MB（实测累积到 4 个 / ~180 MB）。本路径每个应用进程只做一次
+     * （与 [pruneOrphanedServices] 各用一个标志，见 [pruneStaleOnce] —— 1.5.2 之前两者
+     * 共用同一个标志，先到者赢、后到者永久 no-op，见那里的注释）；
      * 清扫只是省内存，失败一律静默，绝不影响通道可用性。
      */
     private suspend fun pruneStaleServices() {
-        if (!pruneOnce.compareAndSet(false, true)) return
+        if (!pruneStaleOnce.compareAndSet(false, true)) return
         val removed = call("pruneStaleProcesses", -1) { it.pruneStaleProcesses() }
         if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
         WriteDiag.detail("shizuku 清扫残留用户服务进程：杀掉 $removed 个")
@@ -228,7 +230,7 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
      * @return 清掉的孤儿进程数；Shizuku 没装 / 没授权 / 绑定失败一律返回 0（全静默）。
      */
     suspend fun pruneOrphanedServices(): Int {
-        if (!pruneOnce.compareAndSet(false, true)) return 0
+        if (!pruneOrphanOnce.compareAndSet(false, true)) return 0
         if (!shizukuAlive()) return 0
         if (!ensureServiceBinding()) return 0
         return try {
@@ -367,7 +369,16 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
         const val DRAIN_TIMEOUT_MS = 3_000L
         const val POLL_INTERVAL_MS = 100L
 
-        /** 孤儿进程清扫每个应用进程只做一次。 */
-        val pruneOnce = AtomicBoolean(false)
+        /**
+         * 孤儿进程清扫的两个入口各用**独立**标志，不能共用。
+         *
+         * 为什么（1.5.2 修掉的缺陷）：两条路径以前共用同一个 AtomicBoolean，而同进程内
+         * CAS 只有先到者能赢 —— 启动清扫在 TemplateApp.onCreate 里立刻起线程，几乎总是
+         * 先赢，于是 [pruneStaleServices]（probe 成功后才走的那条）实际从不生效；反过来
+         * 若 probe 先赢，启动清扫就直接返回 0，上一次运行遗留的孤儿无人清。
+         * 两条路径各自只做一次即可，互不顶掉。
+         */
+        val pruneStaleOnce = AtomicBoolean(false)
+        val pruneOrphanOnce = AtomicBoolean(false)
     }
 }
