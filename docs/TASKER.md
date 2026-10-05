@@ -33,7 +33,7 @@ NetPilot 对外提供两条自动化通道，可以单独用，也可以混用�
 4. **不需要给 NetPilot 加任何新权限**：两个 receiver 用 `android:exported="true"` 暴露，
    **故意不设 `android:permission`** —— 设了之后发送方 Tasker 必须持有该权限才能调用，
    插件就直接失效了。代价见第 9 节「安全取舍」。
-5. **Android 版本**：targetSdk 34 / minSdk 34。静态接收者收不到「后台应用发的隐式广播」
+5. **Android 版本**：targetSdk 36 / minSdk 34。静态接收者收不到「后台应用发的隐式广播」
    这条限制（Android 8 起）**只影响发送方是普通 App 的隐式广播**；Tasker 用「发送意图」
    时把 Package 或 Class 填上就是定向广播，后台也能送达（见第 3 节）。
 

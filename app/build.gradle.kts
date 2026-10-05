@@ -25,11 +25,23 @@ android {
     defaultConfig {
         applicationId = "com.katiusu.netpilot"
         minSdk = 34
-        targetSdk = 34
-        versionCode = 2026100500
-        // versionName 是给人看的语义版本；versionCode 是构建号（2026100500 = 2026-10-05 第 0 次构建），
+        // targetSdk 36（Android 16）。Play 的 targetSdk 36 提交要求已于 2026-08-31 生效
+        // （可申请延期到 2026-11-01），继续用 34 已经无法提交更新。本应用已满足 36 的全部强制项：
+        //   * edge-to-edge —— 5 个 Activity 都调了 enableEdgeToEdge()，manifest 里也没有
+        //     Android 16 已移除的 windowOptOutEdgeToEdgeEnforcement；
+        //   * 预测性返回 —— 已 enableOnBackInvokedCallback="true"，且全工程没有
+        //     onBackPressed / BackHandler 拦截；
+        //   * FGS specialUse —— PROPERTY_SPECIAL_USE_FGS_SUBTYPE 已声明；Android 15 的
+        //     6 小时 FGS 超时与「BOOT_COMPLETED 不能启动的 6 类 FGS」都不含 specialUse；
+        //   * 16 KB 页大小 —— 2026-10-05 实测通过（zipalign -c -P 16 -v 4 报 Verification successful，
+        //     全部 .so 的 LOAD 段 p_align = 16384）；升级 AGP/NDK 后需重跑这条命令。
+        // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
+        // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
+        targetSdk = 36
+        versionCode = 2026100501
+        // versionName 是给人看的语义版本；versionCode 是构建号（2026100501 = 2026-10-05 第 1 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
-        versionName = "1.1.0"
+        versionName = "1.2.0"
 
     }
 

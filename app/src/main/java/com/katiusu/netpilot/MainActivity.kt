@@ -2,6 +2,7 @@ package com.katiusu.netpilot
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -48,7 +49,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.katiusu.netpilot.core.NetPilot
 import com.katiusu.netpilot.core.PermissionGuide
+import com.katiusu.netpilot.core.update.UpdateChecker
 import com.katiusu.netpilot.ui.component.FirstLaunchGuideDialog
+import com.katiusu.netpilot.ui.component.UpdateDialog
 import com.katiusu.netpilot.ui.component.PermissionDeniedDialog
 import com.katiusu.netpilot.ui.component.PermissionRationaleDialog
 import com.katiusu.netpilot.ui.component.liquid.IosLiquidGlassNavigationBar
@@ -94,6 +97,16 @@ import top.yukonga.miuix.kmp.utils.springAnimateToPage
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * 应用是否处于前台（onResume 之后、onPause 之前）。
+     *
+     * 为什么需要这个状态：监控页的 5 秒快速采样跑在 `LaunchedEffect` 里，而 Compose 在
+     * Activity 退到后台时**不会销毁组合** —— 循环会一直转下去，每 5 秒一次的
+     * `NetPilot.sampleNow()` 就是一次完整的 HTTP 探测（DNS + TCP 建连 + 首字节），
+     * 屏幕关着照跑。把「是否在前台」显式交给页面，不可见时自然停下。
+     */
+    private var isForeground by mutableStateOf(false)
+
     override fun attachBaseContext(newBase: Context) {
         val language = LocaleHelper.getSavedLanguage(newBase)
         super.attachBaseContext(LocaleHelper.wrapContext(newBase, language))
@@ -101,8 +114,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        isForeground = true
         // 回到前台时重新检测 Root（用户可能刚刚授予权限）。
         XposedServiceManager.checkRoot()
+    }
+
+    override fun onPause() {
+        // 先落状态再交给 super：onPause 之后组合随时可能被系统冻结或停止。
+        isForeground = false
+        super.onPause()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -178,10 +198,21 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // 自动更新：只在应用被打开时查一次，关掉「自动检查更新」就完全不查。
+            // 刻意不做后台轮询 —— 这个工程这一轮正是在削后台唤醒，新模组不能反过来往里加项。
+            var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+            LaunchedEffect(Unit) {
+                if (AppSettings.load(this@MainActivity).checkUpdateOnLaunch) {
+                    UpdateChecker.checkForUpdate(this@MainActivity)
+                        .onSuccess { info -> if (info.hasUpdate) updateInfo = info }
+                }
+            }
+
             // 网络质量降级默认开启，但监控循环挂在前台服务上：冷启动时若开关开着而服务
             // 没跑，界面会显示「已开启」却什么都不做 —— 正是本门面一直在避免的假状态。
             // 这里补一次对账。刻意放在 Activity 的 LaunchedEffect 而不是 Application.onCreate：
-            // targetSdk 34 下从后台起前台服务会被 ForegroundServiceStartNotAllowedException 拒掉。
+            // targetSdk 34 起从后台起前台服务就会被 ForegroundServiceStartNotAllowedException
+            // 拒掉（36 只会更严），Activity 起来时不受这条限制。
             LaunchedEffect(Unit) {
                 val appContext = this@MainActivity.applicationContext
                 if (NetPilot.autoDowngradeEnabled() &&
@@ -208,6 +239,9 @@ class MainActivity : ComponentActivity() {
 
             AppTheme(themeMode = themeMode) {
                 MainScreen(
+                    // 前台状态只能由 Activity 传进来：MainScreen 是文件里的顶层函数，
+                    // 看不到 MainActivity 的实例成员，读不到 isForeground。
+                    isForeground = isForeground,
                     themeMode = themeMode,
                     isFloatingNavbar = isFloatingNavbar,
                     isLiquidGlass = isLiquidGlass,
@@ -265,12 +299,32 @@ class MainActivity : ComponentActivity() {
                     onRequestIgnoreBatteryOptimizations = onIgnoreBatteryOpt,
                 )
             }
+
+            // 自动更新提示：权限相关对话框与首次引导都不显示时才渲染，避免同一帧叠两个
+            // WindowDialog —— 和上面首次引导的排队方式一致。
+            if (permissionPrompt == null && !showFirstLaunchGuide) {
+                updateInfo?.let { info ->
+                    UpdateDialog(
+                        info = info,
+                        onDismissRequest = { updateInfo = null },
+                        onConfirm = {
+                            updateInfo = null
+                            // 交给系统浏览器：不申请 REQUEST_INSTALL_PACKAGES，也不做静默下载。
+                            runCatching {
+                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.releaseUrl)))
+                            }
+                        },
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun MainScreen(
+    /** 应用是否在前台。监控页据此决定要不要开 5 秒快采。 */
+    isForeground: Boolean,
     themeMode: ColorSchemeMode,
     isFloatingNavbar: Boolean,
     isLiquidGlass: Boolean,
@@ -387,6 +441,12 @@ private fun MainScreen(
                     2 -> MonitorPageView(
                         isBlurEnabled = isBlurEnabled,
                         extraBottomPadding = navBarHeight,
+                        // 只有「本页就是当前页」且「应用在前台」时才开 5 秒快采。
+                        // beyondViewportPageCount = 1 会把相邻页一起组合出来，切到别的
+                        // 标签页并不会取消这里的 LaunchedEffect；应用退到后台时组合更是
+                        // 整个活着 —— 不显式收口，后台就会一直按 5 秒一轮做完整 HTTP 探测。
+                        // 页面可见时的行为与改动前完全一致。
+                        liveSampling = isForeground && pagerState.currentPage == page,
                     )
                     3 -> LogPageView(
                         isBlurEnabled = isBlurEnabled,

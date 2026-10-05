@@ -28,13 +28,13 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.1.0** (`versionCode 2026100500`) |
-| Requires | Android 14+ (minSdk 34 / targetSdk 34) |
+| Version | **1.2.0** (`versionCode 2026100501`) |
+| Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
 | License | [Apache-2.0](LICENSE) |
 
-> **Install**: grab the APK from [Releases](../../releases). It is signed with the **Android debug key** — fine for personal use, not for redistribution.
+> **Install**: grab the APK from [Releases](../../releases). Release builds are signed with the project's own release key (SHA-256 `34100875…4c4c`, the same key as 1.0.1/1.1.0, so upgrades install over each other); `debug` builds use the Android debug key and cannot overwrite a release install.
 
 ---
 
@@ -80,7 +80,9 @@ Two explanation dialogs before any system permission dialog: one lists every per
 
 ### Keep-alive + a master service switch
 
-Three layers: `START_STICKY` → `onTaskRemoved` re-arm after 10 s via `AlarmManager` → an inexact 15-minute heartbeat. A master switch in Settings stops everything at once (foreground monitor, heartbeat, restart-on-kill, boot autostart).
+Three layers: `START_STICKY` → `onTaskRemoved` re-arm via `AlarmManager` → an inexact 15-minute heartbeat. A master switch in Settings stops everything at once (foreground monitor, heartbeat, restart-on-kill, boot autostart).
+
+Since 1.2.0 the re-arm delay **backs off exponentially**: the normal case (the service had already been running for 2+ minutes) still comes back in **10 seconds**, exactly as before; only a service that keeps dying within 2 minutes of starting is delayed 10 s → 20 s → 40 s → … up to a 15-minute cap, so a crash loop no longer becomes a restart storm. The heartbeat also **no longer re-registers the repeating alarm** on every tick — `setInexactRepeating` is self-renewing, and re-arming only reset the alarm phase and disturbed Doze batching while paying for a binder call.
 
 ### System compatibility: measured, never guessed
 
@@ -134,9 +136,31 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 - No-network rollback stays at 2 rounds.
 - Only affects users who never wrote the key: values already stored in `SharedPreferences` win.
 
+### Power optimizations + in-app update check (1.2.0)
+
+See **[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)** for before/after numbers, the truth-table proof and every reproduction command. What changed, and what you can actually notice:
+
+| Change | Before | After | Perceptible difference |
+|---|---|---|---|
+| Monitor-page 5-second live sampling | Kept running **even in the background** once you had opened the page — up to 720 real HTTP probes/hour | Runs only while the app is in the foreground, the monitor page is the current tab **and the screen is interactive** — the loop re-checks `PowerManager.isInteractive` every round, because Compose recomposition waits for a frame and no frames arrive once the screen is off | None |
+| Probe while the screen is off and the signal is not strong | One HTTP probe every 60 s anyway | **Skipped entirely** — no network traffic | Notification/monitor page shows "Probe skipped (screen off)" |
+| Notification redraw | Re-posted every 60 s even when the text never changed | Only when the text actually changes | The notification stops ticking once a minute |
+| Log persistence | Rewrote 120 entries into `SharedPreferences` every 4 s | Every 30 s, off the calling thread | None (still 400 entries in the page, ~120 restored after a restart) |
+| Keep-alive heartbeat | Re-registered the alarm and wrote a log line (which triggered a persist) on every tick | One in-process state check | None |
+| Restart after being killed | Fixed 10 s | Still 10 s normally; exponential backoff up to 15 min when it keeps crashing | Only visible if the service crash-loops |
+| Leftover Shizuku processes | Never reclaimed (measured: 4 processes, ~201 MB on one device) | Swept once per app start | More stable background memory |
+
+**The downgrade decision logic is unchanged.** Skipping a probe requires all three of: screen off, state machine idle, and signal not stronger than the threshold. When the signal *is* strong, `Ping` feeds the fake-full-bar rule, so the probe still runs. The per-branch truth table is in the report (§3).
+
+**In-app update check (new)**: an entry in About, plus an optional check at launch (setting defaults to on) against [Releases](../../releases). **Check and notify only** — a dialog shows the version and release notes, and "Update now" opens the Releases page in your browser. No silent downloads, no auto-install, no background polling.
+
+**Play compliance (1.2.0)**: `targetSdk` 34 → **36** (`compileSdk` stays 37). Edge-to-edge, predictive back, the `specialUse` foreground service, BOOT_COMPLETED restrictions and 16 KB page alignment (`zipalign -c -P 16` passes) were each checked; nothing else was needed.
+
+---
+
 ## Privacy
 
-NetPilot **uploads nothing**. Its only network request is the ping probe. It does not read contacts, SMS, or the photo library, and it does not collect location — `ACCESS_FINE_LOCATION` is requested only because Android 10+ classifies cellular signal strength (including SINR) as location data.
+NetPilot **uploads nothing**. Its only network requests are the ping probe and — only at launch or when you tap the button yourself — a single read of this project's public GitHub Releases feed. It does not read contacts, SMS, or the photo library, and it does not collect location — `ACCESS_FINE_LOCATION` is requested only because Android 10+ classifies cellular signal strength (including SINR) as location data.
 
 ---
 

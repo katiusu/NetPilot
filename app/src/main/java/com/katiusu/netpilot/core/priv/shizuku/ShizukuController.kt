@@ -144,6 +144,34 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
         if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
     }
 
+    /**
+     * 应用启动时调用一次：清掉上一次运行遗留的用户服务孤儿进程，清完立刻解绑自己。
+     *
+     * 为什么不能只靠 [probe] 里那次清扫：`probe()` 只在「真的需要特权通道」时才会被调用，
+     * 网络一直健康时 [com.katiusu.netpilot.core.priv.ControlManager.acquire] 根本走不到它 ——
+     * 于是每次应用进程被系统杀掉都会留下一个 PPID=1 的 `:np_service`（实测累积到 4 个、
+     * 合计约 200 MB，而主进程才 16 MB）。
+     *
+     * 收尾和清扫本身一样重要：清扫命令只能在用户服务进程里执行，所以这里必须临时绑一个；
+     * 清完立刻 [destroy]（unbind remove = true），既不留常驻进程，也不占用
+     * [com.katiusu.netpilot.core.priv.ControlManager] 的通道缓存。
+     *
+     * @return 清掉的孤儿进程数；Shizuku 没装 / 没授权 / 绑定失败一律返回 0（全静默）。
+     */
+    suspend fun pruneOrphanedServices(): Int {
+        if (!pruneOnce.compareAndSet(false, true)) return 0
+        if (!shizukuAlive()) return 0
+        if (!ensureServiceBinding()) return 0
+        return try {
+            val removed = call(-1) { it.pruneStaleProcesses() }
+            if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
+            removed
+        } finally {
+            // 无论清没清到，都解绑这次临时绑定的用户服务 —— 否则清扫动作本身就变成了新的孤儿。
+            destroy()
+        }
+    }
+
     private fun shizukuAlive(): Boolean = try {
         Shizuku.pingBinder()
     } catch (_: Throwable) {

@@ -82,7 +82,9 @@ object MonitorEngine {
             publish(e)
             while (isActive) {
                 val t = MonitorSettings.thresholds()
-                val snap = runCatching { e.tick() }.getOrElse {
+                // 后台循环允许在「屏幕关闭 + 未降级 + 信号非强」时跳过 HTTP 探测；
+                // 界面/Tasker 主动触发的 sampleOnce() 走 tick() 的默认值，永远真探。
+                val snap = runCatching { e.tick(allowProbeSkip = true) }.getOrElse {
                     LogStore.error(TAG, "采样失败：${it.message ?: it.javaClass.simpleName}")
                     null
                 }

@@ -23,11 +23,17 @@ class KeepAliveReceiver : BroadcastReceiver() {
             val app = context.applicationContext
             when (intent.action) {
                 KeepAliveScheduler.ACTION_HEARTBEAT -> {
-                    // 心跳顺带自我修复：闹钟可能被系统清掉（重启、省电策略、用户清数据都不必说），
-                    // 重新注册一次的代价只是一次 binder 调用，换来的是一条永远不断的保活链。
-                    if (ServicesGate.enabled(app)) {
-                        KeepAliveScheduler.schedule(app)
-                    }
+                    // 这里**刻意不再**重新注册心跳闹钟。
+                    //
+                    // 原实现每次心跳都调一次 KeepAliveScheduler.schedule()，理由是「闹钟可能被
+                    // 系统清掉，重排一次只花一次 binder 调用」。但那条理由本身不成立：
+                    //  - 心跳用的是 setInexactRepeating，系统会自己按周期续下去，不需要谁重排；
+                    //  - 真被清掉时这个接收器根本不会被执行，「站在心跳里自我修复」永远修不到；
+                    //  - 每次重排会把下一次触发时间推回「现在 + 15 分钟」，等于不断重置相位，
+                    //    系统没法把这条周期闹钟稳定地并入 Doze 的批处理窗口。
+                    // 心跳这一天 96 次里唯一还有意义的事只剩「确认服务活着，不在就拉起来」。
+                    // 真正的补排路径另有两条，都不依赖心跳：MonitorService.onCreate()（服务每次
+                    // 启动都会补一次，见那里的注释）与 BootReceiver（开机 / 应用更新时）。
                     ensureMonitorRunning(app, "保活心跳")
                 }
 

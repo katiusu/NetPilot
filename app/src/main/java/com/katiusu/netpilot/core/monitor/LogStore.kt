@@ -7,6 +7,8 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 enum class LogLevel { DEBUG, INFO, WARN, ERROR }
 
@@ -49,12 +51,37 @@ object LogStore {
      */
     private const val PERSIST_ENTRIES = 120
 
-    private const val PERSIST_INTERVAL_MS = 4_000L
+    /**
+     * 落盘节流窗口。
+     *
+     * 为什么从 4 秒放宽到 30 秒：日志活跃时每 [PERSIST_INTERVAL_MS] 就要把最近
+     * [PERSIST_ENTRIES] 条拼成一个约 20 KB 的 JSON 串、再整份写回 SharedPreferences。
+     * 4 秒意味着理论上每小时最多 900 次「序列化 + 整文件重写 + fsync」，是应用里最稳定的
+     * 一块闪存写入来源。落盘的那份**只在下次进程启动时才被读**（日志页读的是内存里的
+     * [buffer]），所以放宽窗口对界面零影响，代价只是「进程被系统直接杀掉时最多丢 30 秒
+     * 日志」—— ERROR 级别的日志仍然绕过节流立刻落盘（见 [log]）。
+     */
+    private const val PERSIST_INTERVAL_MS = 30_000L
+
+    /** 阻塞式落盘（用户点「清空日志」用）的最长等待，任何情况下都不卡死调用线程。 */
+    private const val WRITE_TIMEOUT_MS = 2_000L
 
     /** 单条消息最长字符数，避免异常堆栈这类超长文本长期占内存（截断而非丢弃）。 */
     private const val MAX_MESSAGE_CHARS = 2_000
 
     private val buffer = mutableStateListOf<LogEntry>()
+
+    /**
+     * 单线程落盘器（守护线程）。
+     *
+     * 为什么必须挪出调用线程：[log] 的调用方既有 Compose 主线程（界面动作），也有监控循环
+     * 的 IO 线程。原实现直接在调用线程上拼 120 条 JSON 再 `.apply()`，等于把「序列化 +
+     * 写整份 SharedPreferences」的 CPU 成本摊到主线程上。用单线程执行器还能顺带保证
+     * 多次落盘不会并发写同一个文件。
+     */
+    private val writer = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "NetPilot-LogWriter").apply { isDaemon = true }
+    }
 
     @Volatile
     private var appContext: Context? = null
@@ -114,31 +141,55 @@ object LogStore {
     fun clear() {
         buffer.clear()
         dirty = true
-        maybePersist(force = true)
+        // 用户主动清空：这一次必须**同步**写完再返回，否则「清完立刻杀进程」会把日志留下。
+        persist(force = true, blocking = true)
     }
 
-    /** 强制落盘。服务/引擎停止时调用，避免丢最后几条。 */
+    /**
+     * 强制落盘（异步）。
+     *
+     * 服务/引擎停止时调用，避免丢最后几条。**注意它是异步的**：写盘排在 [writer] 上，
+     * 方法返回不代表已经写完。需要「返回即已落盘」的场合走 [clear] 那种阻塞路径。
+     */
     fun flush() = maybePersist(force = true)
 
-    private fun maybePersist(force: Boolean) {
+    private fun maybePersist(force: Boolean) = persist(force = force, blocking = false)
+
+    private fun persist(force: Boolean, blocking: Boolean) {
         val ctx = appContext ?: return
         val now = System.currentTimeMillis()
         if (!force && now - lastPersistAt < PERSIST_INTERVAL_MS) return
         if (!dirty) return
         lastPersistAt = now
         dirty = false
-        val array = JSONArray()
-        // 只落盘最近的 PERSIST_ENTRIES 条；内存 buffer 不变。
-        buffer.takeLast(PERSIST_ENTRIES).forEach { entry ->
-            array.put(
-                JSONObject()
-                    .put("t", entry.timeMs)
-                    .put("l", entry.level.name)
-                    .put("g", entry.tag)
-                    .put("m", entry.message)
-            )
+        // 快照必须在这里取：buffer 是 Compose 的 SnapshotStateList，交给另一个线程延迟读不安全。
+        val pending = buffer.takeLast(PERSIST_ENTRIES).toList()
+        val task = Runnable { writeEntries(ctx, pending) }
+        if (blocking) {
+            runCatching { writer.submit(task).get(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
+        } else {
+            runCatching { writer.execute(task) }
         }
-        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit().putString(KEY_ENTRIES, array.toString()).apply()
+    }
+
+    private fun writeEntries(ctx: Context, entries: List<LogEntry>) {
+        runCatching {
+            val array = JSONArray()
+            // 只落盘最近的 PERSIST_ENTRIES 条；内存 buffer 不变。
+            entries.forEach { entry ->
+                array.put(
+                    JSONObject()
+                        .put("t", entry.timeMs)
+                        .put("l", entry.level.name)
+                        .put("g", entry.tag)
+                        .put("m", entry.message)
+                )
+            }
+            // 用 commit() 而不是 apply()：这里本来就在后台线程上，没有卡主线程的风险，
+            // 而 commit() 会返回成功与否 —— 失败就重新标脏，下一次日志再试一遍。
+            val ok = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(KEY_ENTRIES, array.toString()).commit()
+            if (!ok) dirty = true
+        }.onFailure { dirty = true }
     }
 }

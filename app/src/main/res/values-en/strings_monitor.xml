@@ -51,6 +51,7 @@
     <string name="monitor_value_unknown">Unknown</string>
     <string name="monitor_value_none">—</string>
     <string name="monitor_value_no_response">No response</string>
+    <string name="monitor_value_ping_skipped">Probe skipped (screen off)</string>
     <string name="monitor_value_dbm">%1$d dBm</string>
     <string name="monitor_value_db">%1$d dB</string>
     <string name="monitor_value_ping_failed">Failed (%1$s)</string>

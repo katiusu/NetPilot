@@ -49,7 +49,11 @@ class MonitorService : Service() {
         // 这条运行期意图是保活的判据：只有用户从通知栏点「停止」才会被置回 false，
         // 否则心跳会在 15 分钟后把用户刚停掉的服务拉回来。
         KeepAliveState.setMonitorWanted(this, true)
+        // 给重启退避留一个时间戳：下一次 onDestroy 排「尽快拉回」时，要靠它判断
+        // 这一次启动到底站没站稳（活过窗口就从 10 秒重来，没活过就翻倍退避）。
+        KeepAliveState.noteServiceStarted(this)
         // 心跳可能在「总开关关闭期间」被系统清掉（重启/省电），服务活着时补一次最省事。
+        // 这也是心跳闹钟**唯一**的补排路径（心跳接收器里已经不再重排，见 KeepAliveReceiver）。
         if (ServicesGate.enabled(this)) {
             KeepAliveScheduler.schedule(this)
         }
@@ -143,6 +147,10 @@ class MonitorService : Service() {
             .build()
     }
 
+    /** 上一次真正推到通知栏的文本；null 表示还没推过。 */
+    @Volatile
+    private var lastNotificationText: String? = null
+
     private fun updateNotification(snap: SignalSnapshot?) {
         val text = if (snap == null) {
             "等待首次采样…"
@@ -152,9 +160,26 @@ class MonitorService : Service() {
                 append(" · ")
                 append(snap.rsrp?.let { "RSRP $it dBm" } ?: "RSRP 未知")
                 append(" · ")
-                append(snap.pingMs?.let { "$it ms" } ?: "无响应")
+                append(
+                    snap.pingMs?.let { "$it ms" }
+                        // 跳过探测的轮次说明原因：锁屏上看到「无响应」会以为断网了。
+                        ?: if (snap.probeSkipped) {
+                            getString(R.string.monitor_value_ping_skipped)
+                        } else {
+                            "无响应"
+                        },
+                )
             }
         }
+        // 文本没变就直接返回，不再碰 NotificationManager。
+        //
+        // 为什么需要这层判断：MonitorEngine.publish() 每轮都写 _lastTickAt，StateFlow 因此
+        // 每轮都发射，上面那个 collectLatest 于是每轮（默认 60 秒一轮；监控页开着 5 秒快采时
+        // 更密）都会调到这里。而通知文本只由「网络类型 / RSRP / ping」三项决定，静止场景下
+        // 绝大多数轮次三者一字不变，却仍然每次都走一次 NotificationManager binder 调用外加
+        // 重新构建一个 Notification 对象。文本没变时跳过，用户看到的通知内容完全一样。
+        if (text == lastNotificationText) return
+        lastNotificationText = text
         val mgr = getSystemService(NotificationManager::class.java) ?: return
         runCatching { mgr.notify(NOTIFICATION_ID, buildNotification(text)) }
     }

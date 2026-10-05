@@ -50,6 +50,7 @@
     <string name="monitor_value_unknown">未知</string>
     <string name="monitor_value_none">—</string>
     <string name="monitor_value_no_response">无响应</string>
+    <string name="monitor_value_ping_skipped">已跳过探测（屏幕关闭）</string>
     <string name="monitor_value_dbm">%1$d dBm</string>
     <string name="monitor_value_db">%1$d dB</string>
     <string name="monitor_value_ping_failed">失败（%1$s）</string>

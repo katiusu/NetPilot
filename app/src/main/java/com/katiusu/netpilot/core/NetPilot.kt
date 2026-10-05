@@ -274,7 +274,13 @@ object NetPilot {
             append(" · ")
             append(snap.rsrp?.let { "RSRP $it dBm" } ?: "RSRP 未知")
             append(" · ")
-            append(snap.pingMs?.let { "$it ms" } ?: "无响应")
+            append(
+                snap.pingMs?.let { "$it ms" }
+                    // 与通知栏同一处理：跳过探测的轮次说明原因，不伪装成无响应。
+                    // 这里沿用本文件既有的硬编码中文风格（statusText 本来就是
+                    // 给磁贴/Tasker 看的单行中文状态串）。
+                    ?: if (snap.probeSkipped) "已跳过探测（屏幕关闭）" else "无响应",
+            )
             append(" · ")
             append(if (state.active) "已降级" else "未降级")
         }

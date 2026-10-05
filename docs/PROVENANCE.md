@@ -70,3 +70,11 @@ python3 tools/check_provenance.py     # 打印上表；两条已复核的重合�
 ## 本地模板（用户自有）
 
 `MiuixGui` 模板：项目骨架、`prefs/` 偏好体系、`ui/component/` 组件、液态玻璃导航栏、模糊工具。**非第三方代码。**
+
+**检查更新模组（1.2.0 新增）**：`core/update/UpdateChecker.kt` 与 `ui/component/UpdateDialog.kt` 移植自**同一作者**的另外两个工程（`MiuixGui`、`HyperImmersiveTaskbar`）里同形的 `UpdateChecker` / `UpdateDialog` 实现，两者逐字相同、均为用户自有代码。检查地址已按本工程改为
+`https://api.github.com/repos/katiusu/NetPilot/releases/latest`（本项目自己的 Releases），不再指向任何模板占位仓库。
+
+- 特性：`Check-Update-Module`（同作者工程）
+- 许可证：无第三方许可证约束（用户自有代码）
+- 查询命令：`grep -rn "github.com" app/src/main/java/com/katiusu/netpilot/core/update/`
+  —— 只应出现 `katiusu/NetPilot`。

@@ -25,6 +25,16 @@ data class SignalSnapshot(
     val pingTarget: String = "",
     /** 探测全部失败时的原因，供界面与日志显示 `null` 时排查。 */
     val pingError: String? = null,
+    /**
+     * 本轮**没有真的探测**（[pingMs] 与 [pingError] 同时为 null 只是因为这个）。
+     *
+     * 为什么必须把这个含义单独拎出来：`pingMs == null` 原本只有一个含义「探了但没通」，
+     * 它同时被状态机的「无网回退」计数（`noResponse`）和界面文案依赖。省电优化会在
+     * 「屏幕关闭 + 未降级 + 信号非强」时跳过整轮探测（那种组合下没有任何读者会读
+     * pingMs，见 [FakeSignalDetector.judge] 的分支顺序），此时如果不能把「没测」与
+     * 「测了失败」分开，界面就会把「省电没测」显示成「网络不通」——那才是真正的误报。
+     */
+    val probeSkipped: Boolean = false,
     val isWifi: Boolean = false,
     val wifiSsid: String? = null,
     val wifiBssid: String? = null,

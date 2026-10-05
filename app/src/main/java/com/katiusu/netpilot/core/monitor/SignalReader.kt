@@ -73,12 +73,23 @@ object SignalReader {
         else -> "未知($raw)"
     }
 
+    /**
+     * @param allowProbeSkip 是否允许在「本轮的探测结果不可能被任何判定读到」时跳过
+     *   HTTP 探测（省电）。判定条件由调用方给出，见 [AutoDowngradeEngine.tick]。
+     *   传 `false` 时行为与优化前**逐字节一致**（永远探测）；传 `true` 也只会在
+     *   `rsrp` 不属于强信号时才真的跳过。
+     * @param strongRsrpThreshold 判定「信号强」的 RSRP 门限，**必须**与
+     *   [FakeSignalDetector.judge] 收到的 `thresholds.rsrpThreshold` 是同一个值：
+     *   两边不一致就会出现「判定其实要读 ping，却把这一轮探测跳过了」的漏检。
+     */
     @SuppressLint("MissingPermission", "HardwareIds")
     fun read(
         context: Context,
         subId: Int,
         pingTarget: String,
         pingTimeoutMs: Int,
+        allowProbeSkip: Boolean,
+        strongRsrpThreshold: Int,
     ): SignalSnapshot {
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val activeNetwork = runCatching { manager?.activeNetwork }.getOrNull()
@@ -193,7 +204,19 @@ object SignalReader {
 
         // 无论是否在 Wi-Fi 上都测量延迟：界面要能回答「到底通不通」，
         // 至于要不要据此判定网络质量差，交给 FakeSignalDetector 决定。
-        val ping = ping(pingTarget, pingTimeoutMs)
+        //
+        // 唯一的例外（省电）：只有「信号强」这一条分支会读 pingMs ——
+        // FakeSignalDetector.judge 里 Wi-Fi 未驻留蜂窝的那条先 return，弱信号分支与
+        // 最后的兜底分支都只看 RSRP。所以 rsrp 非强信号时，这一轮探不探，判定结果
+        // 完全相同。调用方只在「屏幕关闭 + 未处于降级态」时才会把 allowProbeSkip
+        // 置真（降级态里 pingMs == null 会被当成一次「无网回退」计数，语义不同）。
+        // 跳过时快照带上 probeSkipped，界面据此显示「已跳过探测」而不是「无响应」。
+        val skipProbe = allowProbeSkip && !(rsrp != null && rsrp > strongRsrpThreshold)
+        val ping = if (skipProbe) {
+            PingResult(ms = null, error = null, target = pingTarget)
+        } else {
+            ping(pingTarget, pingTimeoutMs)
+        }
         val displayType = if (onWifi) "WLAN" else networkTypeName(rawType)
 
         return SignalSnapshot(
@@ -210,6 +233,7 @@ object SignalReader {
             pingMs = ping.ms,
             pingTarget = ping.target,
             pingError = ping.error,
+            probeSkipped = skipProbe,
             isWifi = onWifi,
             wifiSsid = ssid,
             wifiBssid = bssid,

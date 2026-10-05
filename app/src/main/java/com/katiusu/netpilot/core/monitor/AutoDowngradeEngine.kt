@@ -2,6 +2,7 @@ package com.katiusu.netpilot.core.monitor
 
 import com.katiusu.netpilot.core.NetPilotEvents
 import android.content.Context
+import android.os.PowerManager
 import com.katiusu.netpilot.core.mode.NetworkMode
 import com.katiusu.netpilot.core.priv.ControlManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,23 +40,68 @@ class AutoDowngradeEngine(private val context: Context) {
     private val _judgement = MutableStateFlow<FakeJudgement?>(null)
     val judgement: StateFlow<FakeJudgement?> = _judgement.asStateFlow()
 
-    /** 跑一轮：采样 → 判定 → 执行状态机。返回本轮快照，供 UI 与服务复用。 */
-    /** 必须在非主线程调用：内部含 HTTP 探测与特权 shell 等阻塞操作。 */
-    suspend fun tick(): SignalSnapshot {
+    /**
+     * 跑一轮：采样 → 判定 → 执行状态机。返回本轮快照，供 UI 与服务复用。
+     *
+     * 必须在非主线程调用：内部含 HTTP 探测与特权 shell 等阻塞操作。
+     *
+     * @param allowProbeSkip 允许在「屏幕关闭 + 当前未处于降级态」时跳过本轮 HTTP 探测。
+     *   默认 `false`：界面「立即检测」、监控页快采、Tasker `SAMPLE_NOW` 这类
+     *   **用户主动要一次读数**的调用永远真探，读数语义与优化前一致。
+     */
+    suspend fun tick(allowProbeSkip: Boolean = false): SignalSnapshot {
         val thresholds = MonitorSettings.thresholds()
         val subId = SignalReader.defaultDataSubId()
+        // 为什么「屏幕关闭 + 未降级」就够（完整的逐分支核对见 docs/POWER_REPORT.md §3）：
+        // 1) 屏幕关闭 ⇒ 没有可见界面在等这个读数；
+        // 2) 未处于降级态 ⇒ applyTransition 只在降级分支里读 noResponse，
+        //    「本轮没探」在非降级分支里没有任何读者；
+        // 3) 信号非强（这一条在 SignalReader.read 内部判定）⇒ judge() 只走
+        //    不读 pingMs 的那几条分支。
+        // 三条合起来，这一轮的 pingMs 没有任何读者，跳过它不可能改变任何判定。
+        val maySkipProbe = allowProbeSkip &&
+            !_state.value.active &&
+            !isScreenInteractive()
         val snapshot = SignalReader.read(
             context = context,
             subId = subId,
             pingTarget = thresholds.pingTarget,
             pingTimeoutMs = thresholds.pingTimeoutMs,
+            allowProbeSkip = maySkipProbe,
+            strongRsrpThreshold = thresholds.rsrpThreshold,
         )
+        // 只在「跳过/恢复」翻转时记一条日志：既能让用户查得到省电行为，
+        // 又不会每轮刷一条（日志落盘本身也是耗电源之一）。
+        if (snapshot.probeSkipped != probeSkipLogged) {
+            probeSkipLogged = snapshot.probeSkipped
+            LogStore.info(
+                TAG,
+                if (snapshot.probeSkipped) {
+                    "屏幕关闭且信号非强，本轮暂停 HTTP 探测（降级判定不受影响）"
+                } else {
+                    "恢复 HTTP 探测"
+                },
+            )
+        }
         val judgement = FakeSignalDetector.judge(snapshot, thresholds)
         _snapshot.value = snapshot
         _judgement.value = judgement
         applyTransition(snapshot, judgement, thresholds)
         return snapshot
     }
+
+    /** 上一次是否处于「跳过探测」状态，只用于翻转时记一条日志，避免每轮刷屏。 */
+    private var probeSkipLogged = false
+
+    /**
+     * 屏幕是否处于交互状态（亮着）。
+     *
+     * 读它不需要任何权限，也不产生唤醒源。读不到时**保守返回 true**（当作有人在看），
+     * 这样任何异常都只会让优化失效，不会让应用做出「以为没人看」的错误判断。
+     */
+    private fun isScreenInteractive(): Boolean = runCatching {
+        (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+    }.getOrDefault(true)
 
     private suspend fun applyTransition(
         snapshot: SignalSnapshot,
@@ -67,7 +113,11 @@ class AutoDowngradeEngine(private val context: Context) {
         val subId = snapshot.subId
         // 与原脚本 `net_type == "none"` 等价：制式读数为 0 表示当前没有蜂窝数据。
         val hasCellular = snapshot.rawNetworkType != 0
-        val noResponse = snapshot.pingMs == null && !snapshot.isWifi
+        // probeSkipped 必须排除：那一轮的 pingMs == null 表示「省电没去探」，
+        // 不是「探了没通」。当前能跳过探测的轮次一定满足 !active（见 tick 里的
+        // maySkipProbe），根本走不到这一行；这里显式写出来，是为了让「跳过」
+        // 不可能被将来的改动误当成一次真的无网回退。
+        val noResponse = snapshot.pingMs == null && !snapshot.isWifi && !snapshot.probeSkipped
 
         if (!current.active) {
             // 每卡门控：当前默认数据卡没有启用「网络质量自动降级」时，本引擎不对它

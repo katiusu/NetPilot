@@ -41,6 +41,25 @@ object KeepAliveScheduler {
      */
     const val DEFAULT_RESTART_DELAY_MS = 10 * 1000L
 
+    /**
+     * 重启退避的上限：与心跳周期取同一个值。
+     *
+     * 退避爬到 15 分钟就等于回到了心跳的兜底节奏（心跳每 15 分钟都会试着把服务拉起来），
+     * 再往上加只会让真正需要拉回时等得更久，没有意义。
+     */
+    const val MAX_RESTART_DELAY_MS = HEARTBEAT_INTERVAL_MS
+
+    /**
+     * 服务「站稳」的时间窗口：活过它再出事，就当作全新一次，退避从 10 秒重新起步。
+     *
+     * 取 2 分钟是为了把「一启动就崩」和「OEM 省电策略刚起来就杀」与正常情况分开：
+     * - 之前一直好好的（上次启动已超过 2 分钟）⇒ 用户从最近任务划掉、系统低内存清理
+     *   都属于这类，10 秒拉回，行为与优化前完全一致；
+     * - 2 分钟内又出事 ⇒ 判为连续失败，延迟翻倍。用户若在 2 分钟内连着划掉两次，
+     *   第二次会等 20 秒而不是 10 秒 —— 这是唯一可见的差异，且远比崩溃风暴划算。
+     */
+    private const val RESTART_STABLE_WINDOW_MS = 2 * 60 * 1000L
+
     /** 两个 request code 必须不同，否则两种闹钟会互相覆盖（PendingIntent 按 requestCode + Intent 去重）。 */
     private const val REQUEST_HEARTBEAT = 0x4B41 // "KA"
     private const val REQUEST_RESTART = 0x4B42 // "KB"
@@ -74,23 +93,53 @@ object KeepAliveScheduler {
     /**
      * 排一个一次性闹钟，过 [delayMs] 后把自己拉回来。
      * 用于「用户从最近任务划掉」与「服务被销毁」这两条路径。
+     *
+     * [delayMs] 传负数（默认）表示「按指数退避自己算」：调用方是服务的 onDestroy /
+     * onTaskRemoved，它并不知道这是第几次失败。需要固定延迟的老调用方传具体毫秒即可。
      */
-    fun scheduleRestartSoon(context: Context, delayMs: Long = DEFAULT_RESTART_DELAY_MS) {
+    fun scheduleRestartSoon(context: Context, delayMs: Long = -1L) {
         val app = context.applicationContext
         val am = app.getSystemService(AlarmManager::class.java) ?: return
+        // 退避结果先算出来：无论下面排闹钟成功与否，失败历史都已经记下了。
+        val delay = if (delayMs >= 0L) delayMs else nextBackoffDelay(app)
         runCatching {
             // setAndAllowWhileIdle：进 Doze 也会被放行（系统可能推迟到维护窗口），
             // 且不需要精确闹钟权限 —— setExactAndAllowWhileIdle 才是要权限的那个。
             am.setAndAllowWhileIdle(
                 AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + delayMs,
+                SystemClock.elapsedRealtime() + delay,
                 pending(app, REQUEST_RESTART, ACTION_RESTART),
             )
         }.onSuccess {
-            LogStore.debug(TAG, "已安排 ${delayMs / 1000} 秒后重启监控服务")
+            LogStore.debug(TAG, "已安排 ${delay / 1000} 秒后重启监控服务")
         }.onFailure {
             LogStore.error(TAG, "安排重启闹钟失败：${it.message ?: it.javaClass.simpleName}")
         }
+    }
+
+    /**
+     * 指数退避：10 秒 → 20 秒 → 40 秒 → … 上限 [MAX_RESTART_DELAY_MS]。
+     *
+     * 为什么非做不可：服务如果「一启动就崩」，每次崩溃的 onDestroy 都会再排一个 10 秒闹钟，
+     * 于是变成 10 秒一次的闹钟风暴 —— 它比这次优化里任何一个被砍掉的唤醒都贵得多。
+     *
+     * 判定依据是「服务上一次启动之后活了多久」（[KeepAliveState.lastServiceStartAt]）：
+     *  - 活过 [RESTART_STABLE_WINDOW_MS] 再出事 ⇒ 全新一次，回到 10 秒
+     *    （用户从最近任务划掉就属于这一类，所以「划掉后 10 秒拉回」的行为不变）；
+     *  - 没活过 ⇒ 上一次的延迟翻倍，一路退到 15 分钟，把风暴压成一条慢心跳。
+     */
+    private fun nextBackoffDelay(app: Context): Long {
+        val now = System.currentTimeMillis()
+        val lastStart = KeepAliveState.lastServiceStartAt(app)
+        val previous = KeepAliveState.restartDelayMs(app)
+        val stable = lastStart > 0L && now - lastStart >= RESTART_STABLE_WINDOW_MS
+        val next = if (stable || previous <= 0L) {
+            DEFAULT_RESTART_DELAY_MS
+        } else {
+            (previous * 2).coerceAtMost(MAX_RESTART_DELAY_MS)
+        }
+        KeepAliveState.setRestartDelayMs(app, next)
+        return next
     }
 
     /** 撤掉全部待发闹钟（心跳 + 重启）。 */

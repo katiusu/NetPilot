@@ -3,7 +3,7 @@
   明文 HTTP 放行配置 —— 这是「Ping 永远是未知」的根因修复。
 
   为什么要放行：延迟探测（SignalReader.httpProbe）打的是各厂商的
-  generate_204 联网校验地址，公网上这些地址只提供 http://。本项目 targetSdk=34，
+  generate_204 联网校验地址，公网上这些地址只提供 http://。本项目 targetSdk=36，
   Android 9+ 默认禁止明文流量，不放行时 HttpURLConnection 会直接抛
   java.net.UnknownServiceException: CLEARTEXT communication to <host> not permitted
   by network security policy —— 四个候选目标（华为 / Google / 百度 / vivo）全部失败，

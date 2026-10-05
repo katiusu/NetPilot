@@ -1,5 +1,7 @@
 package com.katiusu.netpilot.ui.screen.monitor
 
+import android.content.Context
+import android.os.PowerManager
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +65,22 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  */
 private const val FAST_SAMPLE_INTERVAL_MS = 5_000L
 
+/**
+ * 屏幕当前是否处于交互状态。
+ *
+ * 为什么页内采样需要自己判一次：`liveSampling` 是宿主通过重组传进来的，而 Compose 的重组
+ * 要等下一帧（Recomposer 在 `withFrameNanos` 上等 VSYNC）。屏幕一关，系统就不再投递
+ * VSYNC，宿主传来的 `false` 迟迟不会生效，可这个采样循环里的 `delay()` 走的是
+ * `DefaultDelay`（不受帧约束），于是会继续每 5 秒跑一次**真实网络探测**。所以在循环内部
+ * 每轮再确认一次屏幕状态，堵掉「关屏后照旧探测」这条路径。
+ *
+ * 读不到电源服务时返回 `true`（保守：宁可多采一次，也不要因为一次异常把界面刷新停掉）。
+ * 判据与 [com.katiusu.netpilot.core.monitor.AutoDowngradeEngine] 里的同名判断一致。
+ */
+private fun isScreenInteractive(context: Context): Boolean = runCatching {
+    (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive ?: true
+}.getOrDefault(true)
+
 /** 与日志页同一套时间格式，避免两页显示同一时刻却长得不一样。 */
 private val CLOCK_FORMAT: ThreadLocal<SimpleDateFormat> = object : ThreadLocal<SimpleDateFormat>() {
     override fun initialValue(): SimpleDateFormat = SimpleDateFormat("HH:mm:ss", Locale.CHINA)
@@ -80,6 +98,8 @@ private fun clockText(timeMs: Long): String = CLOCK_FORMAT.get()!!.format(Date(t
  * @param extraBottomPadding 额外的底部留白，给外层底部导航栏用。
  * @param liveSampling 是否开启页内 5 秒快速采样。默认开；宿主如果能准确知道
  *   「本页当前可见」，可以在不可见时传 false，避免在后台白白多跑采样。
+ *   这个开关靠重组传达，而重组要等下一帧，所以它**单独不足以**在屏幕关闭时停掉采样；
+ *   循环内部另有一道 [isScreenInteractive] 检查兜底，两者是并列关系，都要留。
  */
 @Composable
 fun MonitorPageView(
@@ -127,7 +147,13 @@ fun MonitorPageView(
             val phaseNow = state.phase(System.currentTimeMillis(), NetPilot.thresholds())
             val countingPhase =
                 phaseNow == MonitorPhase.RECOVERING || phaseNow == MonitorPhase.ROLLBACK
-            if (!countingPhase) {
+            // 为什么两个条件都要有：`liveSampling` 只在重组发生时才会变（切标签页、退到后台
+            // 都有帧，所以那条路有效），但关屏后没有帧，它变不了；`isScreenInteractive`
+            // 每轮自己问一次系统，不依赖帧。两道门叠加起来，「页面不可见」与「屏幕关闭」
+            // 都真的不再探测。
+            // 注意这里是**跳过本轮**而不是 break：循环一旦退出，就再没有帧来把它拉起来，
+            // 屏幕重新点亮后页面会永远停在旧数据上。
+            if (!countingPhase && isScreenInteractive(context)) {
                 runCatching { NetPilot.sampleNow(context) }
             }
             // 磁贴、通知、功能页都可能改这个开关，顺手同步一次，避免开关显示和实际不一致。
@@ -379,7 +405,13 @@ fun MonitorPageView(
                                     stringResource(R.string.monitor_value_ms, it)
                                 } ?: snap.pingError?.let {
                                     stringResource(R.string.q_ping_failed_short)
-                                } ?: noResponse,
+                                } ?: if (snap.probeSkipped) {
+                                    // 省电跳过的那一轮没有读数：说清楚是「没去探」，
+                                    // 不要把省电显示成「网络不通」。
+                                    stringResource(R.string.monitor_value_ping_skipped)
+                                } else {
+                                    noResponse
+                                },
                             )
                             val pingError = snap.pingError
                             if (!pingError.isNullOrBlank()) {

@@ -223,6 +223,18 @@ object ControlManager {
         }
     }
 
+    /**
+     * 清掉历史遗留的 Shizuku 用户服务孤儿进程（应用启动时调用一次，全静默）。
+     *
+     * 走 [ShizukuController.pruneOrphanedServices] 而不是 [acquire]：清孤儿的目的是省内存，
+     * 不能顺手把通道缓存改成「已绑定」状态，也不能因为网络健康就走不到这一步。
+     * Shizuku 不可用时返回 0 —— 这条路径失败不影响任何功能。
+     */
+    suspend fun pruneOrphanedServices(): Int {
+        val ctx = contextOrNull() ?: return 0
+        return runCatching { ShizukuController(ctx).pruneOrphanedServices() }.getOrDefault(0)
+    }
+
     // ---------------- 内部 ----------------
 
     private fun describe(status: ChannelStatus?): String = when (status) {

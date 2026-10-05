@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,7 +50,10 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.launch
 import com.katiusu.netpilot.R
+import com.katiusu.netpilot.core.update.UpdateChecker
+import com.katiusu.netpilot.ui.component.UpdateDialog
 import com.katiusu.netpilot.ui.component.effect.BgEffectBackground
 import com.katiusu.netpilot.ui.util.BlurredBar
 import com.katiusu.netpilot.ui.util.ColorBlendToken
@@ -150,6 +154,58 @@ private fun AboutContent(
     openLicensePage: () -> Unit,
 ) {
     val contentBackdrop = rememberBlurBackdrop()
+
+    // ---------------- 自动更新模组 ----------------
+    // 状态刻意放在 AboutContent 这一层，而不是 LazyColumn 的 item 里：item 滚出屏幕会被销毁，
+    // 那样对话框会莫名其妙自己关掉。放在这里则只在离开整个「关于」页时才回收。
+    val updateContext = LocalContext.current
+    val updateScope = rememberCoroutineScope()
+    val appVersion = remember(updateContext) { UpdateChecker.currentVersion(updateContext) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+
+    // 用户主动点「检查更新」：一次前台请求，失败给 Toast，不抛异常。
+    fun checkUpdate() {
+        if (isCheckingUpdate) return
+        isCheckingUpdate = true
+        updateScope.launch {
+            val result = UpdateChecker.checkForUpdate(updateContext)
+            isCheckingUpdate = false
+            result.fold(
+                onSuccess = { info ->
+                    if (info.hasUpdate) {
+                        updateInfo = info
+                    } else {
+                        Toast.makeText(
+                            updateContext,
+                            updateContext.getString(R.string.update_latest),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                },
+                onFailure = {
+                    Toast.makeText(
+                        updateContext,
+                        updateContext.getString(R.string.update_check_failed),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+            )
+        }
+    }
+
+    // 有新版才弹；「前往更新」交给系统浏览器，不做静默下载/安装。
+    updateInfo?.let { info ->
+        UpdateDialog(
+            info = info,
+            onDismissRequest = { updateInfo = null },
+            onConfirm = {
+                updateInfo = null
+                openExternalUrl(updateContext, info.releaseUrl)
+            },
+        )
+    }
+
     var blurRadius by remember { mutableFloatStateOf(60f) }
     var noiseCoefficient by remember { mutableFloatStateOf(BlurDefaults.NoiseCoefficient) }
     var brightness by remember { mutableFloatStateOf(0f) }
@@ -203,7 +259,7 @@ private fun AboutContent(
             .asImageBitmap()
     }
     // 同时展示 versionName 与 versionCode：前者是语义版本，后者是构建号
-    // （形如 2026100500）。用户报问题时给构建号才有意义，光给语义版本定位不到具体构建。
+    // （形如 2026100501）。用户报问题时给构建号才有意义，光给语义版本定位不到具体构建。
     // remember：版本信息一次取到就够，避免每次重组都走一遍 PackageManager 并新建字符串。
     val versionName = remember(ctx) {
         try {
@@ -368,6 +424,17 @@ private fun AboutContent(
                             title = stringResource(R.string.ab_github_repo),
                             summary = stringResource(R.string.ab_github_repo_summary),
                             onClick = { openExternalUrl(ctx, GITHUB_REPO_URL) },
+                        )
+                        // 自动更新模组的手动入口：仓库地址取自「我们的库」（GitHub katiusu/NetPilot 的
+                        // releases/latest），不是示例里的占位仓库。
+                        ArrowPreference(
+                            title = stringResource(R.string.check_update),
+                            summary = if (isCheckingUpdate) {
+                                stringResource(R.string.check_update_checking)
+                            } else {
+                                stringResource(R.string.check_update_summary, appVersion)
+                            },
+                            onClick = { checkUpdate() },
                         )
                     }
                     Card(
