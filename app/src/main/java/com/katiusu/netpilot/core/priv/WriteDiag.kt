@@ -14,13 +14,14 @@ import com.katiusu.netpilot.prefs.ConfigState
  * 所以无从判断卡在哪一步；`TelephonyReflection.dispatch` 更是把每个候选组合抛出的异常
  * 直接吞掉，连 logcat 里都看不到失败原因。
  *
- * 两档详略：
- *  - [always] / [warn]：关键节点（选了哪条策略、modem 返回了什么、回读到什么），无条件记录；
- *  - [detail]：逐候选的尝试过程与异常原因，只有用户在设置页打开「写入详细诊断日志」
- *    （[KEY_VERBOSE]，默认关）才记录。
+ * 两档模式（设置页「详细日志模式」开关在两者间切换，默认简要）：
+ *  - **简要模式**：[always] / [warn] / [failure] 都记录 —— 也就是「发生了什么」加上
+ *    「失败时系统到底回了什么」。失败路径上的原始返回值（退出码、stdout/stderr、异常原文、
+ *    拒绝原话）必须在这一档就能看到，否则简要模式会退化成「只写失败、不写原因」，日志没法分析；
+ *  - **详细模式**：再加 [detail] —— 逐候选的每一次尝试、每一步的原始输出都记。
  *
- * 为什么默认关：root 通道下的诊断要从 `app_process` 子进程跨进程搬回应用进程，属于纯诊断
- * 开销，不该成为常态。
+ * 为什么默认简要：root 通道下的详细诊断要从 `app_process` 子进程跨进程搬回应用进程，属于纯
+ * 诊断开销，不该成为常态；而「结论 + 失败原因 + 失败时的原始返回值」是排障的底线，那一档永远开着。
  *
  * 出口按当前进程二选一：
  *  - 应用进程（Shizuku 通道 / RootController 本进程侧）：直接写 [LogStore]，进日志页；
@@ -43,6 +44,12 @@ object WriteDiag {
 
     private const val TAG = "写入诊断"
 
+    /** 详细模式下每一块原始输出的字符上限（LogStore 单条上限 2000，留出标题与序号的余量）。 */
+    private const val DETAIL_CHUNK_CHARS = 1_600
+
+    /** 无条件行（结论 / 失败原因）里引用原始输出时的截断长度：够看出是哪一句拒绝，又不淹没结论。 */
+    const val RAW_INLINE_CHARS = 160
+
     @Volatile
     private var verbose = false
 
@@ -52,6 +59,26 @@ object WriteDiag {
 
     /** 当前是否处于详细模式；父进程据此决定要不要给子进程带 [CLI_VERBOSE]。 */
     val isVerbose: Boolean get() = verbose
+
+    /**
+     * 日志详略档位。
+     *
+     * 为什么用「模式」而不是「开关」来讲话：拿到一份日志的人要先知道它是哪一档 ——
+     * 简要模式里看不到逐候选过程是设计如此，不是日志丢了。
+     */
+    enum class Mode(val label: String) {
+        /** 结论 + 失败原因 + 失败时系统返回的原始值。 */
+        BRIEF("简要模式"),
+
+        /** 再加每一步的原始输出与逐候选尝试过程。 */
+        DETAILED("详细模式"),
+    }
+
+    /** 当前档位。 */
+    val mode: Mode get() = if (verbose) Mode.DETAILED else Mode.BRIEF
+
+    /** 当前档位名，写进日志与界面。 */
+    val modeLabel: String get() = mode.label
 
     fun enabled(context: Context?): Boolean {
         val app = context?.applicationContext ?: return DEFAULT_VERBOSE
@@ -63,7 +90,11 @@ object WriteDiag {
         ConfigState.init(context.applicationContext)
         ConfigState.set(KEY_VERBOSE, enabled)
         verbose = enabled
-        LogStore.info(TAG, if (enabled) "详细诊断日志已开启" else "详细诊断日志已关闭")
+        LogStore.info(
+            TAG,
+            if (enabled) "写入日志改为详细模式：结论、失败原因与每一步原始输出都会记录"
+            else "写入日志改为简要模式：只记结论、失败原因与失败时系统返回的原始值"
+        )
     }
 
     /**
@@ -100,11 +131,79 @@ object WriteDiag {
         emit(message, LogLevel.WARN, unconditional = true)
     }
 
+    /**
+     * 失败路径上的**原始系统返回值**（退出码、stdout/stderr、异常原文、拒绝原话）。
+     *
+     * 为什么它不能是 [detail]：这些值是「为什么失败」的唯一证据，两种模式都必须记 ——
+     * 用户在简要模式下导出的日志也得能拿来分析。它同时进 [rememberFailure]，供结论行取用。
+     */
+    fun failure(message: String) {
+        rememberFailure(message)
+        emit(message, LogLevel.WARN, unconditional = true)
+    }
+
     /** 逐候选的尝试过程：只有详细模式开启时记录；也是「最深一层的失败原因」。 */
     fun detail(message: String) {
         // 只有真的会输出时才记：详细开关关着时，detail 不该影响结论行的内容。
         if (verbose) rememberFailure(message)
         emit(message, LogLevel.DEBUG, unconditional = false)
+    }
+
+    /**
+     * 详细模式专用：把一段**完整原始输出**按行切成若干条日志写出去。
+     *
+     * 为什么必须切：LogStore 单条上限 2000 字符（`MAX_MESSAGE_CHARS`），一整段 `content query`
+     * 的原始 dump 或一条异常栈直接塞进去会被砍掉尾巴 —— 而排障时最要紧的往往正是最后几行
+     * （provider 最终那句拒绝、调制解调器返回的最后一句）。切块之后每条都完整，按顺序读即可。
+     */
+    fun detailBlock(title: String, body: String) {
+        if (!verbose) return
+        val text = body.trim()
+        if (text.isEmpty()) {
+            detail("$title：（空）")
+            return
+        }
+        val chunks = chunkLines(text, DETAIL_CHUNK_CHARS)
+        chunks.forEachIndexed { index, chunk ->
+            val suffix = if (chunks.size > 1) "（${index + 1}/${chunks.size}）" else ""
+            detail("$title$suffix $chunk")
+        }
+    }
+
+    /**
+     * 供**无条件**行（结论 / 失败原因）引用原始输出：压成一行并截断。
+     *
+     * 为什么要压成一行：结论行本身要能一眼看完，原始输出里的换行会把后面的四步原因挤走；
+     * 完整输出由 [detailBlock] 在详细模式里单独给出，两条路径分工明确。
+     */
+    fun inlineRaw(text: String, maxChars: Int = RAW_INLINE_CHARS): String {
+        val oneLine = text.trim().replace("\r\n", " / ").replace('\n', ' ').trim()
+        return if (oneLine.length <= maxChars) oneLine else oneLine.take(maxChars) + "…"
+    }
+
+    /** 按行切块；单行超长时硬切，绝不丢字符。 */
+    private fun chunkLines(text: String, maxChars: Int): List<String> {
+        val chunks = mutableListOf<String>()
+        val current = StringBuilder()
+        for (line in text.lineSequence()) {
+            if (current.isNotEmpty() && current.length + line.length + 1 > maxChars) {
+                chunks += current.toString()
+                current.setLength(0)
+            }
+            if (line.length > maxChars) {
+                var rest = line
+                while (rest.length > maxChars) {
+                    chunks += rest.take(maxChars)
+                    rest = rest.drop(maxChars)
+                }
+                current.append(rest)
+            } else {
+                if (current.isNotEmpty()) current.append('\n')
+                current.append(line)
+            }
+        }
+        if (current.isNotEmpty()) chunks += current.toString()
+        return chunks
     }
 
     /** 记下一条失败原因（后写的覆盖先写的）。 */

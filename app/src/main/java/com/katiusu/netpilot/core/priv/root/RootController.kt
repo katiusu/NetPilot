@@ -246,7 +246,8 @@ class RootController(private val context: Context) : NetworkControlChannel {
             )
             return true
         }
-        WriteDiag.detail("settings 兜底：回读不一致，键后缀='$suffix' 读回=$readBack 期望=$modeValue")
+        // 回读不一致 = 这一步失败，原始读回值两种模式都要能看到。
+        WriteDiag.failure("settings 兜底：回读不一致，键后缀='$suffix' 读回=$readBack 期望=$modeValue")
         if (suffix.isNotEmpty()) {
             RootShell.exec("settings put global preferred_network_mode $modeValue")
             val readBackNoSuffix = settingsGetMode(-1)
@@ -254,7 +255,7 @@ class RootController(private val context: Context) : NetworkControlChannel {
                 WriteDiag.always("settings 兜底：退回无后缀键 preferred_network_mode 后回读一致（读回 $readBackNoSuffix）")
                 return true
             }
-            WriteDiag.detail("settings 兜底：无后缀键回读仍不一致（读回=$readBackNoSuffix 期望=$modeValue）")
+            WriteDiag.failure("settings 兜底：无后缀键回读仍不一致（读回=$readBackNoSuffix 期望=$modeValue）")
         }
         WriteDiag.warn("settings 兜底写入失败：回读始终拿不到 $modeValue（subId=$subId 键后缀='$suffix'）")
         return false
@@ -275,17 +276,30 @@ class RootController(private val context: Context) : NetworkControlChannel {
             return false
         }
         WriteDiag.detail("权威存储：目标 subId=$subId mode=$modeValue -> 位掩码=$networkTypes；开始 content update")
+        val startedAt = System.currentTimeMillis()
         val result = RootShell.exec(AuthStore.updateCommand(networkTypes, subId))
         // 详细日志：把退出码与两路原始输出都留下。「命令拼错」「provider 拒绝」「列不存在」
         // 三种原因在上一层的分类里分别落到 Failed/Denied/Unavailable，但具体是哪一句，
         // 只有原文说得清。
         WriteDiag.detail(
-            "权威存储更新原始结果：exit=${result.code} " +
-                "stdout=${result.stdout.trim().take(240)} stderr=${result.stderr.trim().take(240)}"
+            "权威存储更新耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
+                "；原始结果：exit=${result.code}" +
+                " stdout=" + WriteDiag.inlineRaw(result.stdout, 240) +
+                " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
         )
+        // 详细模式：两路完整原文分块记下来（内联那一行只是方便一眼扫过）。
+        WriteDiag.detailBlock("权威存储更新 stdout", result.stdout)
+        WriteDiag.detailBlock("权威存储更新 stderr", result.stderr)
         val updated = AuthStore.classifyUpdate(result.code, result.stdout, result.stderr)
         if (updated !is AuthStore.Write.Ok) {
-            WriteDiag.warn("权威存储写入未成功：${AuthStore.describeWrite(updated)}")
+            // 失败时把「分类结论 + 原始退出码/两路输出」放在同一条里，两种模式都能看到。
+            WriteDiag.failure(
+                "权威存储写入未成功：${AuthStore.describeWrite(updated)}；exit=${result.code}" +
+                    " stdout=" + WriteDiag.inlineRaw(result.stdout, 240) +
+                    " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
+            )
+            WriteDiag.detailBlock("权威存储更新失败 stdout", result.stdout)
+            WriteDiag.detailBlock("权威存储更新失败 stderr", result.stderr)
             return false
         }
         return when (val back = readAuthStore(subId)) {
@@ -309,13 +323,27 @@ class RootController(private val context: Context) : NetworkControlChannel {
         var last: AuthStore.Read = AuthStore.Read.Unavailable("没有可用的列")
         for (column in AuthStore.CANDIDATE_COLUMNS) {
             WriteDiag.detail("权威存储读取：subId=$subId 试探列 $column")
+            val startedAt = System.currentTimeMillis()
             val result = RootShell.exec(AuthStore.queryCommand(column, subId))
             WriteDiag.detail(
-                "权威存储读取原始结果：列=$column exit=${result.code} " +
-                    "stdout=${result.stdout.trim().take(240)} stderr=${result.stderr.trim().take(240)}"
+                "权威存储查询耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
+                    "（列 $column）"
             )
             val read = AuthStore.classifyQuery(result.code, result.stdout, result.stderr, column)
-            if (read is AuthStore.Read.Value || read is AuthStore.Read.Unset) return@withContext read
+            val raw = "列=$column exit=${result.code}" +
+                " stdout=" + WriteDiag.inlineRaw(result.stdout, 240) +
+                " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
+            if (read is AuthStore.Read.Value || read is AuthStore.Read.Unset) {
+                WriteDiag.detail("权威存储读取原始结果：$raw")
+                WriteDiag.detailBlock("权威存储读取 stdout（列 $column）", result.stdout)
+                return@withContext read
+            }
+            // 读不到时原始结果两种模式都要能看到 —— 这一行往往直接给出原因（行不存在 / 列不存在 /
+            // 被 provider 拒），只写「读不到」等于把线索丢了。
+            WriteDiag.failure("权威存储读取未拿到值（${AuthStore.describeRead(read)}）：$raw")
+            // 详细模式：两路完整原文都留下 —— 裸的 provider 拒绝常常就在 stderr 的最后几行。
+            WriteDiag.detailBlock("权威存储读取 stdout（列 $column）", result.stdout)
+            WriteDiag.detailBlock("权威存储读取 stderr（列 $column）", result.stderr)
             last = read
         }
         // 1.5.1：行没查到时不收摊，再枚举一次整张表 ——「没有这个 subId 的行」这句话本身没法分析，
@@ -332,11 +360,16 @@ class RootController(private val context: Context) : NetworkControlChannel {
      * 拿别的行的值当成功就是造假 —— 所以这里也绝不改写目标，只把原因讲清楚。
      */
     private fun explainNoRow(subId: Int): AuthStore.Read {
+        val startedAt = System.currentTimeMillis()
         val result = RootShell.exec(AuthStore.listCommand())
         WriteDiag.detail(
-            "权威存储枚举原始结果：exit=${result.code} " +
-                "stdout=${result.stdout.trim().take(480)} stderr=${result.stderr.trim().take(240)}"
+            "权威存储枚举耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
+                "；原始结果：exit=${result.code}" +
+                " stdout=" + WriteDiag.inlineRaw(result.stdout, 480) +
+                " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
         )
+        WriteDiag.detailBlock("权威存储枚举 stdout", result.stdout)
+        WriteDiag.detailBlock("权威存储枚举 stderr", result.stderr)
         val rows = AuthStore.parseSimInfoRows(result.stdout)
         val candidates = runCatching { AuthStore.candidateSubIds() }.getOrDefault(emptyList())
         val detail = if (rows.isEmpty()) {
@@ -353,11 +386,16 @@ class RootController(private val context: Context) : NetworkControlChannel {
     override suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write =
         withContext(Dispatchers.IO) {
             if (!RootShell.hasRoot()) return@withContext AuthStore.Write.Denied("未获得 Root 授权")
+            val startedAt = System.currentTimeMillis()
             val result = RootShell.exec(AuthStore.updateCommand(networkTypes, subId))
             WriteDiag.detail(
-                "权威存储写入原始结果：exit=${result.code} stdout=${result.stdout.trim().take(240)} " +
-                    "stderr=${result.stderr.trim().take(240)}"
+                "权威存储写入耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
+                    "；原始结果：exit=${result.code}" +
+                    " stdout=" + WriteDiag.inlineRaw(result.stdout, 240) +
+                    " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
             )
+            WriteDiag.detailBlock("权威存储写入 stdout", result.stdout)
+            WriteDiag.detailBlock("权威存储写入 stderr", result.stderr)
             val updated = AuthStore.classifyUpdate(result.code, result.stdout, result.stderr)
             if (updated !is AuthStore.Write.Ok) return@withContext updated
             when (val back = readAuthStore(subId)) {

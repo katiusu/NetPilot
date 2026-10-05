@@ -372,9 +372,7 @@ fun SettingsPageView(
                         val noChannelText = stringResource(R.string.ka_compat_channel_none)
                         val readNoValueText = stringResource(R.string.ka_compat_read_no_value)
                         val probed = compatProbe
-                        // 1.5.0：两项都是「真探测出来的值」，null 时按现有约定显示「检测中…」/「未知」。
-                        val authStoreText = probed?.authStore?.ifBlank { unknownText }
-                            ?: if (compatProbing) probingText else unknownText
+                        // 1.5.0：真探测出来的值，null 时按现有约定显示「检测中…」/「未知」。
                         val writeMethodsText = probed?.writeMethods?.ifBlank { unknownText }
                             ?: if (compatProbing) probingText else unknownText
                         // 运营商识别（1.5.0）：由当前默认数据卡的 simOperator（MCC+MNC）反查，
@@ -382,6 +380,17 @@ fun SettingsPageView(
                         // 它说明表里缺这张卡，而不是这台机器读不到卡。
                         val carrierText = probed?.carrierInfo?.ifBlank { unknownText }
                             ?: if (compatProbing) probingText else unknownText
+                        // 程序自检（1.5.1 补丁）：取代原先那条「应用进程直接读权威存储」的检查。
+                        // 那条路必然被 provider 的 uid 名单挡住，结论永远是「被拒绝」；
+                        // 现在改成让特权通道自己跑一次探针，回答「这个程序能不能跑起来」。
+                        val selfCheckText = when {
+                            probed == null -> if (compatProbing) probingText else unknownText
+                            probed.selfCheck == null -> stringResource(R.string.ka_compat_self_check_skipped)
+                            probed.selfCheck.ok ->
+                                stringResource(R.string.ka_compat_self_check_ok, probed.selfCheck.note)
+                            else ->
+                                stringResource(R.string.ka_compat_self_check_failed, probed.selfCheck.note)
+                        }
                         // 直接显示系统报出来的型号，不做拼接、不补市场名：用户要的就是
                         // 「这台机器是什么」，加括号补一个名字反而像两行信息挤在一格里。
                         val modelText = compat.model.ifBlank { unknownText }
@@ -464,6 +473,11 @@ fun SettingsPageView(
                                     title = stringResource(R.string.ka_compat_vendor),
                                     summary = compat.vendor.ifBlank { unknownText },
                                 )
+                                // 品牌与厂商是两件事（同一厂商可能挂多个牌子），所以分开两行。
+                                CompatInfoRow(
+                                    title = stringResource(R.string.ka_compat_brand),
+                                    summary = compat.brand.ifBlank { unknownText },
+                                )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_model),
                                     summary = modelText,
@@ -472,11 +486,11 @@ fun SettingsPageView(
                                     title = stringResource(R.string.ka_compat_android),
                                     summary = compat.android.ifBlank { unknownText },
                                 )
-                                // 标题资源是 ka_compat_miui，文案已改成「OS 版本」：
-                                // 值不再是「小米版本」，而是当前真实系统版本（见 getOsVersion）。
+                                // 标题资源名仍叫 ka_compat_miui（历史名），文案是「系统构建版本」：
+                                // 值只取 ro.build.version.incremental，不再猜厂商 OS 名（见 getSystemBuild）。
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_miui),
-                                    summary = compat.osVersion.ifBlank { unknownText },
+                                    summary = compat.systemBuild.ifBlank { unknownText },
                                 )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_channel),
@@ -499,8 +513,8 @@ fun SettingsPageView(
                                     summary = writeMethodsText,
                                 )
                                 CompatInfoRow(
-                                    title = stringResource(R.string.ka_compat_auth_store),
-                                    summary = authStoreText,
+                                    title = stringResource(R.string.ka_compat_self_check),
+                                    summary = selfCheckText,
                                 )
                                 CompatInfoRow(
                                     title = stringResource(R.string.ka_compat_verify_state),

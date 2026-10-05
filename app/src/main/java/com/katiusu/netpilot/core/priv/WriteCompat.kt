@@ -74,16 +74,30 @@ object SystemCompatInfo {
     /**
      * 不需要 IO 的静态信息。
      *
-     * [osVersion] 是当前真实系统版本（取值顺序见 [SystemVersionDetector.getOsVersion]）。
+     * [systemBuild] 是系统构建版本（`ro.build.version.incremental`，见
+     * [SystemVersionDetector.getSystemBuild]）；[vendor] 与 [brand] 是**两个不同的东西**
+     * （生产商 vs 品牌，例如同一集团下不同品牌共用一条产线），所以分两行展示、不合并。
      * 任何一项读不到都是空串，由 UI 渲染成「未知」。
      */
     data class Info(
         val vendor: String,
+        val brand: String,
         val model: String,
         val marketName: String,
         val android: String,
-        val osVersion: String,
+        val systemBuild: String,
     )
+
+    /**
+     * 一次「程序自检」的结果。
+     *
+     * 为什么要有它：设置页原来会让**应用进程**直接去读一次权威存储，而那条路必然被
+     * TelephonyProvider 的 uid 名单挡住（system/phone/root，见 [AuthStore] 的注释），
+     * 结论永远是「被拒绝」，既没有信息量、又会把人引去「授权」这个死胡同。
+     * 现在改成检查「这个程序在这台机器上起不起得来」：Root 通道跑一次 `app_process … probe`，
+     * Shizuku 通道走一次 binder `probe()`。
+     */
+    data class SelfCheck(val ok: Boolean, val note: String)
 
     /** 写入真正会落到哪条分支。UI 据此给出**由真实参数拼出来的**命令形态。 */
     enum class WriteStage {
@@ -138,13 +152,6 @@ object SystemCompatInfo {
         val readRaw: String,
         /** 读取失败时的原始 stderr / 说明；空串由 UI 补一句通用解释。 */
         val readNote: String,
-        /**
-         * 权威存储（TelephonyProvider `siminfo.allowed_network_types`）的读取结果，一行文本。
-         *
-         * 为什么要它：这是「回读通过却切不动」唯一能给交叉证据的地方 —— 上面的 [readState]
-         * 读的是 `Settings.Global.preferred_network_mode`，一个写完回读必然一致的遗留兼容字段。
-         */
-        val authStore: String,
         /** 本机 `ITelephony` 上实际存在哪几条写入方法（Android 14 起只剩一条）。 */
         val writeMethods: String,
         /**
@@ -155,6 +162,11 @@ object SystemCompatInfo {
          * 看出表里有没有这张卡 —— 否则表错了也永远是个看不见的猜测。
          */
         val carrierInfo: String,
+        /**
+         * 「程序自检」：这条特权通道能不能正常跑起来。null = 没有可用通道，没执行。
+         * 取代原先那条「应用进程直接读权威存储」的检查（那条必然被 uid 名单挡住）。
+         */
+        val selfCheck: SelfCheck?,
     )
 
     private const val UNKNOWN = "" // 空串由 UI 渲染成「未知」，这里不引入资源依赖
@@ -163,6 +175,8 @@ object SystemCompatInfo {
     private const val APP_PROCESS_BIN = "/system/bin"
     private const val MAIN_CLASS = "com.katiusu.netpilot.core.priv.PrivilegedCli"
     private const val MODE_PREFIX = "MODE "
+    private const val PROBE_PREFIX = "PROBE"
+    private const val PROBE_OK = "PROBE OK"
     private const val MAX_RAW_CHARS = 120
 
     /**
@@ -176,13 +190,16 @@ object SystemCompatInfo {
         // 拿不到属性只是显示「未知」，不影响任何功能）。
         runCatching { TelephonyReflection.ensureHiddenApiExempted() }
         return Info(
+            // 生产商与品牌分开报：Build.MANUFACTURER 是「谁生产的」，Build.BRAND 是「挂哪个牌子」，
+            // 定制 ROM 上两者经常不一致，而排障时需要知道到底是谁的 ROM。
             vendor = Build.MANUFACTURER.orEmpty(),
+            brand = Build.BRAND.orEmpty(),
             model = Build.MODEL.orEmpty(),
             marketName = runCatching { SystemVersionDetector.getMarketName() }.getOrDefault(UNKNOWN),
             android = runCatching { SystemVersionDetector.getAndroidVersion() }
                 .getOrDefault("Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"),
-            // 「OS 版本」：厂商 OS 版本优先，读不到依次退到构建增量号、Android 版本（见 getOsVersion）
-            osVersion = runCatching { SystemVersionDetector.getOsVersion() }.getOrDefault(UNKNOWN),
+            // 「系统构建版本」：只认 ro.build.version.incremental（见 getSystemBuild）
+            systemBuild = runCatching { SystemVersionDetector.getSystemBuild() }.getOrDefault(UNKNOWN),
         )
     }
 
@@ -207,6 +224,9 @@ object SystemCompatInfo {
         // 「这张卡是谁、会回落到哪个制式」也是能读到的 —— 它不需要任何写入权限。
         val subId = runCatching { ControlManager.getDefaultDataSubId() }.getOrDefault(-1)
         val carrierInfo = runCatching { CarrierInfo.activeCarrierSummary(app, subId) }.getOrDefault(UNKNOWN)
+        // 「程序自检」：让特权通道自己回答「我起不起得来」。取代原先那条应用进程直读权威存储的
+        // 检查 —— 那条被 provider 的 uid 名单必然挡住，除了「被拒绝」给不出任何信息。
+        val selfCheck = runCatching { describeSelfCheck(channel, app) }.getOrNull()
 
         if (channel == null) {
             return@withContext Probe(
@@ -221,9 +241,9 @@ object SystemCompatInfo {
                 readState = ReadState.SKIPPED,
                 readRaw = UNKNOWN,
                 readNote = UNKNOWN,
-                authStore = UNKNOWN,
                 writeMethods = writeMethods,
                 carrierInfo = carrierInfo,
+                selfCheck = selfCheck,
             )
         }
 
@@ -250,9 +270,9 @@ object SystemCompatInfo {
                 readState = ReadState.NO_TARGET,
                 readRaw = UNKNOWN,
                 readNote = UNKNOWN,
-                authStore = UNKNOWN,
                 writeMethods = writeMethods,
                 carrierInfo = carrierInfo,
+                selfCheck = selfCheck,
             )
         }
 
@@ -315,10 +335,6 @@ object SystemCompatInfo {
             ControlMethod.NONE -> Unit
         }
 
-        // 权威存储的读法优先走通道（Root 用 su 执行 content query、Shizuku 用特权进程的
-        // ContentResolver）；通道给不出真值时再由应用进程自己查一次，并把两条路径各自的原因都写出来。
-        val authStore = runCatching { describeAuthStore(channel, subId, app) }.getOrDefault(UNKNOWN)
-
         Probe(
             channelLabel = channel.label,
             channelReason = UNKNOWN,
@@ -329,44 +345,47 @@ object SystemCompatInfo {
             readState = readState,
             readRaw = readRaw,
             readNote = readNote,
-            authStore = authStore,
             writeMethods = writeMethods,
             carrierInfo = carrierInfo,
+            selfCheck = selfCheck,
         )
     }
 
     /**
-     * 读一次权威存储并渲染成一行。
+     * 「程序自检」：这条特权通道到底能不能正常跑起来。
      *
-     * 「读不到」和「读到但是空的」是两件不同的事，不能合并成一句「未知」：
-     * 前者说明权限或列名有问题，后者说明这张卡从来没被设置过 —— 排查方向完全相反。
+     * Root：起一次 `app_process … probe`（与真正写入用的是同一个 CLI、同一套反射），
+     * 看它能不能打出 `PROBE OK`；Shizuku：走一次 binder `probe()`。
+     * 两者回答的都是「这个程序在本机起不起得来」—— 这才是排障时真正需要的那条信息。
      */
-    private suspend fun describeAuthStore(
-        channel: NetworkControlChannel,
-        subId: Int,
+    private suspend fun describeSelfCheck(
+        channel: NetworkControlChannel?,
         context: Context
-    ): String {
-        val viaChannel = runCatching { channel.readAuthStore(subId) }.getOrNull()
-        if (viaChannel is AuthStore.Read.Value) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaChannel.networkTypes}" +
-                "（sub_id=$subId，经 ${channel.label} 读回）"
+    ): SelfCheck? {
+        if (channel == null) return null
+        return when (channel.method) {
+            ControlMethod.ROOT -> {
+                val result = runCatching { RootShell.exec(cliCommand(context, "probe")) }.getOrNull()
+                    ?: return null
+                val line = result.stdout.lineSequence().map { it.trim() }
+                    .firstOrNull { it.startsWith(PROBE_PREFIX) }.orEmpty()
+                val raw = result.stderr.ifBlank { result.stdout }.trim().take(MAX_RAW_CHARS)
+                if (result.code == 0 && line == PROBE_OK) {
+                    SelfCheck(true, "app_process exit=0 $PROBE_OK")
+                } else {
+                    SelfCheck(false, "exit=${result.code}" + if (raw.isEmpty()) "" else "，$raw")
+                }
+            }
+
+            ControlMethod.SHIZUKU -> when (val status = runCatching { channel.probe() }.getOrNull()) {
+                is ChannelStatus.Available -> SelfCheck(true, "binder probe 返回可用")
+                is ChannelStatus.PermissionDenied -> SelfCheck(false, "未授权：" + status.hint)
+                is ChannelStatus.Unavailable -> SelfCheck(false, status.reason)
+                null -> null
+            }
+
+            ControlMethod.NONE -> null
         }
-        if (viaChannel is AuthStore.Read.Unset) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} ${AuthStore.describeRead(viaChannel)}" +
-                "（sub_id=$subId，经 ${channel.label} 读回）"
-        }
-        // 1.5.1：行不存在时，Root 通道的读路径会再枚举一次整张表，并把「表里现在有哪些 sub_id」
-        // 拼进 detail —— 这一段比「读不到」有用得多，直接端出来（它自己已经带了 sub_id）。
-        if (viaChannel is AuthStore.Read.NoRow && !viaChannel.detail.isNullOrBlank()) {
-            return viaChannel.detail
-        }
-        val viaApp = runCatching { AuthStore.read(context.contentResolver, subId) }.getOrNull()
-        if (viaApp is AuthStore.Read.Value) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaApp.networkTypes}（sub_id=$subId，应用进程直接读回）"
-        }
-        val channelReason = viaChannel?.let { AuthStore.describeRead(it) } ?: "通道未实现"
-        val appReason = viaApp?.let { AuthStore.describeRead(it) } ?: "应用进程未执行"
-        return "读不到（sub_id=$subId；${channel.label}：$channelReason；应用进程：$appReason）"
     }
 
     /**

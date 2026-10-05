@@ -59,11 +59,21 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         WriteDiag.detail(
             "$CALLER 三条 ITelephony 策略都没成，转写权威存储：subId=$subId mode=$networkMode -> 位掩码=$networkTypes"
         )
+        val startedAt = System.currentTimeMillis()
         val result = AuthStore.decodeWrite(writeAuthStore(subId, networkTypes))
+        WriteDiag.detail(
+            "$CALLER 权威存储写入耗时=" + (System.currentTimeMillis() - startedAt) + "ms -> " +
+                AuthStore.describeWrite(result)
+        )
         // 1.5.1：这一行是整个过程里的一步，归详细诊断开关管；结论（切换成功/失败 + 原因）
         // 由应用进程侧的 ShizukuController.setMode / NetPilot.setMode 写进日志页。
-        WriteDiag.detail("$CALLER ITelephony 失败后写权威存储：${AuthStore.describeWrite(result)}")
-        return result is AuthStore.Write.Ok
+        if (result is AuthStore.Write.Ok) {
+            WriteDiag.detail("$CALLER ITelephony 失败后写权威存储：${AuthStore.describeWrite(result)}")
+            return true
+        }
+        // 写权威存储也失败了：这是失败路径，结论与原文两种模式都要能看到。
+        WriteDiag.failure("$CALLER ITelephony 与权威存储写入都没成功：${AuthStore.describeWrite(result)}")
+        return false
     }
 
     override fun readAuthStore(subId: Int): String {
@@ -79,7 +89,7 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         val resolver = appContext?.contentResolver
         val updated = AuthStore.write(resolver, subId, networkTypes)
         if (updated !is AuthStore.Write.Ok) {
-            WriteDiag.detail("$CALLER 权威存储写入未成功：${AuthStore.describeWrite(updated)}")
+            WriteDiag.failure("$CALLER 权威存储写入未成功：${AuthStore.describeWrite(updated)}")
             return AuthStore.encodeWrite(updated)
         }
         // 写后回读：`resolver.update` 返回行数只说明 provider 收下了，不代表那一列变成了目标值。

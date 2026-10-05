@@ -426,6 +426,9 @@ object TelephonyReflection {
                 return false
             }
             WriteDiag.detail("$caller 目标 subId=$subId mode=$networkMode -> 位掩码=$networkTypes")
+            // 详细日志：先把「本机 ITelephony 上到底有哪几条写入方法」摊开。定制 ROM 上最常见的
+            // 失败形态就是方法被删或被改写，这一行是判断「该不该走这条路」的第一手依据。
+            WriteDiag.detail("$caller 本机 ITelephony 写入方法枚举：" + describeWriteMethods())
             // 逐候选的追踪只在详细模式开启时才构造；常态下 trace 为 null，零额外开销。
             val trace: ((String) -> Unit)? = if (WriteDiag.isVerbose) { { WriteDiag.detail(it) } } else null
             // 1.5.1 的分工：**过程**（哪一条策略怎么失败、被谁拒、原文是什么）归详细开关管；
@@ -434,10 +437,19 @@ object TelephonyReflection {
             val failures = mutableListOf<String>()
             val onDenied: (String) -> Unit = {
                 failures += it
-                WriteDiag.detail("$caller ITelephony 写入被拒：$it")
+                // 被拒的**原文**属于「失败时系统返回了什么」，两种模式都要记：以前这行是 detail，
+                // 简要模式下就只剩一句「全部失败」，看不到是谁拒的、原话是什么。
+                WriteDiag.failure("$caller ITelephony 写入被拒：$it")
             }
 
+            // 逐策略记「返回了什么类型 + 花了多久」：方法不存在 / 调用返回 false / 抛异常
+            // 在简要模式里都长成「全 Miss」，只有这一行能把它们分开。
+            val strategyStart = System.currentTimeMillis()
             val reasonWrite = dispatch(stub, "setAllowedNetworkTypesForReason", allowedTypeWrites(subId, networkTypes), trace, onDenied)
+            WriteDiag.detail(
+                "$caller 策略1 setAllowedNetworkTypesForReason -> $reasonWrite" +
+                    "（耗时 ${System.currentTimeMillis() - strategyStart}ms）"
+            )
             if (reasonWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setAllowedNetworkTypesForReason 写入成功 subId=$subId mode=$networkMode")
                 WriteDiag.always(
@@ -447,14 +459,24 @@ object TelephonyReflection {
                 return true
             }
 
+            val strategyStart2 = System.currentTimeMillis()
             val legacyWrite = dispatch(stub, "setAllowedNetworkTypes", legacyAllowedTypeWrites(subId, networkTypes), trace, onDenied)
+            WriteDiag.detail(
+                "$caller 策略2 setAllowedNetworkTypes -> $legacyWrite" +
+                    "（耗时 ${System.currentTimeMillis() - strategyStart2}ms）"
+            )
             if (legacyWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setAllowedNetworkTypes 写入成功 subId=$subId networkTypes=$networkTypes")
                 WriteDiag.always("$caller 策略2 setAllowedNetworkTypes(subId=$subId, $networkTypes) 已调用，返回 ${legacyWrite.value}")
                 return true
             }
 
+            val strategyStart3 = System.currentTimeMillis()
             val modeWrite = dispatch(stub, "setPreferredNetworkType", preferredTypeWrites(subId, networkMode), trace, onDenied)
+            WriteDiag.detail(
+                "$caller 策略3 setPreferredNetworkType -> $modeWrite" +
+                    "（耗时 ${System.currentTimeMillis() - strategyStart3}ms）"
+            )
             if (modeWrite is CallResult.Hit) {
                 Log.i(TAG, "$caller 走 setPreferredNetworkType 写入成功 subId=$subId mode=$networkMode")
                 WriteDiag.always("$caller 策略3 setPreferredNetworkType(subId=$subId, $networkMode) 已调用，返回 ${modeWrite.value}")

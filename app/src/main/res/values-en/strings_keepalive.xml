@@ -20,14 +20,15 @@
     <string name="ka_verify_title">Write-back verification</string>
     <string name="ka_verify_summary">On by default. On: right after writing settings, the value is read back and compared; a mismatch counts as a failure and is logged. Off: a single write is treated as success with no comparison.</string>
     <string name="ka_verify_hint">Turn this off only when a write takes effect but is falsely reported as failed: some vendor ROMs read back inaccurately and mark success as failure. Once off, you have to check the system settings yourself, and failures are no longer logged.</string>
-    <string name="ka_verbose_title">Verbose write diagnostics</string>
-    <string name="ka_verbose_summary">Off by default. When on, every step of the write chain goes to the log page: which overload matched, what the modem returned, what the read-back saw, and which step threw what.</string>
-    <string name="ka_verbose_hint">Enable only while investigating "the switch flipped but the network did not change". On the root channel diagnostics are carried back from the app_process child, so it costs extra. Turn it off once done.</string>
+    <string name="ka_verbose_title">Detailed log mode</string>
+    <string name="ka_verbose_summary">Off by default = brief mode: only conclusions, failure reasons, and the raw values the system returned on failure (exit codes, raw output, exception text). On = detailed mode: the raw output of every step and of each candidate attempt is logged too.</string>
+    <string name="ka_verbose_hint">Start with brief mode; turn on detailed mode when investigating "the switch flipped but the network did not change". On the root channel diagnostics are carried back from the app_process child, so it costs extra. Turn it off once done.</string>
 
     <string name="ka_compat_vendor">Vendor</string>
     <string name="ka_compat_model">Model</string>
+    <string name="ka_compat_brand">Brand</string>
     <string name="ka_compat_android">Android version</string>
-    <string name="ka_compat_miui">OS version</string>
+    <string name="ka_compat_miui">System build version</string>
 
     <string name="ka_compat_channel">Current privileged channel</string>
     <!-- 1.5.0: the value is produced by CarrierInfo.activeCarrierSummary (detected carrier + default mode). -->
@@ -49,7 +50,10 @@
     <string name="ka_compat_read_no_target">Not run: could not determine the write target (the default data SIM could not be read)</string>
 
     <string name="ka_compat_write_methods">Write methods available on this device</string>
-    <string name="ka_compat_auth_store">Authoritative store (TelephonyProvider)</string>
+    <string name="ka_compat_self_check">Program self-check</string>
+    <string name="ka_compat_self_check_ok">Passed (%1$s)</string>
+    <string name="ka_compat_self_check_failed">Failed (%1$s)</string>
+    <string name="ka_compat_self_check_skipped">Not run: no privileged channel available</string>
 
     <string name="ka_compat_verify_state">Write-back verification</string>
     <string name="ka_compat_verify_on">On</string>

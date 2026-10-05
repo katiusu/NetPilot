@@ -1147,6 +1147,158 @@ sha256sum NetPilot-1.5.1-2026100505-*.apk
 **9.6.5 未做（需要真机）**：设置页那几行只读事实的实际取值、三种「读不到」在真机上是否分别显示、
 日志页是否确实新在上、结论行里是否带上了每一步的原因 —— 全部写在 [TESTING.md](TESTING.md) §20（20.1–20.6）供用户自测。
 
+### 9.7 1.5.1 补丁（同版本内，未上传）：日志两档模式 + 失败必记原始值 + 程序自检 + 机型信息
+
+**9.7.1 起因**
+
+1. 用户要回答的不是「按钮好不好使」，而是「**为什么在某些定制 ROM 上不能正常用**」。这类问题只能靠现场数据回答，所以本批的重点是：把日志做成**能分析的**、把自检做成**有意义的**。
+2. 原日志只有一个布尔开关，而「失败时系统到底回了什么」也被划进了「不详细」那一档 —— 结果是最需要它的时候（用户没开开关）恰好没有。现在分两档模式，并把失败路径上的原始返回值提到无条件级别。
+3. 设置页原来那条校验，是让**应用进程**再读一次权威存储：`checkPermissionForSimInfoTable()` 会先过 `isCallingFromSystemOrPhoneUid()`（uid 名单只有 system 1000 / phone 1001 / root 0），应用进程 10xxx 与 Shizuku 的 shell 2000 都过不去 —— **注定失败、结论永远是「被拒绝」**，除了把用户引向「去授权」这个死胡同，没有任何信息量。已删除。
+
+**9.7.2 改动清单（C32 – C36）**
+
+| 编号 | 文件 | 改动 |
+|---|---|---|
+| C32 | `core/priv/WriteDiag.kt` | 新增 `Mode`（BRIEF / DETAILED）、`mode` / `modeLabel`、`failure()`（失败路径的原始系统返回值，无条件记录） |
+| C33 | `core/priv/TelephonyReflection.kt` | 被拒原文由 `detail` 升为 `failure` |
+| C34 | `core/priv/PrivilegedCli.kt`、`core/priv/root/RootController.kt`、`core/priv/shizuku/ShizukuController.kt`、`core/priv/shizuku/ShizukuControllerService.kt` | 写入 / 写后回读失败时的原始退出码与输出改为无条件记录 |
+| C35 | `core/priv/WriteCompat.kt`、`ui/screen/settings/SettingsPage.kt`、两份 `strings_keepalive.xml` | 删除「应用进程直读权威存储」这一步；新增 `SelfCheck` 与设置页「程序自检」一行 |
+| C36 | `util/SystemVersionDetector.kt`、`core/priv/WriteCompat.kt`、设置页与两份 `strings_keepalive.xml` | 「OS 版本」→「系统构建版本」（只取 `ro.build.version.incremental`）；新增「品牌」行（与「厂商」分开） |
+
+**9.7.3 两档模式的分工**
+
+| 级别 | 简要模式 | 详细模式 | 内容 |
+|---|---|---|---|
+| `always` | ✅ | ✅ | 结论：选了哪条策略、modem 返回什么、回读读到什么 |
+| `warn` | ✅ | ✅ | 失败结论 + 原因（同时进 `lastFailure`，供结论行取用） |
+| `failure` | ✅ | ✅ | **失败时的原始系统返回值**：退出码、stdout/stderr、异常或被拒原文 |
+| `detail` | ❌ | ✅ | 逐候选尝试过程、每一步原始输出、ContentResolver 就绪情况 |
+
+**9.7.4 「程序自检」取代了什么**
+
+| 通道 | 自检内容 | 通过判据 |
+|---|---|---|
+| Root | `su -c "app_process … PrivilegedCli probe"` | `exit=0` 且 stdout 里有 `PROBE OK` |
+| Shizuku | binder `IShizukuController.probe()` | 返回 `ChannelStatus.Available` |
+| 无通道 | 不执行 | 界面显示「未执行：没有可用的特权通道」 |
+
+**9.7.5 与耗电 / 资源的关系**
+
+本批不新增任何常驻开销：日志等级调整只改同一条内容的级别归属，不增加写入次数；「程序自检」只在**打开设置页**时执行一次（与既有的兼容性探测同一次、同一条后台协程），不进入任何后台路径；删掉的那条应用进程直读本来就是一次**注定失败**的 provider 调用，删掉反而少一次跨进程查询。
+
+**9.7.6 当时的提交状态**
+
+版本号保持 `1.5.1` / `2026100505`；这一批当时**未 commit、未 push、未发 Release**（用户要求「暂不上传」）。随后用户改为「把这几版合一后提交 git 并发 release」，于是它与 §9.9 的第二批一起并入了 v1.5.1 的提交与 Release（见 §9.9.7）。
+
+### 9.8 产物（同版本内的第二次构建）
+
+`versionName = 1.5.1` / `versionCode = 2026100505` **未变**。下表是 C32–C36 之后的重新构建；它与 §9.6.1 里那一版**版本号相同、内容不同**。这里要更正一个容易记错的事实：当时线上只有 `v1.5.1` 的 **tag**（指向 `9b06e8f`），**并没有 v1.5.1 的 GitHub Release** —— Release 是在 §9.9 的第二批补丁之后才创建的（见 §9.9.7），附件就是最终构建。
+
+| 文件 | 大小（字节） | SHA-256 |
+|---|---|---|
+| `NetPilot-1.5.1-2026100505-release.apk` | 33,256,545 | `742b0dec2f86172e531bb78edd283b4bd80e3178ee5457056be56ce4d1069128` |
+| `NetPilot-1.5.1-2026100505-debug.apk` | 43,883,731 | `1ab06d85f1c21921f2ceb990aaac371f0aadc9414711aa072774521e08b5900b` |
+
+核验（`/opt/android-sdk/build-tools/36.0.0/aapt2`、`37.0.0/apksigner`、`36.0.0/zipalign`）：
+
+| 项 | 结果 |
+|---|---|
+| badging | 两个产物都 `versionCode='2026100505' versionName='1.5.1'`、`targetSdkVersion:'36'`、`compileSdkVersion:'37'` |
+| `android.intent.action.MAIN` | **1**（release 与 debug） |
+| `enabled.*false` | **3**（Tasker 的两个接收器 + 编辑界面，未变） |
+| `zipalign -c -P 16 -v 4` | `Verification successful`（两个产物） |
+| release 证书 SHA-256 | `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.3.0 以来同一把 key） |
+| 新代码是否在产物里 | 解包 release 后 `grep -ao`：`classes*.dex` / `resources.arsc` 里 `PROBE OK` = 2、`简要模式` = 4、`详细模式` = 4、`系统构建版本` = 1、`程序自检` = 1、`失败时系统返回的原始值` = 2；同时 `应用进程：` = 0、`viaApp` = 0、`getOsVersion` = 0（删掉的那一步确实不在包里） |
+| provenance | `python3 tools/check_provenance.py` → `EXIT=0`，`checked 7 pair(s), worst duplicated share 27.2%`（唯一 REVIEW 仍是 `core/priv/shizuku/ShizukuControllerService.kt`，已 reviewed） |
+| 架构自检 | `scannedFiles: 108`、`cycles: []`、超大模块 5 个（`ui/screen/settings/SettingsPage.kt` 627 / `ui/screen/monitor/MonitorPage.kt` 710 / `MainActivity.kt` 643 / `tasker/TaskerEditActivity.kt` 547 / `ui/component/liquid/LiquidGlassNavigationBar.kt` 533） |
+| 构建失败留档 | 本批第一次构建**两个变体都失败**在 `merge*Resources`：`app/src/main/res/values-en/strings_keepalive.xml` 的 `ka_verbose_summary` 里 `step's` 是**未转义撇号**（AGP 只报 `Invalid unicode escape sequence in string`，用 `aapt2 compile` 直接编译该文件才给出真正的 `unescaped apostrophe in string`）。改成不含撇号的措辞后两个变体都通过。**教训：英文 string 资源里的撇号必须转义；`merge*Resources` 的报错只说现象，定位要拿 `aapt2 compile` 直接编译那个文件。** |
+
+**9.8.1 当时的提交状态**：这一批当时**未 commit、未 push**。项目根目录里同名的 `NetPilot-1.5.1-2026100505-*.apk` 被本次构建**覆盖**（版本号相同），补丁前那一版的文件哈希只留在 §9.6.1；线上当时只有 `v1.5.1` 的 tag（指向 `9b06e8f`），没有对应的 Release。后来用户改为「合一后提交并发 Release」，本批与 §9.9 的第二批一起并入了 v1.5.1 的最终提交，Release 也在那时创建（见 §9.9.7）。
+
+### 9.9 1.5.1 补丁（第二批）：详细日志深化 + 日志页优化 + 文件导出 + 删去权威存储检验
+
+**9.9.1 起因**
+
+用户提出六件事：① 日志要「深化」——只写结论看不出定制 ROM 上到底哪一步不通；② 日志页显示要更好用；
+③ 要能把详细日志**导出成文件**（剪贴板 / 分享那份 20 万字符的上限不够，手机上转发长文本也难读）；
+④ **完全删去**权威存储检验（那一行设置页校验注定失败）；⑤ 版本号不变；⑥ 把这几个版本**合一**后提交 git 并发 Release。
+
+**9.9.2 改动清单（C37）**
+
+| 编号 | 文件 | 改动 |
+|---|---|---|
+| C37-A | `core/priv/WriteDiag.kt` | 新增 `detailBlock(title, body)`（按 1600 字符分块，最多 8 条 DEBUG 记录）、`inlineRaw(text, maxChars = 160)`（`\r\n` → ` / `、换行 → 空格、合并空白、超长截断并标出总长度）、常量 `DETAIL_CHUNK_CHARS` / `RAW_INLINE_CHARS` |
+| C37-A | `core/priv/PrivilegedCli.kt` | `runTool()` 记录命令原文、耗时、是否超时与完整 stdout / stderr 分块；`writeAuthStore()` / `writeSettings()` 的 `.take(n)` 换成 `inlineRaw` 并补分块 |
+| C37-A | `core/priv/TelephonyReflection.kt` | `setNetworkMode()` 记录「本机实际可用的写入方法」枚举结果、三条策略各自的返回类型与耗时 |
+| C37-A | `core/priv/root/RootController.kt` | 每次 `content update` / `content query` 与表枚举都记录耗时、超时、完整 stdout / stderr（写失败时也记） |
+| C37-A | `core/priv/shizuku/ShizukuControllerService.kt`、`ShizukuController.kt` | 权威存储写入、binder `setNetworkMode` 记录耗时与结论 |
+| C37-B | `core/priv/WriteCompat.kt` | 删 `Probe.authStore` 字段、三处构造赋值与 `describeAuthStore()` 整个函数 |
+| C37-B | `ui/screen/settings/SettingsPage.kt` | 删「权威存储（TelephonyProvider）」那一行 |
+| C37-B | `values/strings_keepalive.xml`、`values-en/strings_keepalive.xml` | 删 `ka_compat_auth_store` |
+| C37-C | `ui/screen/log/LogPage.kt` | 见 9.9.4（模式行、详细筛选、操作行拆分、点按复制单条、导出到文件） |
+| C37-C | `values/strings_monitor.xml`、`values-en/strings_monitor.xml` | 新增 `log_filter_detail` / `log_action_export` / `log_toast_copied_one` / `log_toast_exported` / `log_toast_export_failed` / `log_mode_line` / `log_mode_brief` / `log_mode_detailed` / `log_mode_brief_hint` |
+
+**9.9.3 日志深化：真正命中的是什么**
+
+定制 ROM 上最常见的失败不是「命令没跑」，而是「跑了但被 SELinux / 权限 / 厂商定制挡回来」，而**原因只在 stderr 的最后几行**。
+旧版把 `stdout` / `stderr` 截到 240 字符，正好把最关键的那几行切掉 —— 于是日志里只剩一句「失败」，看不出为什么。
+现在的分工：
+
+| 层级 | 记什么 | 归哪一档 |
+|---|---|---|
+| 结论行 | 哪一步失败、失败原因（含被拒原文摘要） | **两档都记**（`always` / `warn` / `failure`） |
+| 内联摘要 | 每条命令的原文、耗时、是否超时、stdout / stderr 的前若干字符（换行折成一行） | 详细模式（`detail` + `inlineRaw`） |
+| 完整原文 | stdout / stderr 全文，按 1600 字符分块 | 详细模式（`detailBlock`） |
+
+**9.9.4 日志页**
+
+- 头部新增「日志模式：简要模式 / 详细模式」；简要模式多一句提示（说明为什么没有逐步过程 —— 免得读的人以为日志被截断了）。
+- 筛选新增「**详细**」档（只看 DEBUG）。四档横排窄屏放不下，这一行改成可横向滚动。
+- 操作行拆成「复制 / 分享 / **导出文件**」与单独的「清空」（清空是破坏性操作，不该和上面三个挤在同一行）。
+- **点按任意一条日志只复制这一条**（排查时通常只需要出问题的那一行）。
+- 导出文件走 SAF（`ActivityResultContracts.CreateDocument("text/plain")`），**不需要任何存储权限**，
+  也不用往被策略只读保护的目录里写；文件名 `NetPilot-log-yyyyMMdd-HHmmss.txt`；文件头四行 = 导出时间 / 日志模式 / 界面筛选 / 条数；
+  上限 `MAX_FILE_CHARS = 4_000_000` 字符（剪贴板 / 分享仍是 `MAX_EXPORT_CHARS = 200_000`）。
+
+**9.9.5 删掉的那条检验**
+
+删的是设置页那次「让应用进程 / Shizuku 去读 TelephonyProvider」的检验 —— 它必然被 provider 的 uid 名单
+（system 1000 / phone 1001 / root 0，AOSP 源码注释写明 root 是特意放行）挡住，结论永远是「被拒绝」，
+只会把用户引向「去授权」（而 `ACCESS_TELEPHONY_SIMINFO_DB` 是 signature|privileged，第三方永远拿不到）。
+`Probe` 里连字段一起删掉，是为了让「这条路径不存在」在编译期就成立，而不是留一个永远失败的探测。
+**写入链路里的写后回读校验照旧**（写进去不算成功，读回一致才算）。
+
+**9.9.6 与耗电 / 资源的关系**
+
+本批不新增任何常驻开销：分块日志只在明确打开详细模式、且只在已经发生的那几次命令之后写；
+SAF 只在用户点「导出文件」时启动一次；删掉的那条检验本来就是一次注定失败的跨进程调用，删掉反而少一次。
+
+**9.9.7 产物与验收（合一后的 v1.5.1 / 2026100505）**
+
+`versionName = 1.5.1` / `versionCode = 2026100505` **未变**。下表是 C37 之后的最终构建 —— 项目根目录里同名的
+`NetPilot-1.5.1-2026100505-*.apk` 已被覆盖，**v1.5.1 的全部改动（§9.2–§9.9）都在这一份里**。
+
+| 文件 | 大小（字节） | SHA-256 |
+|---|---|---|
+| `NetPilot-1.5.1-2026100505-release.apk` | 33,244,029 | `d73b85a98a38bf8c05d2b3b240e62dc567673f9321fe1ed3768d4a8246506d35` |
+| `NetPilot-1.5.1-2026100505-debug.apk` | 43,887,599 | `d1c3b5e54e1fe029b3e469f5b40f27151de916de43ac6c2c556fe621ac150d92` |
+
+核验（`/opt/android-sdk/build-tools/36.0.0/aapt2`、`37.0.0/apksigner`、`36.0.0/zipalign`）：
+
+| 项 | 结果 |
+|---|---|
+| badging | 两个产物都 `versionCode='2026100505' versionName='1.5.1'`、`targetSdkVersion:'36'`、`compileSdkVersion:'37'` |
+| `android.intent.action.MAIN` | **1**（release 与 debug） |
+| `enabled.*false` | **3**（Tasker 的两个接收器 + 编辑界面，未变） |
+| `zipalign -c -P 16 -v 4` | `Verification successful`（两个产物） |
+| release 证书 SHA-256 | `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.3.0 以来同一把 key） |
+| 本批新代码是否在产物里 | 解包 release 后 `grep -ao`：`classes*.dex` / `resources.arsc` 里 `耗时=` = 6、`超时=` = 1、`NetPilot-log-` = 1、`导出文件` = 2、`日志模式` = 5、`简要模式` = 7、`详细模式` = 6；同时 `describeAuthStore` = **0**、`ka_compat_auth_store` = **0**（删掉的字段、方法与字符串确实不在包里） |
+| provenance | `python3 tools/check_provenance.py` → `EXIT=0`，`checked 7 pair(s), worst duplicated share 27.2%`（唯一 REVIEW 仍是 `core/priv/shizuku/ShizukuControllerService.kt`，已 reviewed） |
+| 架构自检 | `scannedFiles: 108`、`cycles: []`、超大模块 5 个（`ui/screen/settings/SettingsPage.kt` 621 / `ui/screen/monitor/MonitorPage.kt` 710 / `MainActivity.kt` 643 / `tasker/TaskerEditActivity.kt` 547 / `ui/component/liquid/LiquidGlassNavigationBar.kt` 533） |
+| 提交与发布 | 已作为一个提交合入 `main` 并推送（提交 `a24ce36`，提交信息：`NetPilot 1.5.1（2026100505）：日志深化 + 日志页与导出 + 删去权威存储检验，并把两批同版本补丁并入本版`）；`v1.5.1` 的 tag 已强制更新到这一份最终构建（tag 对象 `67b9808` → `a24ce36`）；GitHub Release [`v1.5.1`](https://github.com/katiusu/NetPilot/releases/tag/v1.5.1)（id 403892382）在本次创建，附件即 `NetPilot-1.5.1-2026100505-release.apk`（33,244,029 B）与 `NetPilot-1.5.1-2026100505-debug.apk`（43,887,599 B），哈希与上表一致 |
+
+**9.9.8 未做（需要真机）**：§20.7 与 §20.8 里那几条只能在设备上做的自测（两档日志的实际内容、程序自检的实际输出、
+导出到文件后的文件内容、设置页各行取值）仍留给用户按 `docs/TESTING.md` 逐条执行。
 ## 附录 A：改动文件与回滚
 
 **1.5.0 新增文件（2 个）**

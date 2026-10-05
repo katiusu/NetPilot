@@ -140,17 +140,26 @@
     <string name="log_filter_all">全部</string>
     <string name="log_filter_warn">警告以上</string>
     <string name="log_filter_error">仅错误</string>
+    <string name="log_filter_detail">详细</string>
     <string name="log_empty">暂无日志</string>
     <string name="log_empty_filtered">当前筛选条件下没有日志</string>
     <string name="log_count">共 %1$d 条（内存里最多保留 400 条，超出会丢掉最旧的）</string>
     <string name="log_action_clear">清空</string>
     <string name="log_action_copy">复制</string>
     <string name="log_action_share">分享</string>
+    <string name="log_action_export">导出文件</string>
     <string name="log_clear_dialog_title">清空全部日志？</string>
     <string name="log_clear_dialog_summary">清空后无法恢复；监控还在跑的话，之后的新日志会继续写入。</string>
     <string name="log_toast_copied">已复制 %1$d 条日志到剪贴板</string>
+    <string name="log_toast_copied_one">已复制这 1 条日志</string>
+    <string name="log_toast_exported">已导出到 %1$s</string>
+    <string name="log_toast_export_failed">导出失败：%1$s</string>
     <string name="log_toast_copy_empty">没有可复制的内容</string>
     <string name="log_toast_cleared">已清空日志</string>
     <string name="log_share_title">NetPilot 运行日志</string>
+    <string name="log_mode_line">日志模式：%1$s</string>
+    <string name="log_mode_brief">简要模式</string>
+    <string name="log_mode_detailed">详细模式</string>
+    <string name="log_mode_brief_hint">简要模式只记结论、失败原因与失败时系统返回的原始值。要逐候选、逐步的完整原始输出，请在设置页打开「详细日志模式」。</string>
 
 </resources>

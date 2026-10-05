@@ -141,17 +141,26 @@
     <string name="log_filter_all">All</string>
     <string name="log_filter_warn">Warning and above</string>
     <string name="log_filter_error">Errors only</string>
+    <string name="log_filter_detail">Detailed</string>
     <string name="log_empty">No logs yet</string>
     <string name="log_empty_filtered">No logs match the current filter</string>
     <string name="log_count">%1$d entries (at most 400 are kept in memory; older ones are dropped)</string>
     <string name="log_action_clear">Clear</string>
     <string name="log_action_copy">Copy</string>
     <string name="log_action_share">Share</string>
+    <string name="log_action_export">Export to file</string>
     <string name="log_clear_dialog_title">Clear all logs?</string>
     <string name="log_clear_dialog_summary">This cannot be undone. If monitoring is still running, new logs will keep coming in afterwards.</string>
     <string name="log_toast_copied">Copied %1$d log entries to the clipboard</string>
+    <string name="log_toast_copied_one">Copied this entry</string>
+    <string name="log_toast_exported">Exported to %1$s</string>
+    <string name="log_toast_export_failed">Export failed: %1$s</string>
     <string name="log_toast_copy_empty">Nothing to copy</string>
     <string name="log_toast_cleared">Logs cleared</string>
     <string name="log_share_title">NetPilot runtime logs</string>
+    <string name="log_mode_line">Log mode: %1$s</string>
+    <string name="log_mode_brief">Brief</string>
+    <string name="log_mode_detailed">Detailed</string>
+    <string name="log_mode_brief_hint">Brief mode records conclusions, failure reasons, and the raw values the system returned on failure. For per-candidate, step-by-step raw output, turn on "Detailed log mode" in Settings.</string>
 
 </resources>

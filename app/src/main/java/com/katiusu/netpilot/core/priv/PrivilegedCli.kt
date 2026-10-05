@@ -184,15 +184,19 @@ object PrivilegedCli {
         // 归详细开关管；失败原因由下面的 onFailure 带进结论行，默认也看得见。
         WriteDiag.detail(
             "cli 权威存储写入：content update siminfo." + AuthStore.COLUMN_ALLOWED_NETWORK_TYPES + "=" + networkTypes +
-                "（subId=$subId）-> exit=" + update.first + (if (update.second.isEmpty()) "" else " out=" + update.second.take(120))
+                "（subId=$subId）-> exit=" + update.first +
+                (if (update.second.isEmpty()) "" else " out=" + WriteDiag.inlineRaw(update.second))
         )
+        // 详细模式：provider 的完整原始输出（可能带堆栈）分块记下来，别只留截断版。
+        WriteDiag.detailBlock("cli content update 原始输出", update.second)
         if (update.first != 0) {
-            WriteDiag.detail(
-                "cli 权威存储写入被拒：exit=" + update.first + " 原始输出=" + update.second.take(240)
+            // 失败时的原始退出码与 provider 输出两种模式都要记（见 WriteDiag.failure）。
+            WriteDiag.failure(
+                "cli 权威存储写入被拒：exit=" + update.first + " 原始输出=" + WriteDiag.inlineRaw(update.second, 240)
             )
             onFailure(
                 "content update 退出码 ${update.first}" +
-                    (if (update.second.isBlank()) "" else "：" + update.second.take(160))
+                    (if (update.second.isBlank()) "" else "：" + WriteDiag.inlineRaw(update.second))
             )
             return false
         }
@@ -204,14 +208,21 @@ object PrivilegedCli {
         )
         val readBack = AuthStore.parseQueryOutput(back.second, AuthStore.COLUMN_ALLOWED_NETWORK_TYPES)
         WriteDiag.detail(
-            "cli 回读原文：exit=" + back.first + " 输出=" + back.second.take(240) + " -> 解析值=" + (readBack?.toString() ?: "解析不出")
+            "cli 回读原文：exit=" + back.first + " 输出=" + WriteDiag.inlineRaw(back.second, 400) +
+                " -> 解析值=" + (readBack?.toString() ?: "解析不出")
         )
+        WriteDiag.detailBlock("cli 权威存储回读原始输出", back.second)
         val matched = back.first == 0 && readBack == networkTypes
         WriteDiag.detail(
             "cli 权威存储回读：" + (readBack?.toString() ?: "读不到") + "（期望 $networkTypes）-> " +
                 (if (matched) "一致" else "不一致")
         )
         if (!matched) {
+            // 回读不一致时的原始证据（退出码 + 原文 + 解析值）两种模式都要能看到。
+            WriteDiag.failure(
+                "cli 权威存储写后回读不一致：exit=" + back.first + " 回读原文=" + WriteDiag.inlineRaw(back.second, 240) +
+                    " 解析值=" + (readBack?.toString() ?: "解析不出") + " 期望=$networkTypes"
+            )
             onFailure(
                 "写后回读 " + (readBack?.toString() ?: "读不到") + "，与目标 $networkTypes 不一致（exit=${back.first}）；" +
                     "权威存储里的值变了也不等于调制解调器已接受"
@@ -227,17 +238,30 @@ object PrivilegedCli {
      * 抽出来给 `content` 命令复用 —— `content` 没有 API、也没有 SDK 常量，只能走命令行。
      */
     private fun runTool(vararg argv: String): Pair<Int, String> = try {
+        // 详细日志：命令原文、耗时、是否超时、以及**完整**输出（分块）。
+        // 为什么要耗时：`content` / `settings` 都可能被 provider 卡住几秒，用户报「切换很慢、
+        // 一阵一阵的」时，只有耗时能指出是哪一步在等。
+        val startedAt = System.currentTimeMillis()
+        WriteDiag.detail("cli 执行命令：" + argv.joinToString(" "))
         val process = ProcessBuilder(*argv).redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
         val finished = process.waitFor(5, TimeUnit.SECONDS)
         if (!finished) process.destroy()
-        (if (finished) process.exitValue() else -1) to output
+        val code = if (finished) process.exitValue() else -1
+        WriteDiag.detail(
+            "cli 命令结束：exit=$code 耗时=" + (System.currentTimeMillis() - startedAt) + "ms" +
+                (if (finished) "" else "（5 秒超时，已 destroy）")
+        )
+        WriteDiag.detailBlock("cli 原始输出（" + (argv.firstOrNull() ?: "?") + "）", output)
+        code to output
     } catch (e: Throwable) {
         WriteDiag.warn("cli " + argv.firstOrNull() + " 抛异常：" + e.javaClass.simpleName + ": " + e.message)
         -1 to (e.javaClass.simpleName + ": " + e.message)
     }
 
     private fun writeSettings(key: String, value: Int, onFailure: (String) -> Unit = {}): Boolean = try {
+        val startedAt = System.currentTimeMillis()
+        WriteDiag.detail("cli 执行命令：settings put global $key $value")
         val process = ProcessBuilder("settings", "put", "global", key, value.toString())
             .redirectErrorStream(true)
             .start()
@@ -248,12 +272,24 @@ object PrivilegedCli {
         if (!finished) process.destroy()
         if (!ok) {
             // 1.5.1：把这一步为什么失败交给结论行（过程原文仍留在下面的 always/detail 里）。
+            // 失败时的原始退出码与输出两种模式都要记。
+            WriteDiag.failure(
+                "cli settings put global $key $value 失败：" +
+                    (if (finished) "exit=" + process.exitValue() else "5 秒超时被 kill") +
+                    (if (output.isEmpty()) "" else "，输出=" + output.take(120))
+            )
             onFailure(
                 "settings put global $key $value 未成功（" +
                     (if (finished) "exit=" + process.exitValue() else "5 秒超时被 kill") +
                     (if (output.isEmpty()) "" else "，输出=" + output.take(120)) + "）"
             )
         }
+        WriteDiag.detail(
+            "cli 命令结束：settings put global $key $value exit=" + (if (finished) process.exitValue() else -1) +
+                " 耗时=" + (System.currentTimeMillis() - startedAt) + "ms" +
+                (if (finished) "" else "（5 秒超时，已 destroy）")
+        )
+        WriteDiag.detailBlock("cli 原始输出（settings）", output)
         Log.i(TAG, "settings put global $key $value -> ok=$ok out=$output")
         // 退出码 0 只说明 SettingsProvider 收下了这条记录，**不代表 modem 换了制式** ——
         // 这正是回读能通过却切不动制式的机制之一。

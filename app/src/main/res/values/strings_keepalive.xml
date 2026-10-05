@@ -29,14 +29,15 @@
     <string name="ka_verify_title">写入后回读校验</string>
     <string name="ka_verify_summary">默认开启。开启：写完 settings 立刻读回比对，不一致算失败并写日志。关闭：写一次就当成功，不再比对。</string>
     <string name="ka_verify_hint">只在「写入生效却误报失败」时才关：部分厂商 ROM 回读不准，会把成功判成失败。关掉后只能自己到系统设置核对，失败不再进日志。</string>
-    <string name="ka_verbose_title">写入详细诊断日志</string>
-    <string name="ka_verbose_summary">默认关闭。开启后把写入链路的每一步都写进日志页：命中了哪个重载、modem 返回什么、回读读到什么、哪一步抛了什么异常。</string>
-    <string name="ka_verbose_hint">只在排查「开关拨了但网络没变」时临时开启。root 通道下诊断要从 app_process 子进程搬回应用进程，开启会有额外开销，问题查完请关掉。</string>
+    <string name="ka_verbose_title">详细日志模式</string>
+    <string name="ka_verbose_summary">默认关闭 = 简要模式：只记结论、失败原因，以及失败时系统返回的原始值（退出码、原始输出、异常原文）。开启 = 详细模式：连每一步的原始输出、逐次尝试过程都记进日志页。</string>
+    <string name="ka_verbose_hint">先看简要模式；排查「开关拨了但网络没变」时再开详细模式。root 通道下详细诊断要从 app_process 子进程搬回应用进程，开启会有额外开销，问题查完请关掉。</string>
 
     <string name="ka_compat_vendor">厂商</string>
     <string name="ka_compat_model">型号</string>
+    <string name="ka_compat_brand">品牌</string>
     <string name="ka_compat_android">Android 版本</string>
-    <string name="ka_compat_miui">OS 版本</string>
+    <string name="ka_compat_miui">系统构建版本</string>
 
     <string name="ka_compat_channel">当前特权通道</string>
     <!-- 1.5.0：值由 CarrierInfo.activeCarrierSummary 生成（识别到的运营商 + 会用的默认制式）。 -->
@@ -58,7 +59,10 @@
     <string name="ka_compat_read_no_target">未执行：没能确定写入目标（读不到默认数据卡）</string>
 
     <string name="ka_compat_write_methods">本机可用的写入方法</string>
-    <string name="ka_compat_auth_store">权威存储（TelephonyProvider）</string>
+    <string name="ka_compat_self_check">程序自检</string>
+    <string name="ka_compat_self_check_ok">通过（%1$s）</string>
+    <string name="ka_compat_self_check_failed">失败（%1$s）</string>
+    <string name="ka_compat_self_check_skipped">未执行：没有可用的特权通道</string>
 
     <string name="ka_compat_verify_state">回读校验</string>
     <string name="ka_compat_verify_on">开启</string>

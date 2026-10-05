@@ -5,6 +5,10 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,10 +47,14 @@ import com.katiusu.netpilot.core.NetPilot
 import com.katiusu.netpilot.core.monitor.LogEntry
 import com.katiusu.netpilot.core.monitor.LogLevel
 import com.katiusu.netpilot.core.monitor.LogStore
+import com.katiusu.netpilot.core.priv.WriteDiag
 import com.katiusu.netpilot.ui.util.BlurredBar
 import com.katiusu.netpilot.ui.util.blurSource
 import com.katiusu.netpilot.ui.util.pageScrollModifiers
 import com.katiusu.netpilot.ui.util.rememberBlurState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -68,19 +77,33 @@ private val WarnColor = Color(0xFFE0A800)
 /** 复制/分享时最多导出多少字符，避免把剪贴板和分享面板撑爆。 */
 private const val MAX_EXPORT_CHARS = 200_000
 
+/**
+ * 导出到**文件**时的字符上限，比剪贴板那条宽松得多。
+ *
+ * 为什么单独给一个上限：详细模式下一条 `content query` 的原始输出就可能上千字符，
+ * 用剪贴板那个 20 万的上限会把排障最关键的后半段砍掉。写文件没有分享面板的体积顾虑。
+ */
+private const val MAX_FILE_CHARS = 4_000_000
+
 /** 日志等级筛选档位。 */
 private enum class LogFilter(val labelRes: Int) {
     ALL(R.string.log_filter_all),
     WARN_UP(R.string.log_filter_warn),
     ERROR_ONLY(R.string.log_filter_error),
+
+    /** 只看 DEBUG：也就是「详细日志模式」记下的逐步/逐候选原始输出。 */
+    DETAIL_ONLY(R.string.log_filter_detail),
 }
 
 /**
- * 日志页：按等级筛、清空、复制、分享，并始终跟在最新一条后面。
+ * 日志页：按等级筛、清空、复制、分享、导出成文件，始终停在最新一条上。
  *
  * 数据源刻意用 [LogStore.entries] 而不是 `NetPilot.logs()`：前者背后是
  * `mutableStateListOf`，遍历它本身就会在日志变化时触发重组；后者是取一次快照，
  * 页面会一直停在旧内容上。
+ *
+ * 显示顺序是**倒序**（新的在最上面），因为排查时先要看的是「刚刚发生了什么」；
+ * 导出（剪贴板 / 分享 / 文件）仍旧按时间正序，读起来才顺。
  *
  * @param isBlurEnabled 是否启用顶栏模糊。
  * @param extraBottomPadding 额外的底部留白。
@@ -109,6 +132,7 @@ fun LogPageView(
         LogFilter.ALL -> allEntries.toList()
         LogFilter.WARN_UP -> allEntries.filter { it.level >= LogLevel.WARN }
         LogFilter.ERROR_ONLY -> allEntries.filter { it.level == LogLevel.ERROR }
+        LogFilter.DETAIL_ONLY -> allEntries.filter { it.level == LogLevel.DEBUG }
     }.asReversed()
     // 1.5.1：显示改成倒序（新的在最上面）。底层 LogStore.entries 仍然是追加式的旧→新，
     // 只在这里翻一次，所以过滤、导出、落盘的语义都没动。
@@ -125,17 +149,46 @@ fun LogPageView(
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
     }
 
-    /** 拼一份纯文本，供剪贴板与分享共用。 */
-    fun buildText(): String {
+    /** 一条日志的单行形态：界面、剪贴板、文件导出共用，避免三处各写一遍格式。 */
+    fun oneLine(entry: LogEntry): String =
+        entry.timeText() + " " + entry.level.name + " " + entry.tag + ": " + entry.message
+
+    /** 拼一份纯文本，供剪贴板与分享共用（时间正序）。 */
+    fun buildText(maxChars: Int = MAX_EXPORT_CHARS): String {
         val sb = StringBuilder()
         // 界面是倒序（新→旧），但导出的文本按时间顺序（旧→新）更好读，这里翻回来一次。
         for (e in entries.asReversed()) {
-            sb.append(e.timeText()).append(' ')
-                .append(e.level.name).append(' ')
-                .append(e.tag).append(": ")
-                .append(e.message).append('\n')
-            if (sb.length > MAX_EXPORT_CHARS) break
+            sb.append(oneLine(e)).append('\n')
+            if (sb.length > maxChars) break
         }
+        return sb.toString()
+    }
+
+    /** 当前档位对应的资源 id（档位名在本进程缓存里，取一次即可）。 */
+    fun modeLabelRes(): Int = if (WriteDiag.mode == WriteDiag.Mode.DETAILED) {
+        R.string.log_mode_detailed
+    } else {
+        R.string.log_mode_brief
+    }
+
+    /**
+     * 文件导出用的文本：头部先把「这份日志是谁、哪一档、什么筛选」写清楚。
+     *
+     * 为什么头部要带这些：导出的文件会被贴到别处（issue、聊天窗口）看，
+     * 「简要模式」四个字能立刻说明「为什么没有逐步过程」—— 免得读的人以为日志被截断了。
+     */
+    fun buildFileText(): String {
+        val sb = StringBuilder()
+        sb.append("# NetPilot 运行日志\n")
+        sb.append("# 导出时间：")
+            .append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
+            .append('\n')
+        sb.append("# 日志模式：").append(context.getString(modeLabelRes())).append('\n')
+        sb.append("# 界面筛选：").append(context.getString(filter.labelRes))
+            .append("；本次导出 ").append(entries.size).append(" 条\n")
+        sb.append("# 说明：简要模式含结论、失败原因与失败时系统返回的原始值；")
+            .append("详细模式另含逐候选、逐步的完整原始输出。\n\n")
+        sb.append(buildText(MAX_FILE_CHARS))
         return sb.toString()
     }
 
@@ -151,6 +204,17 @@ fun LogPageView(
         }
         manager.setPrimaryClip(ClipData.newPlainText("NetPilot", buildText()))
         toast(context.getString(R.string.log_toast_copied, entries.size))
+    }
+
+    /** 点按某一条：只复制这一条。排查时更常用的是「把出问题的那一行发出去」。 */
+    fun copyOne(entry: LogEntry) {
+        val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (manager == null) {
+            toast(context.getString(R.string.log_toast_copy_empty))
+            return
+        }
+        manager.setPrimaryClip(ClipData.newPlainText("NetPilot", oneLine(entry)))
+        toast(context.getString(R.string.log_toast_copied_one))
     }
 
     fun shareAll() {
@@ -169,6 +233,44 @@ fun LogPageView(
             context.startActivity(
                 Intent.createChooser(send, context.getString(R.string.log_action_share))
             )
+        }
+    }
+
+    // 系统文件选择器（SAF）：用户自己挑目录，本应用不需要任何存储权限，
+    // 也不用把日志写进被策略只读保护的目录。
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) {
+            val result = runCatching {
+                val bytes = buildFileText().toByteArray(Charsets.UTF_8)
+                val stream = context.contentResolver.openOutputStream(uri)
+                    ?: error("openOutputStream 返回 null")
+                stream.use { it.write(bytes) }
+            }
+            if (result.isSuccess) {
+                toast(context.getString(R.string.log_toast_exported, uri.lastPathSegment.orEmpty()))
+            } else {
+                toast(
+                    context.getString(
+                        R.string.log_toast_export_failed,
+                        result.exceptionOrNull()?.message.orEmpty(),
+                    )
+                )
+            }
+        }
+    }
+
+    fun exportAll() {
+        if (entries.isEmpty()) {
+            toast(context.getString(R.string.log_toast_copy_empty))
+            return
+        }
+        // 文件名带时间戳：多次导出不会在同一个目录里互相覆盖。
+        val name = "NetPilot-log-" +
+            SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".txt"
+        runCatching { exportLauncher.launch(name) }.onFailure {
+            toast(context.getString(R.string.log_toast_export_failed, it.message.orEmpty()))
         }
     }
 
@@ -199,7 +301,7 @@ fun LogPageView(
                     bottom = innerPadding.calculateBottomPadding() + extraBottomPadding,
                 ),
             ) {
-                // ---------- 头部：条数 + 筛选 + 复制/分享/清空 ----------
+                // ---------- 头部：条数 + 当前档位 + 筛选 + 复制/分享/导出/清空 ----------
                 item {
                     Column(modifier = Modifier.padding(bottom = 8.dp)) {
                         MiuixText(
@@ -208,11 +310,31 @@ fun LogPageView(
                             style = MiuixTheme.textStyles.footnote2,
                             modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
                         )
-                        Card(modifier = Modifier.padding(horizontal = 12.dp)) {
+                        // 当前档位必须写出来：拿到一份只记结论的日志时，先要看的就是它是不是简要模式
+                        // （那决定了「没有逐步过程」是设计如此，还是日志真丢了）。
+                        MiuixText(
+                            text = stringResource(R.string.log_mode_line, stringResource(modeLabelRes())),
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                            style = MiuixTheme.textStyles.footnote2,
+                            modifier = Modifier.padding(horizontal = 28.dp),
+                        )
+                        if (WriteDiag.mode != WriteDiag.Mode.DETAILED) {
+                            MiuixText(
+                                text = stringResource(R.string.log_mode_brief_hint),
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                style = MiuixTheme.textStyles.footnote2,
+                                modifier = Modifier
+                                    .padding(horizontal = 28.dp)
+                                    .padding(top = 2.dp, bottom = 6.dp),
+                            )
+                        }
+                        Card(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                             Column {
+                                // 四档横排：窄屏放不下，所以这一行可以横向滚动（别让「详细」被挤掉）。
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState())
                                         .padding(horizontal = 8.dp, vertical = 4.dp),
                                 ) {
                                     // Miuix 没有 chip 组件，用 TextButton 组表达「选中」：
@@ -233,6 +355,7 @@ fun LogPageView(
                                 HorizontalDivider(
                                     modifier = Modifier.padding(horizontal = 12.dp),
                                 )
+                                // 复制 / 分享 / 导出文件
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -250,6 +373,21 @@ fun LogPageView(
                                         modifier = Modifier.weight(1f),
                                     )
                                     Spacer(Modifier.width(8.dp))
+                                    TextButton(
+                                        text = stringResource(R.string.log_action_export),
+                                        onClick = { exportAll() },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                )
+                                // 清空单独一行：它是破坏性操作，不该和上面三个挤在同一行的同一层级里避免误触
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                ) {
                                     TextButton(
                                         text = stringResource(R.string.log_action_clear),
                                         onClick = { showClearDialog = true },
@@ -280,7 +418,7 @@ fun LogPageView(
                     }
                 } else {
                     items(entries) { entry ->
-                        LogRow(entry)
+                        LogRow(entry = entry, onClick = { copyOne(entry) })
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     }
                 }
@@ -322,12 +460,17 @@ fun LogPageView(
     }
 }
 
-/** 一条日志：第一行是时间 / 等级 / tag，第二行是正文（自动换行，不截断）。 */
+/**
+ * 一条日志：第一行是时间 / 等级 / tag，第二行是正文（自动换行，不截断）。
+ *
+ * 整行可点：点一下只复制这一条 —— 报问题的人通常要的是「出问题那一行」，不是全部 200 条。
+ */
 @Composable
-private fun LogRow(entry: LogEntry) {
+private fun LogRow(entry: LogEntry, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
