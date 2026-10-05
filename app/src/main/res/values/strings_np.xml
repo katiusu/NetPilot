@@ -44,6 +44,18 @@
     <!-- 功能页分区 -->
     <string name="np_section_fake5g">降级判定条件</string>
     <string name="np_section_policy">降级与恢复策略</string>
+    <string name="np_mode_switch_title">切换网络制式</string>
+    <string name="np_mode_switch_summary">手动写入首选制式：内置 34 种，按 5G/4G/3G/2G 分组；不改自动降级的目标制式</string>
+    <string name="np_mode_switch_dialog_title">选择网络制式</string>
+    <string name="np_mode_switch_dialog_summary">当前：%1$s。点按即写入本机首选制式</string>
+    <string name="np_mode_switch_none">没有可用的数据卡（subId 无效），无法写入</string>
+    <string name="np_mode_switch_unknown">暂时读不到当前制式，仍可写入</string>
+    <string name="np_mode_group_5g">5G（NR）组合</string>
+    <string name="np_mode_group_4g">4G（LTE）组合</string>
+    <string name="np_mode_group_3g">3G 组合</string>
+    <string name="np_mode_group_2g">2G / CDMA 组合</string>
+    <string name="np_mode_switch_applied">已切换为 %1$s</string>
+    <string name="np_mode_switch_failed">切换为 %1$s 失败，原因见日志页</string>
     <string name="np_section_monitor">监控</string>
     <string name="np_section_datacard">数据卡</string>
     <string name="np_section_tasker">自动化接口</string>

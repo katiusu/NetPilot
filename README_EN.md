@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.5.1** (`versionCode 2026100505`) |
+| Version | **1.5.2** (`versionCode 2026100600`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -95,174 +95,22 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 
 ---
 
-### App icon & runtime memory (1.0.1)
+### Version history
 
-- **Adaptive icon**: a black background layer, a white "signal bars + plus" foreground layer, and a
-  **monochrome layer** (used by Android 13+ themed icons). `minSdk 34`, so there is a single
-  `mipmap-anydpi-v26` XML plus five density PNGs, and a `roundIcon` is provided too.
-- **Reaping orphaned Shizuku user-service processes**: the Shizuku user service is a separate
-  root/shell process named `<package>:np_service`. When Android kills the app, it never gets to run
-  `unbindUserService(remove = true)`, so the process survives as an orphan — measured on one device:
-  **4 processes, ~180 MB**. After a successful bind, NetPilot scans `/proc` once per app process and
-  kills every `:np_service` process of this package that is not itself. Failures are ignored: this
-  only saves memory and can never break the privileged channel.
-- **Cheaper log persistence**: 400 entries stay in memory, but only the newest 120 are written to
-  disk and a single message is capped at 2000 characters. Previously a 40+ KB JSON string was built
-  every 4 seconds — the steadiest allocation source in the app.
-- **1.5.0 fixed a real bug here**: `LogStore.init(context)` was called from nowhere, so `appContext`
-  stayed null, `persist()` returned at its first line and `load()` never ran either — the log page
-  was always empty after a cold start. See the 1.5.0 section below.
-- **About page**: the version string is memoised instead of calling `PackageManager` on every
-  recomposition.
+| Version | versionCode | Highlights |
+|---|---|---|
+| 1.0.0 | 2026100400 | First public release: auto-downgrade, per-SIM policies, Quick Settings tile, Tasker interface. |
+| 1.0.1 | 2026100401 | Adaptive icon; orphaned Shizuku service processes reclaimed; smaller log persistence. |
+| 1.1.0 | 2026100500 | Licence changed to Apache-2.0 (`TelephonyReflection.kt` rewritten clean-room); default values revised (downgrade on, 60 s cooldown, 2 recovery rounds, 60 s sampling). |
+| 1.2.0 | 2026100501 | Background power optimisations; in-app update check. |
+| 1.3.0 | 2026100502 | Master switch for the automation interface (off by default); adaptive sampling interval. |
+| 1.4.0 | 2026100503 | Fake full bars judged on 5G / 5G+ only; detection defaults revised. |
+| 1.5.0 | 2026100504 | Log persistence fix; write diagnostics; duplicate launcher icon removed; six visible false successes on the write path fixed; carrier defaults corrected; Tasker event gating. |
+| 1.5.1 | 2026100505 | Three distinct "cannot read" causes in the authoritative store separated; log conclusions carry their reason; brief/detailed log modes; newest-first log page; log export to file. |
+| 1.5.2 | 2026100600 | Shizuku-channel logs completed; log page gets an oldest/newest order toggle (oldest first by default); all 34 network modes switchable from the UI; log page and background memory optimised. |
 
-### License change to Apache-2.0 (1.1.0)
-
-- **Why**: up to 1.0.1, `core/priv/TelephonyReflection.kt` was near-verbatim from the GPL-3.0 project
-  NetworkSwitch (0.761 token similarity; 98.2% of upstream tokens inside shared runs), which is why
-  those releases were GPL-3.0.
-- **What changed**: that file is now a clean-room re-implementation (0.291 similarity, longest shared
-  run 25 tokens — what remains is platform fact: the `HiddenApiBypass` exemption prefixes, the AOSP
-  constant table, interface signatures). `LICENSE` is now **Apache-2.0** and the About / licenses
-  screens were updated in step.
-- **Irrevocable**: copies already distributed under GPL-3.0 — including the 1.0.1 APK in Releases —
-  remain GPL-3.0.
-- **Reproduce**: `python3 tools/check_provenance.py` (per-file similarity report); item-by-item
-  reasoning in [PROVENANCE](docs/PROVENANCE.md), acceptance steps in [TESTING](docs/TESTING.md) §15.
-
-### Default-value changes (1.1.0)
-
-- **The network-quality downgrade master switch now defaults to on.** The Features page had it hard-coded
-  to `false` while the engine defaulted to `true`, so the UI showed "off" while downgrades were already
-  running; both now read `MonitorSettings.DEFAULT_ENABLED`.
-- **Cooldown defaults to 60 s** (was 300 s), slider minimum **30 s** (was 60 s), step 30 s.
-- **Healthy rounds required to restore default to 2** (was 3).
-- **Sampling interval defaults to 60 s** (was 120 s).
-- No-network rollback stays at 2 rounds.
-- Only affects users who never wrote the key: values already stored in `SharedPreferences` win.
-
-### Power optimizations + in-app update check (1.2.0)
-
-See **[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)** for before/after numbers, the truth-table proof and every reproduction command. What changed, and what you can actually notice:
-
-| Change | Before | After | Perceptible difference |
-|---|---|---|---|
-| Monitor-page 5-second live sampling | Kept running **even in the background** once you had opened the page — up to 720 real HTTP probes/hour | Runs only while the app is in the foreground, the monitor page is the current tab **and the screen is interactive** — the loop re-checks `PowerManager.isInteractive` every round, because Compose recomposition waits for a frame and no frames arrive once the screen is off | None |
-| Probe while the screen is off and the signal is not strong | One HTTP probe every 60 s anyway | **Skipped entirely** — no network traffic | Notification/monitor page shows "Probe skipped (screen off)" |
-| Notification redraw | Re-posted every 60 s even when the text never changed | Only when the text actually changes | The notification stops ticking once a minute |
-| Log persistence | Rewrote 120 entries into `SharedPreferences` every 4 s | Every 30 s, off the calling thread | None (still 400 entries in the page, ~120 restored after a restart) |
-| Keep-alive heartbeat | Re-registered the alarm and wrote a log line (which triggered a persist) on every tick | One in-process state check | None |
-| Restart after being killed | Fixed 10 s | Still 10 s normally; exponential backoff up to 15 min when it keeps crashing | Only visible if the service crash-loops |
-| Leftover Shizuku processes | Never reclaimed (measured: 4 processes, ~201 MB on one device) | Swept once per app start | More stable background memory |
-
-**The downgrade decision logic is unchanged.** Skipping a probe requires all three of: screen off, state machine idle, and signal not stronger than the threshold. When the signal *is* strong, `Ping` feeds the fake-full-bar rule, so the probe still runs. The per-branch truth table is in the report (§3).
-
-**Log-page switch (1.5.0, off by default)**: Settings → System compatibility gains "Verbose write diagnostics". When on, a mode switch that "flips but does not change the network" can be traced step by step: which reflection overload matched, **what the modem returned**, the `settings put` exit code, what the read-back saw, and which step threw what.
-
-**In-app update check (new)**: an entry in About, plus an optional check at launch (setting defaults to on) against [Releases](../../releases). **Check and notify only** — a dialog shows the version and release notes, and "Update now" opens the Releases page in your browser. No silent downloads, no auto-install, no background polling. **1.5.0 adds the "Update" section in Settings with an "Check for Updates on Launch" switch (default on)** — the preference existed since 1.2.0 but had no UI.
-
-**Play compliance (1.2.0)**: `targetSdk` 34 → **36** (`compileSdk` stays 37). Edge-to-edge, predictive back, the `specialUse` foreground service, BOOT_COMPLETED restrictions and 16 KB page alignment (`zipalign -c -P 16` passes) were each checked; nothing else was needed.
-
-### Tasker switch + adaptive sampling interval (1.3.0)
-
-| Change | Before | After | What you notice |
-|---|---|---|---|
-| Tasker / Locale interface | Three components always enabled; every Tasker command cold-started the app process | **Off by default**; flipping the switch disables those components at the system level, so broadcasts are never delivered | If you don't use automation you're no longer woken by Tasker; if you do, turn it on once in Features |
-| Sampling interval | Always the configured value | Shrinks by the **adaptive shrink factor** per round while readings stay near a threshold (0.85 = 15% since 1.4.0, adjustable on the Features page; at most down to half), and snaps back as soon as they move away | Faster reactions on marginal signal; Features gains an "Adaptive sampling interval" switch plus "Adaptive sensitivity" and "Adaptive shrink factor" sliders |
-| Keep-alive start failure | A single vague "keep-alive broadcast failed", plus a misleading "service started" line right after it | `ForegroundServiceStartNotAllowedException` is detected separately and logged with the cause and the next step | When keep-alive silently fails, the log now says it is the battery-optimization setting |
-
-**Adaptive sampling changes the cadence only, never the decision**: threshold comparisons still use the raw readings, and `isNearThreshold()` has no caller on any decision path — it cannot change a downgrade or recovery outcome. The full write-up, plus one candidate that was investigated and *rejected as unsafe*, is in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6.
-
-**New settings (1.3.0)**: `np_tasker_enabled` (**off**), `np_fake5g_adaptive_interval` (**on**), `np_fake5g_adaptive_margin` (**10 dBm**). No existing threshold or interval default was touched.
-
-### Fake full bars are 5G / 5G+ only + default-value changes (1.4.0)
-
-**What this fixes**: on 4G, as soon as the bars look full (RSRP above −85 dBm) but ping runs high, the older build declared "fake 5G full bars" and downgraded — except the downgrade target **is 4G**, so nothing changes at the radio level; the only effect is closing the 5G door. Worse, once downgraded the criteria **still hold**, so the recovery counter never fills up and the device stays locked on 4G, escaping only after two rounds with no network at all. That is the full cause chain behind "back on 4G it keeps triggering fake full bars".
-
-| Change | Before | After | What you notice |
-|---|---|---|---|
-| Where the fake-full-bar rule applies | Judged on any network type | **Judged only while camped on 5G / 5G+ (NSA dual connectivity)**; no longer on 4G / 3G / 2G | No more unexplained downgrades on 4G, and no more getting stuck there; judgements on real 5G are unchanged |
-| Ping threshold default | 200 ms | **300 ms** | The reading is a full first-byte time including DNS and connect, not a radio RTT; 200 ms was tight for a 4G cell edge |
-| Downgrade cooldown default | 60 s | **120 s** | Halves the window affected by a single mis-judgement; 5G⇄4G stops flip-flopping |
-| Adaptive sensitivity default | 10 dBm | **20 dBm** | Starts sampling more densely earlier |
-| Adaptive shrink factor | Hard-coded 20% | **15% (0.85) by default, adjustable** | Turn it down to react faster, up to save more power |
-| Why-downgraded display | Only "RSRP full but ping high" | States **which network type it was on**; when the gate blocks it, says plainly "Ping and SINR are not checked this round" | You can tell at a glance whether a round was judged on 4G or 5G |
-
-**How "5G / 5G+" is recognised**: `5G` = the data network reports NR directly; `5G+` = the data network still reports LTE but NR cells are visible in the cell list (NSA / EN-DC). **`4G+` (LTE carrier aggregation) does not count as 5G.**
-
-**This gate is on by default and can be turned off** — Features → "Judge fake full bars on 5G / 5G+ only". Turning it off restores the exact 1.3.0 behaviour. You may need to turn it off if your device cannot see NR cells on NSA (missing Precise Location permission), in which case even real 5G would be blocked.
-
-**Defaults apply only to sliders you never touched**: these read "stored value ?: default", so only an actual drag is remembered. Users who never touched them get the new defaults immediately; anyone who did keeps their own numbers — an upgrade never silently overwrites a value you set.
-
-**What was deliberately not changed**: the weak-signal rule (downgrade below −110 dBm) is **untouched** — it is mutually exclusive with the fake-full-bar rule (one needs RSRP > −85, the other < −110), so its outcome is bit-for-bit identical. The per-branch proof is in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §7.
-
-**New settings (1.4.0)**: `np_fake5g_nr_only` (**on**), `np_fake5g_adaptive_step` (**0.85**); `np_fake5g_ping` (**300 ms**), `np_fake5g_cooldown` (**120 s**), `np_fake5g_adaptive_margin` (**20 dBm**).
-
----
-
-### Log persistence fix + write diagnostics + duplicate launcher icon (1.5.0)
-
-**Logs were never written to disk (real bug).** `LogStore`'s `appContext` is only set by `LogStore.init(context)`, and that call appeared **nowhere** in the project — so every `persist()` returned at its first line (`val ctx = appContext ?: return`) and `load()` never ran either. The log page only ever showed records from the current process and was **always empty after a cold start**. 1.5.0 adds `LogStore.init(app)` to `core/NetPilot.kt` alongside the existing `PrefsStore` / `ConfigState` / `ControlManager` / `MonitorEngine` initialisation.
-
-**The mode-switch chain was only visible in logcat.** A switch passes through "reflect ITelephony → three write strategies → `settings put` fallback → read-back", and that chain used `android.util.Log` almost exclusively; `TelephonyReflection.dispatch` even swallowed the exception from every candidate combination. From the outside all you could see was "the switch flipped but the network did not change". 1.5.0 adds `core/priv/WriteDiag.kt` as the log outlet for this chain and reports which strategy matched, **what the modem returned** (`CallResult.Hit.value`), the `settings put` exit code, and the read-back value.
-
-**Verbose diagnostics switch (off by default).** Settings → System compatibility gains "Verbose write diagnostics" (`np_verbose_log`). On the root channel the diagnostics are carried back from the `app_process` child (prefixed `DIAG `, forwarded by `RootController`), so it stays off unless you are debugging. **Decision semantics are unchanged**: the return value of `setAllowedNetworkTypesForReason` *is* the modem's answer, but 1.5.0 only logs it. Treating it as a failure would change downgrade/recovery semantics, so that is left for you to decide (report §8.3).
-
-**Two launcher icons.** `MainActivity` and the `activity-alias .LauncherAlias` each declared a MAIN/LAUNCHER filter, so a fresh install showed two icons, and the "hide launcher icon" preference only disabled the alias — the main activity's own entry stayed, so it never worked either. 1.5.0 removes the alias, `LauncherIconController.kt` and `AppSettings.hideLauncherIcon`.
-
-**Update-check switch.** `AppSettings.checkUpdateOnLaunch` (default on) had been effective since 1.2.0 but had no UI. 1.5.0 adds an "Update" section with a switch, and fixes `MainActivity.persistState()` so it no longer resets fields that the UI does not expose.
-
-Test steps: [`docs/TESTING.md`](docs/TESTING.md) §19 (Chinese). Report and code-level reasoning: [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8 (Chinese).
-
-### Write path: six visible false successes fixed (1.5.0, part 2)
-
-The previous section made the write chain *visible*; this release fixes what that revealed. Every change lands on **observation and real bugs only** — no downgrade / recovery / cooldown / no-network threshold or default changed.
-
-**The authoritative store is not `settings`.** Since Android 11 the allowed network types for a SIM live in TelephonyProvider's `siminfo.allowed_network_types`; `Settings.Global.preferred_network_mode` is a legacy compatibility field on most ROMs. The old "write → read settings back → equal → success" loop wrote and read the same place, so it could never detect "the setting changed but nothing consumed it". This release adds `core/priv/AuthStore.kt` so both channels can read the *other* source and re-read it after a write; write order is now **ITelephony → authoritative store (siminfo) → settings**.
-
-**Out-of-table modes no longer mean "allow everything".** `NetworkModeBitmaskMapper.toBitmask()` used to return `ALL_NETWORK_TYPES = (1 shl 31) - 1` for any RIL mode outside its map — i.e. **open the SIM to every RAT**, so "lock 5G" could become "restrict nothing", with no warning. It now returns `null`, the caller refuses the write, and the log page says so.
-
-**A denied permission is no longer just "write failed".** `MODIFY_PHONE_STATE` is `signature|privileged` and `com.android.shell` (Shizuku's uid 2000) does not hold it, while `settings put` only needs `WRITE_SECURE_SETTINGS` — exactly how "the RAT never switched, yet write and read-back were all green" happens. `TelephonyReflection.dispatch` now picks `SecurityException` out, logs it **unconditionally** (independent of the verbose switch) with the current `Process.myUid()`, and names the missing permission.
-
-**How many write strategies are left is reported by the device.** `setAllowedNetworkTypes(long)` and `setPreferredNetworkType(int)` no longer exist on Android 14's `ITelephony`, so two of the "three strategies" are dead code. `TelephonyReflection.describeWriteMethods()` enumerates them at runtime (method enumeration needs no permission) and the result is shown in Settings → System compatibility.
-
-**Two new read-only rows** on that card: "Write methods available on this device" and "Authoritative store (TelephonyProvider)". The latter reports *which channel* produced the value; when it cannot be read, the channel-side and app-process-side reasons are both listed — "cannot read" and "read it, it is just empty" are different facts.
-
-**A new write path straight to the authoritative store.** Root: `su -c content update --uri content://telephony/siminfo --where sub_id=<id> --bind allowed_network_types:l:<mask>` followed by a `content query` read-back. Shizuku: `ContentResolver.update` on the same column from the user-service process (uid shell/root). The CLI path does the same, so on a rooted device with `app_process` one `setmode` performs the three-level attempt. Honest caveat: writing the authoritative row does not guarantee the modem accepts it immediately — whether the phone process re-pushes it depends on the ROM.
-
-Test steps: [`docs/TESTING.md`](docs/TESTING.md) §19 (Chinese). Report: [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8 (Chinese).
-
-### Carrier defaults corrected + Tasker event gating + broader verbose logs (1.5.0, part 3)
-
-**Carrier default table re-checked against public sources (two missing rows added, two unfindable ones removed).** `NetworkMode.OPERATOR_DEFAULTS` decides which RAT to fall back to when you release the 5G lock (it applies when the "follow carrier" option is selected). The old table
-
-- missed **46005 (China Telecom CDMA)** — that SIM fell back to mode 26 (the Unicom row), silently restoring the wrong RAT;
-- missed **46020 (China Tietong, merged into China Mobile in 2008)**;
-- carried `46010` (recorded as Unicom) and `46027` (recorded as Telecom), neither of which appears in any of four independent sources (`musalbas/mcc-mnc-table`, `pbakondy/mcc-mnc-list`, `mcc-mnc.org`, ITU-T E.212 notice OB 1280).
-
-Now: Telecom `3/5/11` → 27, Mobile `""`(46000)/`2/4/7/8/20` → 32, Unicom `1/6/9` → 26, Broadnet `15` → 33, each mode number matching AOSP `RILConstants.java`'s `NETWORK_MODE_*`. Non-domestic SIMs and unknown MNCs still fall back to 26 (unchanged). The cost of dropping the unfindable keys is stated in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.10.
-
-**Carrier identification, and you can see it.** New `Carrier` enum (China Mobile / Unicom / Telecom / Broadnet), `NetworkMode.carrierOf(mcc, mnc)`, `carrierName(mcc, mnc)`, plus `CarrierInfo.activeCarrierName()` / `activeCarrierSummary()`. Settings → System compatibility gains a read-only **"Detected carrier"** row such as `China Mobile (46000) -> 32 NR/LTE/TDSCDMA/GSM`; an MNC that is not in the table says so explicitly instead of falling back silently. The table is a guess: a wrong guess never errors, it just restores the wrong RAT — so it is displayed where one SIM swap can verify it.
-
-**No Tasker events while the Tasker interface is off.** `TaskerGate` only manages *component enabled state*, while all five event paths (signal sample / downgrade / recovery / mode change / data-SIM change) funnel into `TaskerEventSender.broadcast()`, which had no switch check; combined with the unconditional `TaskerBridge.init(this)` in `TemplateApp.onCreate`, signal snapshots and downgrade events were still broadcast with the interface off — a switch that did nothing, plus a wasted `Intent` per sample. The gate now sits on that single choke point (`if (!TaskerGate.isEnabled(context)) return`), `TaskerGate.sync()` only wires the bridge when the switch is on, and the unconditional call is gone. `np_tasker_enabled` still defaults to false; turning it on behaves exactly as before.
-
-**Broader verbose write diagnostics.** The logs behind the "verbose write diagnostics" switch are off by default, and the new write path had **none** (`core/priv/AuthStore.kt` and `core/priv/shizuku/ShizukuController.kt`: zero calls). The switch now also covers the raw `content query` / `content update` commands, the classification of each result, the raw exit/stdout/stderr of `content update`, per-column probing (`allowed_network_types` -> `allowed_network_type`), the encoded AIDL string, and "all three ITelephony strategies failed, falling back to the authoritative store". Everything goes through `WriteDiag.detail()`, so nothing is written while the switch is off; `always()` / `warn()` (e.g. a denied permission) stay unconditional.
-
-**Patch (same version): a Shizuku-channel failure to read the authoritative store is no longer "denied".** Real-device logs showed `被拒绝：… Unable to find app for caller … when getting content provider telephony`. That `SecurityException` has **nothing to do with permissions**: `ContentResolver` first asks AMS for an *application record* matching the caller pid, and the Shizuku user service is spawned by the Shizuku daemon via `app_process` and never calls `attachApplication`, so AMS has no record for it — granting more permissions can never help. The old code lumped it in with `Permission Denial` as "denied", pointing users at a dead end. The patch adds `AuthStore.isNoAppRecord()` and classifies it as `Read.Unavailable` / `Write.Failed` with a message saying granting is useless and the Root channel is the only way; a genuine permission denial still reads "denied". (1.5.1 replaces that single predicate with the three-way `AuthStore.callerHint()` — identity whitelist / missing SIMINFO-DB permission / no AMS app record — each with its own wording; see the 1.5.1 section below and §20.4 of the test guide.) Classification and wording only — no decision logic, no write-order change (see [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.13).
-
-Test steps: [`docs/TESTING.md`](docs/TESTING.md) §19.12–§19.14 and §19.16 (Chinese). Source-by-source comparison and cost: [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.10–§8.13 (Chinese).
-
-### Authoritative-store reads fixed, analysable logs, newest-first log page (1.5.1)
-
-**Three different "cannot read" cases are no longer the same sentence.** On a real device 1.5.0 reported three distinct failures with one shared wording. Now: (1) the **Root channel**, when the target `sub_id` has no row, enumerates the whole `siminfo` table and reports how many rows exist (`sub_id` / `sim_id` / `allowed_network_types`) plus the framework's candidate subIds, and says so explicitly when the table is empty (no SIM inserted / provider has not registered a card yet); (2) `Access SIMINFO table from not phone/system UID` and (3) `Unable to find app for caller …` are **two different causes** with separate explanations — the first is TelephonyProvider's hard-coded **identity whitelist** (system / phone / root; the AOSP comment says root is allowed on purpose for testing), the second is AMS having no application record for the calling pid (the Shizuku user service is spawned via `app_process` and never calls `attachApplication`). **Neither has anything to do with permissions** — granting more can never help (`ACCESS_TELEPHONY_SIMINFO_DB` is `signature|privileged`). 1.5.0 attached the AMS wording to the whitelist case; this release separates them (`AuthStore.isNoAppRecord()` became the three-way `AuthStore.callerHint()`). Also, when the system reports no default data `subId` (`-1`), the chain now falls back to the first active/voice subscription instead of stalling — **without ever rewriting the target subId** for a write (read-back verification must watch the same card). Test steps: [`docs/TESTING.md`](docs/TESTING.md) §20.4–§20.5 (Chinese).
-
-**Failure conclusions now carry the reason, step-level detail stays behind the switch.** The failure line in the log page reads `卡 1 切换 NR/LTE 失败：…` instead of a bare "switch failed" — no switch has to be turned on. The deepest reason is stashed by `WriteDiag` and consumed once by `NetPilot.setMode` (then cleared, so the next failure cannot inherit a stale reason). All per-step detail (per-strategy return values, raw commands, `exit`/`stdout`, read-back text, ContentResolver readiness) now belongs to the **verbose write diagnostics** switch only; six process-level lines that 1.5.0 left unconditional were demoted, and **turning the switch off no longer empties the reason in the conclusion line**. The log page is now **newest-first**; copy/share export stays chronological (oldest to newest). Test steps: §20.1–§20.3.
-
-**Version**: `versionName = 1.5.1`, `versionCode = 2026100505` (that code was used by a never-released 1.6.0 build with the same key, so it installs over it directly). Details and numbers: [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §9 (Chinese). Nothing about decision semantics, defaults or user-visible behaviour changed.
-
-**Patch (same version, not uploaded): two log modes, raw values on failure, a real self-check, clearer device info.** The log system now has an explicit **brief mode** (default: conclusions, failure reasons, and the raw values the system returned on failure) and a **detailed mode** (adds every step's raw output and each candidate attempt); failure-path raw values are recorded in *both* modes (`WriteDiag.failure()`). The old settings-page check that had the app process read the authoritative store directly was removed — TelephonyProvider's uid whitelist (system / phone / root) makes it fail by design, so it could only ever report "denied"; it is replaced by a **program self-check** (Root: one `app_process … probe`; Shizuku: one binder `probe()`) that answers "does this program actually run on this device". The OS-version row is now **system build version**, taken solely from `ro.build.version.incremental` (falling back only to `Build.VERSION.INCREMENTAL`, the same value), and a separate **brand** row now sits next to **vendor** (`Build.MANUFACTURER`) because vendor ROMs often differ between the two. `versionName` / `versionCode` are unchanged (1.5.1 / 2026100505); both same-version patches were merged into the v1.5.1 commit and Release.
-
-**Patch, second batch (same version): deeper detailed logs, a better log page, file export, and the authoritative-store check removed for good.** Every `su` / `app_process` / `content` command now logs its **exact command line, elapsed time and whether it timed out**; `stdout` / `stderr` get a one-line inline summary in **both** modes (`WriteDiag.inlineRaw()` folds newlines and marks truncation), and detailed mode stores the **full text** in 1600-character chunks (`WriteDiag.detailBlock()`) — the old 240-character cut-off was exactly where a locked-down ROM puts the reason. The log page shows the active mode in its header (with a hint in brief mode), gains a **Detailed** filter (DEBUG only), splits its action row into copy / share / **export to file** plus a separate clear button, and **tapping a single entry copies just that entry**. **Export to file** goes through the system file picker (SAF, no storage permission), writes `NetPilot-log-yyyyMMdd-HHmmss.txt` with a four-line header (time / mode / filter / count, so the reader knows why step-by-step output is absent) and allows 4,000,000 characters. Finally, the settings-page **authoritative-store check is gone entirely**: reading TelephonyProvider from the app process or Shizuku is blocked by its uid whitelist (system / phone / root) and can only ever report "denied", so that row, `SystemCompatInfo.Probe.authStore` and `describeAuthStore()` were deleted — the write path's strict read-back verification is untouched. Test steps: §20.8 of the test guide; rationale: §9.9 of the power report.
-
+> Per-version details are no longer duplicated here: measurements live in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) and acceptance steps in [`docs/TESTING.md`](docs/TESTING.md) (both Chinese).
+> Licence: copies distributed as 1.0.1 and earlier (including the 1.0.1 APK in Releases) remain GPL-3.0 and that grant cannot be revoked; from 1.1.0 onwards this project is released under Apache-2.0 — see [`docs/PROVENANCE.md`](docs/PROVENANCE.md).
 ## Privacy
 
 NetPilot **uploads nothing**. Its only network requests are the ping probe and — only at launch or when you tap the button yourself — a single read of this project's public GitHub Releases feed. It does not read contacts, SMS, or the photo library, and it does not collect location — `ACCESS_FINE_LOCATION` is requested only because Android 10+ classifies cellular signal strength (including SINR) as location data.

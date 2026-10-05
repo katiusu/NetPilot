@@ -141,7 +141,9 @@
     <string name="log_filter_all">All</string>
     <string name="log_filter_warn">Warning and above</string>
     <string name="log_filter_error">Errors only</string>
-    <string name="log_filter_detail">Detailed</string>
+    <string name="log_order_asc">Oldest first</string>
+    <string name="log_order_desc">Newest first</string>
+    <string name="log_order_line">Order: %1$s (tap to switch)</string>
     <string name="log_empty">No logs yet</string>
     <string name="log_empty_filtered">No logs match the current filter</string>
     <string name="log_count">%1$d entries (at most 400 are kept in memory; older ones are dropped)</string>

@@ -32,6 +32,9 @@ import kotlinx.coroutines.withContext
  * 验证过仍会被电话进程的 ContentObserver 捕获并重新下发制式的写法。
  * [probe] 时若 app_process 不可用但 settings 可读写，本通道依旧标记为可用。
  */
+/** [RootController.explainNoRow] 整表枚举结果的缓存窗口（1.5.2）。 */
+private const val NO_ROW_MEMO_MS = 30_000L
+
 class RootController(private val context: Context) : NetworkControlChannel {
 
     override val label: String = "Root"
@@ -302,7 +305,8 @@ class RootController(private val context: Context) : NetworkControlChannel {
             WriteDiag.detailBlock("权威存储更新失败 stderr", result.stderr)
             return false
         }
-        return when (val back = readAuthStore(subId)) {
+        // 写后回读：不要为了「解释为什么读不到」再起一个 su 子进程（见 readAuthStore 的说明）。
+        return when (val back = readAuthStore(subId, explain = false)) {
             is AuthStore.Read.Value -> {
                 val matched = back.networkTypes == networkTypes
                 WriteDiag.always(
@@ -318,7 +322,17 @@ class RootController(private val context: Context) : NetworkControlChannel {
         }
     }
 
-    override suspend fun readAuthStore(subId: Int): AuthStore.Read = withContext(Dispatchers.IO) {
+    override suspend fun readAuthStore(subId: Int): AuthStore.Read =
+        readAuthStore(subId, explain = true)
+
+    /**
+     * @param explain 读不到目标行时，是否再枚举整张 siminfo 表来解释原因。
+     *   1.5.2：**写后回读**传 false —— 那一步只关心「目标 subId 现在是什么值」，枚举整表
+     *   要多起一次 `su -c content query` 子进程（百毫秒级 + 一份整表 stdout），而且它的结论
+     *   对回读毫无帮助（[explainNoRow] 的注释本来就写着「只在读路径做这件事」）。
+     */
+    private suspend fun readAuthStore(subId: Int, explain: Boolean): AuthStore.Read =
+        withContext(Dispatchers.IO) {
         if (!RootShell.hasRoot()) return@withContext AuthStore.Read.Unavailable("未获得 Root 授权")
         var last: AuthStore.Read = AuthStore.Read.Unavailable("没有可用的列")
         for (column in AuthStore.CANDIDATE_COLUMNS) {
@@ -349,7 +363,7 @@ class RootController(private val context: Context) : NetworkControlChannel {
         // 1.5.1：行没查到时不收摊，再枚举一次整张表 ——「没有这个 subId 的行」这句话本身没法分析，
         // 必须同时知道表里现在有哪些行、以及框架给的 subId 候选是哪些（很常见的一种情况是
         // 传进来的 subId 就是 -1：默认数据卡还没定）。
-        if (last is AuthStore.Read.NoRow) return@withContext explainNoRow(subId)
+        if (last is AuthStore.Read.NoRow && explain) return@withContext explainNoRow(subId)
         last
     }
 
@@ -360,28 +374,55 @@ class RootController(private val context: Context) : NetworkControlChannel {
      * 拿别的行的值当成功就是造假 —— 所以这里也绝不改写目标，只把原因讲清楚。
      */
     private fun explainNoRow(subId: Int): AuthStore.Read {
-        val startedAt = System.currentTimeMillis()
-        val result = RootShell.exec(AuthStore.listCommand())
-        WriteDiag.detail(
-            "权威存储枚举耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
-                "；原始结果：exit=${result.code}" +
-                " stdout=" + WriteDiag.inlineRaw(result.stdout, 480) +
-                " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
-        )
-        WriteDiag.detailBlock("权威存储枚举 stdout", result.stdout)
-        WriteDiag.detailBlock("权威存储枚举 stderr", result.stderr)
-        val rows = AuthStore.parseSimInfoRows(result.stdout)
-        val candidates = runCatching { AuthStore.candidateSubIds() }.getOrDefault(emptyList())
-        val detail = if (rows.isEmpty()) {
-            "sub_id=$subId 在 siminfo 表里没有行，整张表现在是空的" +
-                "（本机没有插卡，或 TelephonyProvider 还没登记任何卡）；框架候选 subId=$candidates"
+        val now = System.currentTimeMillis()
+        val suffix = if (now - noRowMemoAt < NO_ROW_MEMO_MS) {
+            // 1.5.2：整表枚举的结果本身要起一个 su 子进程，而同一张表在几十秒内几乎不会变。
+            // 「读不到目标行」这件事一旦发生，往往紧接着又来一次（界面刷新 + 监控采样），
+            // 所以缓存一小段时间，避免连续 fork。subId 不缓存 —— 每句话都按本次的 subId 重新拼。
+            noRowMemoSuffix.also {
+                WriteDiag.detail(
+                    "权威存储枚举：复用 " + (now - noRowMemoAt) +
+                        "ms 前的整表枚举结果（" + (NO_ROW_MEMO_MS / 1000) + " 秒内不重复 fork su）"
+                )
+            }
         } else {
-            "sub_id=$subId 在 siminfo 表里没有行；表里现有 ${rows.size} 行：" +
-                "${AuthStore.describeRows(rows)}；框架候选 subId=$candidates"
+            val startedAt = System.currentTimeMillis()
+            val result = RootShell.exec(AuthStore.listCommand())
+            WriteDiag.detail(
+                "权威存储枚举耗时=" + (System.currentTimeMillis() - startedAt) + "ms 超时=" + result.timedOut +
+                    "；原始结果：exit=${result.code}" +
+                    " stdout=" + WriteDiag.inlineRaw(result.stdout, 480) +
+                    " stderr=" + WriteDiag.inlineRaw(result.stderr, 240)
+            )
+            WriteDiag.detailBlock("权威存储枚举 stdout", result.stdout)
+            WriteDiag.detailBlock("权威存储枚举 stderr", result.stderr)
+            val rows = AuthStore.parseSimInfoRows(result.stdout)
+            val candidates = runCatching { AuthStore.candidateSubIds() }.getOrDefault(emptyList())
+            val text = if (rows.isEmpty()) {
+                "，整张表现在是空的" +
+                    "（本机没有插卡，或 TelephonyProvider 还没登记任何卡）；框架候选 subId=$candidates"
+            } else {
+                "；表里现有 ${rows.size} 行：" +
+                    "${AuthStore.describeRows(rows)}；框架候选 subId=$candidates"
+            }
+            // 超时的结果不缓存：那是一次临时失败，下一次很可能就成了。
+            if (!result.timedOut) {
+                noRowMemoSuffix = text
+                noRowMemoAt = System.currentTimeMillis()
+            }
+            text
         }
+        val detail = "sub_id=$subId 在 siminfo 表里没有行$suffix"
         WriteDiag.detail("权威存储读不到的确切原因：$detail")
         return AuthStore.Read.NoRow(detail)
     }
+
+    /** [explainNoRow] 的整表枚举结果缓存（只缓存「表里有什么」，不缓存 subId 那句话）。 */
+    @Volatile
+    private var noRowMemoSuffix: String = ""
+
+    @Volatile
+    private var noRowMemoAt: Long = 0L
 
     override suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write =
         withContext(Dispatchers.IO) {
@@ -398,7 +439,7 @@ class RootController(private val context: Context) : NetworkControlChannel {
             WriteDiag.detailBlock("权威存储写入 stderr", result.stderr)
             val updated = AuthStore.classifyUpdate(result.code, result.stdout, result.stderr)
             if (updated !is AuthStore.Write.Ok) return@withContext updated
-            when (val back = readAuthStore(subId)) {
+            when (val back = readAuthStore(subId, explain = false)) {
                 is AuthStore.Read.Value ->
                     if (back.networkTypes == networkTypes) AuthStore.Write.Ok
                     else AuthStore.Write.Mismatch(back.networkTypes, networkTypes)

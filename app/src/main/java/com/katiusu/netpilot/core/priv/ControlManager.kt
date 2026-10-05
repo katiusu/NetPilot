@@ -74,6 +74,7 @@ object ControlManager {
             }
             if (alive) return@withLock current
             Log.w(TAG, "cached ${current.method} channel is no longer connected; re-probing")
+            WriteDiag.always("缓存的 ${current.method} 通道已掉线，重新探测特权通道")
             runCatching { current.destroy() }
             cachedChannel = null
             cachedMethod = ControlMethod.NONE
@@ -92,6 +93,7 @@ object ControlManager {
             lastRootStatus = rootStatus
             if (rootStatus is ChannelStatus.Available) {
                 adopt(root)
+                WriteDiag.always("已选用特权通道：Root（su）")
                 return@withLock root
             }
             runCatching { root.destroy() }
@@ -109,6 +111,7 @@ object ControlManager {
             lastShizukuStatus = shizukuStatus
             if (shizukuStatus is ChannelStatus.Available) {
                 adopt(shizuku)
+                WriteDiag.always("已选用特权通道：Shizuku")
                 return@withLock shizuku
             }
             runCatching { shizuku.destroy() }
@@ -117,6 +120,10 @@ object ControlManager {
         cachedChannel = null
         cachedMethod = ControlMethod.NONE
         Log.w(TAG, "no usable privileged channel: root=$lastRootStatus shizuku=$lastShizukuStatus")
+        WriteDiag.warn(
+            "没有可用的特权通道：Root=" + describe(lastRootStatus) +
+                "；Shizuku=" + describe(lastShizukuStatus)
+        )
         null
     }
 

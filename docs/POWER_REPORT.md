@@ -3,6 +3,7 @@
 > 版本：`versionName = "1.2.0"`，`versionCode = 2026100501`（对比基线 1.1.0 / 2026100500）
 > 机型与运行环境：见 §1.1（由用户自测表补齐整机口径）
 > 本报告的全部命令都在仓库根目录执行，可直接复制复现。
+> 后续版本增补：**§9 = 1.5.1**（权威存储读取修复 + 日志可分析性 + 日志页倒序），**§10 = 1.5.2**（Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + 卡顿 / 内存优化）。
 
 ## 0. 先讲清楚：这份报告证明了什么、没证明什么
 
@@ -1441,3 +1442,101 @@ bash _build.sh :app:assembleRelease --no-configuration-cache
   -Dorg.gradle.jvmargs="-Xmx1024m -XX:MaxMetaspaceSize=768m -XX:+UseSerialGC -Dfile.encoding=UTF-8" \
   -Dorg.gradle.configuration-cache.parallel=false
 ```
+
+---
+
+## 10. 1.5.2 增补（Shizuku 日志补全 + 日志页顺序切换 + 界面内制式切换 + 卡顿 / 内存优化）
+
+> 版本：`versionName = "1.5.2"`、`versionCode = 2026100600`（对比基线 1.5.1 / 2026100505）。
+> **先说清楚口径**：本节**没有任何真机 profiler 数据**（本轮无法采集 `dumpsys gfxinfo` / 内存快照前后对照），
+> 所有量级都是**按代码上限推算**或**机制级推断**，并逐条标注了推算依据。请把它当「预期量级」而不是「实测结果」读；
+> 真机验收步骤见 [`TESTING.md`](TESTING.md) §21。
+
+### 10.1 本轮要修的四件事
+
+| # | 用户可见现象 | 归因结论 |
+| --- | --- | --- |
+| 1 | Shizuku 通道下日志几乎空白（只剩一句 `false`） | 用户服务跑在独立进程 `com.katiusu.netpilot:np_service`（Shizuku 用 `app_process` 拉起），**没有 `Application`、没有本应用的 `Context`**，那边的 `WriteDiag` 只写进该进程内存，应用的 `LogStore`（日志页数据源）永远收不到 |
+| 2 | 「应该能在界面里切制式」，且实际内置制式远多于界面暴露的几个 | 功能页两处下拉只列了 `9 / 11 / 12 / 26(/27)` 几个值；实测 `core/mode/NetworkMode.kt` 定义 **0..33 共 34 种**，`NetworkModeBitmaskMapper.MAX_NETWORK_MODE = 33`，全部都在位掩码表内、都写得了 —— 缺的只是入口（源码里也**没有任何地方**提到过 37） |
+| 3 | 1.5.1 起界面变卡（1.5.0 正常） | 见 §10.2：1.5.1 的 UI 改动只有 2 个文件（`LogPage.kt` +182、`SettingsPage.kt` +30），真正的放大器是「日志条目变长 + 日志页倒序重写 + 导出」叠加两个 1.5.0 就存在的放大器 |
+| 4 | 后台内存占用偏高 | 见 §10.4：**没有泄漏**（无累积集合、缓冲上限固定），是「同一个 400/120 槽位里装的内容变长变多」+ Shizuku 远端缓冲 400 行白占 |
+
+### 10.2 「卡」的机制分析（只读侦察，未跑 profiler）
+
+侦察方式：`git diff ec76fbe 90b2709 --name-status`（1.5.0 → 1.5.1）+ 逐行阅读，未构建、未采样。
+
+- **1.5.1 改了什么**：23 个 M 文件里 UI 侧只有 `ui/screen/log/LogPage.kt`(+182) 与 `ui/screen/settings/SettingsPage.kt`(+30)；
+  `app/build.gradle.kts` 只动了 `versionCode` / `versionName`，**依赖与 Miuix / Compose 版本全未变化**。
+- **一行都没改的（排除嫌疑）**：`core/monitor/LogStore.kt`（最后改动 `e4a4568` = 1.2.0）、`MonitorPage.kt`、`MainActivity.kt`、
+  `ui/component/liquid/**`、`ui/util/**`、`core/monitor/**`（默认仍是 60 s 采样、120 s 冷却、简要日志模式）。
+- **放大链路**（两个 1.5.0 就存在，1.5.1 把单价放大一个数量级）：
+  1. `MainActivity.kt:413 beyondViewportPageCount = 1` → 当前页是 2/3/4 时，**日志页仍在组合状态**
+     （源码注释自己写明「切到别的标签页并不会取消这里的 LaunchedEffect」）；
+  2. `LogPage.kt:123` + `:131-136` 把 400 条日志读进 composition 作用域 → 任何一次 `LogStore.log()` 追加都让整个日志页失效。
+- **1.5.1 新增的三处叠加**：
+  - `LogPage.kt:136` 的 `.asReversed()`：追加变成**在列表头部插入**，而 `items(entries)` **没有 key**（索引即身份）
+    → 每次追加所有可见行索引整体位移、全部重组（1.5.0 是尾部追加，索引不变，只有新行重组）；
+  - `LogPage.kt:142-146` `LaunchedEffect(entries.size) { animateScrollToItem(1) }`：每来一条新日志都重启一次滚动动画，
+    用户手动上滑也会被拽回；
+  - 「导出文件」整条链在主线程：`buildFileText()`（实际被 400×2000 限住，约 80 万字符）+ `toByteArray(UTF_8)`
+    （中文 3 B/char → 最长约 240 万字节）+ `openOutputStream().write()`。
+- **单位收益最差的一处浪费**（与「卡」独立）：`TelephonyReflection.kt:431`（失败路径 `:492` 又来一次）
+  在**简要模式下也执行** `describeWriteMethods()` —— `stub.javaClass.methods` 全量数组 + 逐名 filter + 类型串拼接，
+  而紧跟着的 `detail(...)` 在简要模式下会直接 return，即这次求值**零收益**，只是让每次写入尝试（用户拨开关 + 后台自动降级）
+  白白多两次全量反射、并把字符串拼得更长。
+
+### 10.3 改动清单（C38 – C43）
+
+| 编号 | 改动 | 文件 |
+| --- | --- | --- |
+| C38 | 用户服务侧远端日志缓冲 + AIDL `drainDiag()` + 每次 binder 调用后取回；Shizuku 全链路（`probe` / `getCurrentNetworkMode` / `setNetworkMode` / `readAuthStore` / `writeAuthStore` / `getDefaultSlot` / `setDefaultSlot` / `activeSlots` / `pruneStaleProcesses` / `destroy`）补打点；`ControlManager.acquire()` 四条通道决策路径补打点 | `IShizukuController.aidl`、`WriteDiag.kt`、`ShizukuControllerService.kt`、`ShizukuController.kt`、`ControlManager.kt` |
+| C39 | 删除日志页「详细」筛选档；新增「正序 / 倒序」切换（Miuix `Sort` 图标），**默认正序** | `LogPage.kt`、`strings_monitor.xml`（zh/en） |
+| C40 | 功能页「策略」段新增「切换网络制式」入口，弹窗列出**全部 34 种**制式（按 5G/4G/3G/2G 分组，当前值带 `✓`），点按写入当前默认数据卡 | `FeaturesPage.kt`、`strings_np.xml`（zh/en） |
+| C41 | 日志 `LogEntry.seq` 稳定 key + 滚动「只在贴着最新端时跟随」+ `scrollToItem` 取代 `animateScrollToItem` + `derivedStateOf` 缓存筛选 + 导出改到 `Dispatchers.IO` | `LogStore.kt`、`LogPage.kt` |
+| C42 | Shizuku 远端缓冲 400 行 → 120 行；简要模式跳过 `describeWriteMethods()`；`explainNoRow` 整表枚举 30 秒记忆化 + 写后回读不再触发枚举 | `WriteDiag.kt`、`TelephonyReflection.kt`、`RootController.kt` |
+| C43 | 版本号 → `1.5.2` / `2026100600` | `app/build.gradle.kts` |
+
+**每处改动都带「为什么」注释**；判定语义、默认值、写入顺序（ITelephony → 权威存储 → settings）与写后回读校验一律未变。
+
+### 10.4 后台内存：量级推算（无 profiler）
+
+| 位置 | 机制 | 量级（按代码上限推算） | 本版动作 |
+| --- | --- | --- | --- |
+| `:np_service` 远端缓冲 | 最多行数 × 单行字符 | 改前 400 × 2000 字符 ≈ **≤1.6 MB（UTF-16）** 常驻在用户服务进程；实际远小于此（多数行几十字符） | 改 120 行 → 上限 ≈ **≤0.48 MB**，最坏情况省下约 1.1 MB，常态省得更少但方向确定 |
+| `LogStore` 环形缓冲 | 400 条 × 单条 ≤2000 字符 | **≤1.6 MB** 常驻（1.5.0 单条多为一句中文 30–80 字符 ≈ 30–60 KB，同槽位内容放大 10–30×） | **不改**（属「失败要留证据」的设计，改动会影响可诊断性） |
+| `LogStore` 落盘 | 最近 120 条拼 JSON 后 `commit()` | 120 × ≤2000 字符 ≈ **≤24 万字符**（1.5.0 ≈1–2 万） | **不改**（守护线程内，不阻塞主线程） |
+| 简要模式下的写入方法枚举 | `stub.javaClass.methods` 全量数组 + filter + 类型串拼接，每次写入尝试 2 次，结果只服务详细模式被丢弃 | 每次写入尝试省下 2 次全量反射 + 若干字符串分配 | C42 用 `if (WriteDiag.isVerbose)` 门控，**零行为变化** |
+| `siminfo` 整表枚举 | 读不到目标行时 fork 一次 `su -c content query`（子进程 + 百 ms 级），写后回读也会触发 | 每次「读不到」多一次 su fork；写路径每次都多一次 | C42 加 30 秒记忆化 + 写后回读传 `explain=false` |
+| 导出日志 | 主线程持有 String + byte[] | ≤80 万字符 String + ≤240 万字节数组**在主线程**存活到写完 | C41 移到 `Dispatchers.IO`（峰值不变，主线程不再承担） |
+
+**泄漏结论（明确）**：本版与 1.5.1 都**不存在内存泄漏** —— 没有累积集合，`LogStore` 缓冲上限固定 400 条、
+远端缓冲固定行数、`lastFailure` 是单值；「后台内存升高」的来源是槽位内**内容长度**上升，不是条目无界增长。
+
+### 10.5 量化对照（1.5.1 → 1.5.2，全部为推算 / 设计值）
+
+| 指标 | 1.5.1 | 1.5.2 | 依据 |
+| --- | --- | --- | --- |
+| Shizuku 通道下用户服务日志条数（可见于日志页） | **0**（只留应用进程自己的少数行） | 每次 binder 调用把该进程的 ≤120 行取回（实际通常个位数 ~ 数十行） | C38 设计：`drainDiag()` + 每次调用后 drain |
+| 日志页每次追加导致的重组行数 | 全部可见行（无 key，头部插入位移） | 只有新增行（稳定 key） | C41 `key = { it.seq }` |
+| 每条新日志触发的滚动动画次数 | 1 次无条件重启 | 0 次（除非用户本来就贴着最新端） | C41 跟随条件 + `scrollToItem` |
+| 界面内可切换制式数 | 0（功能页无入口；磁贴仅 4 种循环） | **34**（0..33 全部） | C40 + `NetworkMode.kt` / `NetworkModeBitmaskMapper.MAX_NETWORK_MODE = 33` |
+| 简短模式下每次写入的写入方法枚举次数 | 2 次 | 0 次 | C42 `WriteDiag.isVerbose` 门控 |
+| 「读不到 siminfo 行」时的整表枚举次数（60 秒内多次读） | 每次 1 次（含写后回读） | ≤2 次（30 秒记忆化；写后回读 0 次） | C42 `NO_ROW_MEMO_MS = 30_000L` |
+| 导出日志的主线程字节数 | ≤2.4 MB | 0（仅列表快照引用） | C41 `withContext(Dispatchers.IO)` |
+
+> 上面每一行都是**代码可复现的设计值或上限推算**，不是真机测量值。真机口径（PSS、janky frames）请按
+> [`TESTING.md`](TESTING.md) §21.4–§21.5 自测采集；本报告不宣称任何「省了百分之多少电」。
+
+### 10.6 产物与验收
+
+- 产物：`NetPilot-1.5.2-2026100600-release.apk`（**本版按用户要求只构建 release，不产出 debug 包**）。
+
+| 文件 | 大小（字节） | MD5 | SHA-256 |
+| --- | --- | --- | --- |
+| `NetPilot-1.5.2-2026100600-release.apk` | 33 283 737 | `f9d70f4d41ca9aba4a868573794ae396` | `336bda9711788187d543b916b131595852b591e1dbc8cd63ed24cbfcbe94f472` |
+
+- 构建命令：`bash _build.sh :app:assembleRelease --no-configuration-cache` → `BUILD SUCCESSFUL in 8m 22s`（44 tasks）。
+- release 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.3.0 以来同一把 key）。
+- 可覆盖安装 1.5.1（同一把 release key，versionCode 更高）；APK **只交付、不安装**。
+- 本次**未创建 GitHub Release**（按用户要求只提交并推送代码）。
+- 验收步骤： [`TESTING.md`](TESTING.md) §21.0–§21.6。

@@ -1,13 +1,28 @@
 package com.katiusu.netpilot.ui.screen.features
 
 import android.content.Intent
+import android.widget.Toast
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.katiusu.netpilot.R
+import com.katiusu.netpilot.core.NetPilot
+import com.katiusu.netpilot.core.mode.NetworkMode
 import com.katiusu.netpilot.core.monitor.MonitorSettings
 import com.katiusu.netpilot.core.tasker.TaskerGate
 import com.katiusu.netpilot.prefs.OptionSpec
@@ -16,6 +31,12 @@ import com.katiusu.netpilot.ui.component.pref.HookOptionsPage
 import com.katiusu.netpilot.ui.component.pref.HookSection
 import com.katiusu.netpilot.ui.screen.about.AboutActivity
 import com.katiusu.netpilot.ui.screen.datacard.DataCardActivity
+import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Text as MiuixText
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowDialog
 
 /**
  * 功能页：NetPilot 的全部可配置项。
@@ -34,6 +55,7 @@ fun FeaturesPageView(
     val context = LocalContext.current
     val specs = remember { featureSpecs() }
     val sections = remember(specs) { featureSections(specs) }
+    var showModePicker by remember { mutableStateOf(false) }
 
     HookOptionsPage(
         title = stringResource(R.string.tab_features),
@@ -46,13 +68,21 @@ fun FeaturesPageView(
                     context.startActivity(Intent(context, DataCardActivity::class.java))
                 KEY_ABOUT ->
                     context.startActivity(Intent(context, AboutActivity::class.java))
+                KEY_MODE_SWITCH -> showModePicker = true
             }
         },
     )
+
+    if (showModePicker) {
+        ModePickerDialog(onDismiss = { showModePicker = false })
+    }
 }
 
 private const val KEY_DATACARD_MANAGE = "np_datacard_manage"
 private const val KEY_ABOUT = "np_about"
+
+/** 1.5.2：手动切制式的入口键（34 种内置制式，见 [NetworkMode]）。 */
+private const val KEY_MODE_SWITCH = "np_mode_switch"
 
 private fun specByKey(specs: List<OptionSpec>, key: String): OptionSpec =
     specs.first { it.key == key }
@@ -80,6 +110,7 @@ private fun featureSections(specs: List<OptionSpec>): List<HookSection> = listOf
         titleRes = R.string.np_section_policy,
         specs = specsByKeys(
             specs,
+            KEY_MODE_SWITCH,
             MonitorSettings.KEY_DOWNGRADE_MODE,
             MonitorSettings.KEY_LOCK_LTE_MODE,
             MonitorSettings.KEY_COOLDOWN,
@@ -216,6 +247,15 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         summaryRes = R.string.np_fake5g_endc_summary,
         defaultBoolean = false,
         dependsOn = MonitorSettings.KEY_ENABLED,
+    ),
+    // 1.5.2：磁贴那边只循环 4 种常用制式（用户明确要求不动磁贴），所以把「能切到全部
+    // 内置制式」这件事做进界面：点开就是 34 种，按 5G/4G/3G/2G 分组。
+    // 它是**一次性手动写入**，不参与自动降级的判定，也不改降级目标（KEY_DOWNGRADE_MODE 管那个）。
+    OptionSpec(
+        key = KEY_MODE_SWITCH,
+        type = OptionType.ARROW,
+        titleRes = R.string.np_mode_switch_title,
+        summaryRes = R.string.np_mode_switch_summary,
     ),
     OptionSpec(
         key = MonitorSettings.KEY_DOWNGRADE_MODE,
@@ -366,3 +406,109 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         summaryRes = R.string.np_about_summary,
     ),
 )
+
+
+/**
+ * 1.5.2 新增：把内置的 34 种制式列出来，点一条就写一条。
+ *
+ * 为什么放在功能页而不是磁贴：磁贴的交互只有「循环下一个」，34 种循环一遍要点 34 次，
+ * 而且磁贴状态还得自己维护；用户的要求也是「把功能都做到界面里」。
+ *
+ * 写入仍然走 [NetPilot.setMode]，也就是和自动降级完全同一条特权链路（Root / Shizuku / 无通道
+ * 的判定、失败原因回传、日志落盘一律不变）；这里只负责把「要写哪个值」选出来。
+ * 写失败时不弹具体原因 —— 原因在日志页（`WriteDiag` 那套），对话框只提示去日志页看，
+ * 免得把几百字的原始输出塞进一个 Toast。
+ */
+@Composable
+private fun ModePickerDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var subId by remember { mutableStateOf(-1) }
+    var current by remember { mutableStateOf<Int?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val id = runCatching { NetPilot.defaultDataSubId() }.getOrDefault(-1)
+        subId = id
+        current = if (id >= 0) {
+            runCatching { NetPilot.currentModeValue(id) }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    val cur = current
+    val summaryText = when {
+        subId < 0 -> stringResource(R.string.np_mode_switch_none)
+        cur == null -> stringResource(R.string.np_mode_switch_unknown)
+        else -> stringResource(R.string.np_mode_switch_dialog_summary, NetworkMode.labelOf(cur))
+    }
+
+    WindowDialog(
+        show = true,
+        title = stringResource(R.string.np_mode_switch_dialog_title),
+        summary = summaryText,
+        onDismissRequest = onDismiss,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // 34 条一次铺开会顶到屏幕外，给内容一个高度上限 + 自己滚动。
+                .heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            NetworkMode.entries
+                .groupBy { it.gen }
+                .toList()
+                .sortedByDescending { it.first }
+                .forEach { (gen, modes) ->
+                    MiuixText(
+                        text = stringResource(genTitleRes(gen)),
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        style = MiuixTheme.textStyles.footnote2,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    modes.forEach { mode ->
+                        val selected = mode.value == cur
+                        TextButton(
+                            // 「勾」只标记当前值，给一个固定宽度前缀让未选中项也左对齐。
+                            text = (if (selected) "✓ " else "    ") + mode.label,
+                            onClick = {
+                                if (busy || subId < 0) return@TextButton
+                                busy = true
+                                scope.launch {
+                                    val ok = runCatching { NetPilot.setMode(subId, mode) }
+                                        .getOrDefault(false)
+                                    busy = false
+                                    if (ok) current = mode.value
+                                    Toast.makeText(
+                                        context,
+                                        context.getString(
+                                            if (ok) R.string.np_mode_switch_applied
+                                            else R.string.np_mode_switch_failed,
+                                            mode.label,
+                                        ),
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            },
+                            colors = if (selected) {
+                                ButtonDefaults.textButtonColorsPrimary()
+                            } else {
+                                ButtonDefaults.textButtonColors()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+        }
+    }
+}
+
+/** 制式分组标题（按 [NetworkMode.gen] 分四档）。 */
+private fun genTitleRes(gen: Int): Int = when (gen) {
+    5 -> R.string.np_mode_group_5g
+    4 -> R.string.np_mode_group_4g
+    3 -> R.string.np_mode_group_3g
+    else -> R.string.np_mode_group_2g
+}

@@ -30,9 +30,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,17 +54,24 @@ import com.katiusu.netpilot.ui.util.BlurredBar
 import com.katiusu.netpilot.ui.util.blurSource
 import com.katiusu.netpilot.ui.util.pageScrollModifiers
 import com.katiusu.netpilot.ui.util.rememberBlurState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text as MiuixText
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Sort
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
 
@@ -90,9 +99,20 @@ private enum class LogFilter(val labelRes: Int) {
     ALL(R.string.log_filter_all),
     WARN_UP(R.string.log_filter_warn),
     ERROR_ONLY(R.string.log_filter_error),
+}
 
-    /** 只看 DEBUG：也就是「详细日志模式」记下的逐步/逐候选原始输出。 */
-    DETAIL_ONLY(R.string.log_filter_detail),
+/**
+ * 日志的显示顺序（1.5.2 新增）。
+ *
+ * 为什么替掉原来那一档「详细」筛选：详细/简要的差别是「**记录什么**」，它由设置页的开关决定，
+ * 在这里再筛一次只会让人误以为「日志丢了」；日志页真正需要的开关是「先看旧还是先看新」。
+ */
+private enum class LogOrder(val labelRes: Int) {
+    /** 旧 → 新（默认）：新日志追加在底部，和写入顺序一致。 */
+    ASC(R.string.log_order_asc),
+
+    /** 新 → 旧：排查时先看「刚刚发生了什么」。 */
+    DESC(R.string.log_order_desc),
 }
 
 /**
@@ -102,8 +122,8 @@ private enum class LogFilter(val labelRes: Int) {
  * `mutableStateListOf`，遍历它本身就会在日志变化时触发重组；后者是取一次快照，
  * 页面会一直停在旧内容上。
  *
- * 显示顺序是**倒序**（新的在最上面），因为排查时先要看的是「刚刚发生了什么」；
- * 导出（剪贴板 / 分享 / 文件）仍旧按时间正序，读起来才顺。
+ * 显示顺序可在「正序（旧→新，默认）」与「倒序（新→旧）」之间切换；无论界面怎么排，
+ * 导出（剪贴板 / 分享 / 文件）都固定按时间正序，读起来才顺。
  *
  * @param isBlurEnabled 是否启用顶栏模糊。
  * @param extraBottomPadding 额外的底部留白。
@@ -123,25 +143,59 @@ fun LogPageView(
     val allEntries = LogStore.entries
 
     var filter by remember { mutableStateOf(LogFilter.ALL) }
+
+    // 1.5.2：默认正序（旧→新）—— 与 LogStore 的追加顺序一致；倒序留给排查场景。
+    var order by remember { mutableStateOf(LogOrder.ASC) }
     var showClearDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
-    // 这里刻意不用 remember { }：日志是 mutableStateListOf，用 remember 会把筛选结果缓存住，
-    // 键不变就不会重算，新日志永远进不了列表。直接每次重组重算，400 条的上限完全扛得住。
-    val entries = when (filter) {
-        LogFilter.ALL -> allEntries.toList()
-        LogFilter.WARN_UP -> allEntries.filter { it.level >= LogLevel.WARN }
-        LogFilter.ERROR_ONLY -> allEntries.filter { it.level == LogLevel.ERROR }
-        LogFilter.DETAIL_ONLY -> allEntries.filter { it.level == LogLevel.DEBUG }
-    }.asReversed()
-    // 1.5.1：显示改成倒序（新的在最上面）。底层 LogStore.entries 仍然是追加式的旧→新，
-    // 只在这里翻一次，所以过滤、导出、落盘的语义都没动。
+    // 1.5.2：改成 derivedStateOf —— 它仍然盯着 allEntries（mutableStateListOf），新日志照样进列表，
+    // 但把「400 条过滤」的结果缓存住：只有日志或筛选档真的变了才重算。切显示顺序、开关确认框
+    // 这类与筛选无关的重组不再重跑一遍过滤。
+    // 注意不能写成 remember(allEntries.size) { }：满 400 条后「追加一条 + 丢最旧一条」尺寸不变，
+    // 那样会漏掉更新。
+    val filtered by remember(filter) {
+        derivedStateOf {
+            when (filter) {
+                LogFilter.ALL -> allEntries.toList()
+                LogFilter.WARN_UP -> allEntries.filter { it.level >= LogLevel.WARN }
+                LogFilter.ERROR_ONLY -> allEntries.filter { it.level == LogLevel.ERROR }
+            }
+        }
+    }
+    // 底层 LogStore.entries 始终是追加式的旧→新；这里只按显示顺序翻一次，
+    // 所以过滤、导出、落盘的语义都没有动。
+    val entries = when (order) {
+        LogOrder.ASC -> filtered
+        LogOrder.DESC -> filtered.asReversed()
+    }
 
-    // 有新日志就停在顶部。列表结构是「1 个头部 item + N 个日志 item」，
-    // 倒序之后最新的一条正好是第 1 号 item。
-    LaunchedEffect(entries.size) {
+    // 列表结构是「1 个头部 item + N 个日志 item」：正序时最新的在最后（第 entries.size 号），
+    // 倒序时最新的在最前（第 1 号）。
+    //
+    // 1.5.2 为什么拆成两段、并且不再无条件做动画：
+    // 旧写法每来一条新日志就重启一次滚动动画 —— 用户在往上翻旧日志时会被反复拽回最新一条；
+    // 更糟的是 LogPage 在相邻标签页也处于组合状态（MainActivity 的 beyondViewportPageCount），
+    // 后台日志一来就会在**看不见的列表**上跑一次动画。现在：切顺序必定跳到最新端；只是新增
+    // 日志时，只有用户本来就停在最新端附近才跟过去。用 scrollToItem 而不是 animateScrollToItem，
+    // 这一跳不需要动画，也就省掉了「每来一条日志就创建一次动画」的开销。
+    LaunchedEffect(order) {
         if (entries.isNotEmpty()) {
-            listState.animateScrollToItem(1)
+            listState.scrollToItem(if (order == LogOrder.ASC) entries.size else 1)
+        }
+    }
+    LaunchedEffect(entries.size) {
+        if (entries.isEmpty()) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val atNewestEnd = if (order == LogOrder.ASC) {
+            info.visibleItemsInfo.isEmpty() ||
+                (info.visibleItemsInfo.lastOrNull()?.index ?: 0) >= info.totalItemsCount - 2
+        } else {
+            (info.visibleItemsInfo.firstOrNull()?.index ?: 0) <= 1
+        }
+        if (atNewestEnd) {
+            listState.scrollToItem(if (order == LogOrder.ASC) entries.size else 1)
         }
     }
 
@@ -153,11 +207,22 @@ fun LogPageView(
     fun oneLine(entry: LogEntry): String =
         entry.timeText() + " " + entry.level.name + " " + entry.tag + ": " + entry.message
 
-    /** 拼一份纯文本，供剪贴板与分享共用（时间正序）。 */
-    fun buildText(maxChars: Int = MAX_EXPORT_CHARS): String {
+    /**
+     * 时间正序的一份**独立快照**（界面可能被切成倒序，导出的文本固定按时间顺序更好读）。
+     *
+     * 1.5.2：文件导出搬到了 IO 线程，所以必须先在主线程把快照取下来 —— 不能在别的线程上
+     * 一边读 Compose 状态、一边拼几十万字符的文本。
+     */
+    fun chronological(): List<LogEntry> =
+        if (order == LogOrder.ASC) entries.toList() else entries.asReversed().toList()
+
+    /** 拼一份纯文本，供剪贴板、分享与文件导出共用（[list] 必须已是时间正序）。 */
+    fun buildText(
+        maxChars: Int = MAX_EXPORT_CHARS,
+        list: List<LogEntry> = chronological(),
+    ): String {
         val sb = StringBuilder()
-        // 界面是倒序（新→旧），但导出的文本按时间顺序（旧→新）更好读，这里翻回来一次。
-        for (e in entries.asReversed()) {
+        for (e in list) {
             sb.append(oneLine(e)).append('\n')
             if (sb.length > maxChars) break
         }
@@ -177,18 +242,18 @@ fun LogPageView(
      * 为什么头部要带这些：导出的文件会被贴到别处（issue、聊天窗口）看，
      * 「简要模式」四个字能立刻说明「为什么没有逐步过程」—— 免得读的人以为日志被截断了。
      */
-    fun buildFileText(): String {
+    fun buildFileTextFor(list: List<LogEntry>, filterLabel: String): String {
         val sb = StringBuilder()
         sb.append("# NetPilot 运行日志\n")
         sb.append("# 导出时间：")
             .append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
             .append('\n')
         sb.append("# 日志模式：").append(context.getString(modeLabelRes())).append('\n')
-        sb.append("# 界面筛选：").append(context.getString(filter.labelRes))
-            .append("；本次导出 ").append(entries.size).append(" 条\n")
+        sb.append("# 界面筛选：").append(filterLabel)
+            .append("；本次导出 ").append(list.size).append(" 条\n")
         sb.append("# 说明：简要模式含结论、失败原因与失败时系统返回的原始值；")
             .append("详细模式另含逐候选、逐步的完整原始输出。\n\n")
-        sb.append(buildText(MAX_FILE_CHARS))
+        sb.append(buildText(MAX_FILE_CHARS, list))
         return sb.toString()
     }
 
@@ -242,21 +307,36 @@ fun LogPageView(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         if (uri != null) {
-            val result = runCatching {
-                val bytes = buildFileText().toByteArray(Charsets.UTF_8)
-                val stream = context.contentResolver.openOutputStream(uri)
-                    ?: error("openOutputStream 返回 null")
-                stream.use { it.write(bytes) }
-            }
-            if (result.isSuccess) {
-                toast(context.getString(R.string.log_toast_exported, uri.lastPathSegment.orEmpty()))
-            } else {
-                toast(
-                    context.getString(
-                        R.string.log_toast_export_failed,
-                        result.exceptionOrNull()?.message.orEmpty(),
+            // 1.5.2 性能修复：这一步原来是**主线程**上「拼文本（详细日志下可达几十万字符）
+            // → 编码成 UTF-8 字节数组 → 写文件」，几十万字符的中文编码就是几 MB 的临时数组，
+            // 卡住界面几百毫秒也会把内存峰值顶上去。现在主线程只取一份快照，剩下的在 IO 线程做。
+            val snapshot = chronological()
+            val filterLabel = context.getString(filter.labelRes)
+            scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val bytes = buildFileTextFor(snapshot, filterLabel)
+                            .toByteArray(Charsets.UTF_8)
+                        val stream = context.contentResolver.openOutputStream(uri)
+                            ?: error("openOutputStream 返回 null")
+                        stream.use { it.write(bytes) }
+                    }
+                }
+                if (result.isSuccess) {
+                    toast(
+                        context.getString(
+                            R.string.log_toast_exported,
+                            uri.lastPathSegment.orEmpty(),
+                        )
                     )
-                )
+                } else {
+                    toast(
+                        context.getString(
+                            R.string.log_toast_export_failed,
+                            result.exceptionOrNull()?.message.orEmpty(),
+                        )
+                    )
+                }
             }
         }
     }
@@ -330,7 +410,45 @@ fun LogPageView(
                         }
                         Card(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                             Column {
-                                // 四档横排：窄屏放不下，所以这一行可以横向滚动（别让「详细」被挤掉）。
+                                // 显示顺序切换：图标用 Miuix 图标库里的 Sort，文字显示当前档位，点按即切换。
+                                // 单独占一行、不跟筛选挤在横向滚动里 —— 它是「怎么看」，不是「看什么」。
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    IconButton(
+                                        onClick = {
+                                            order = if (order == LogOrder.ASC) {
+                                                LogOrder.DESC
+                                            } else {
+                                                LogOrder.ASC
+                                            }
+                                        },
+                                    ) {
+                                        Icon(
+                                            imageVector = MiuixIcons.Sort,
+                                            contentDescription = stringResource(
+                                                R.string.log_order_line,
+                                                stringResource(order.labelRes),
+                                            ),
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    MiuixText(
+                                        text = stringResource(
+                                            R.string.log_order_line,
+                                            stringResource(order.labelRes),
+                                        ),
+                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                        style = MiuixTheme.textStyles.footnote2,
+                                    )
+                                }
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                )
+                                // 三档横排：窄屏放不下，所以这一行可以横向滚动。
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -417,7 +535,7 @@ fun LogPageView(
                         )
                     }
                 } else {
-                    items(entries) { entry ->
+                    items(items = entries, key = { it.seq }) { entry ->
                         LogRow(entry = entry, onClick = { copyOne(entry) })
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     }

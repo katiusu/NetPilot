@@ -140,7 +140,9 @@
     <string name="log_filter_all">全部</string>
     <string name="log_filter_warn">警告以上</string>
     <string name="log_filter_error">仅错误</string>
-    <string name="log_filter_detail">详细</string>
+    <string name="log_order_asc">正序（旧→新）</string>
+    <string name="log_order_desc">倒序（新→旧）</string>
+    <string name="log_order_line">显示顺序：%1$s（点按切换）</string>
     <string name="log_empty">暂无日志</string>
     <string name="log_empty_filtered">当前筛选条件下没有日志</string>
     <string name="log_count">共 %1$d 条（内存里最多保留 400 条，超出会丢掉最旧的）</string>

@@ -428,7 +428,14 @@ object TelephonyReflection {
             WriteDiag.detail("$caller 目标 subId=$subId mode=$networkMode -> 位掩码=$networkTypes")
             // 详细日志：先把「本机 ITelephony 上到底有哪几条写入方法」摊开。定制 ROM 上最常见的
             // 失败形态就是方法被删或被改写，这一行是判断「该不该走这条路」的第一手依据。
-            WriteDiag.detail("$caller 本机 ITelephony 写入方法枚举：" + describeWriteMethods())
+            //
+            // 1.5.2 性能修复：describeWriteMethods() 会做一次全量反射（`stub.javaClass.methods`
+            // 整个数组 + 逐名比对 + 类型串拼接）。原来它无条件求值，而紧跟其后的 detail(...) 在
+            // 简要模式（默认）下**直接丢弃** —— 等于每次写入尝试都白算一次、白分配一次。
+            // 现在只在「真的会输出这一行」时才构造它；简要模式下这一行本来就不存在，行为不变。
+            if (WriteDiag.isVerbose) {
+                WriteDiag.detail("$caller 本机 ITelephony 写入方法枚举：" + describeWriteMethods())
+            }
             // 逐候选的追踪只在详细模式开启时才构造；常态下 trace 为 null，零额外开销。
             val trace: ((String) -> Unit)? = if (WriteDiag.isVerbose) { { WriteDiag.detail(it) } } else null
             // 1.5.1 的分工：**过程**（哪一条策略怎么失败、被谁拒、原文是什么）归详细开关管；

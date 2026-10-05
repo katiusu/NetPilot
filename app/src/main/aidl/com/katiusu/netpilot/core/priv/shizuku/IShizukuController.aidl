@@ -13,5 +13,11 @@ interface IShizukuController {
     // 用单行编码字符串而不是自定义 Parcelable：AIDL 面越小，越不容易因为签名漂移整条通道失效。
     String readAuthStore(int subId);
     String writeAuthStore(int subId, long networkTypes);
+    // 1.5.2 新增：取走用户服务进程攒下的诊断行。
+    // 为什么必须回传：用户服务跑在独立进程（Shizuku 用 app_process 拉起的 :np_service）里，
+    // 那边没有 LogStore 的 Context，诊断写得再细也到不了应用进程的日志页 —— 于是「Shizuku 模式下
+    // 切制式失败」在界面上永远只有一句 false。协议与 root 通道的 "DIAG " stdout 行一致：
+    // 仍然是单行编码字符串（Binder 字符串 + 行内分隔符），不引入自定义 Parcelable。
+    String drainDiag();
     void destroy();
 }
