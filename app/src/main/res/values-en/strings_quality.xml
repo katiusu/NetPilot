@@ -23,9 +23,11 @@
     <!-- ============ Criteria (values currently in effect) ============ -->
     <string name="q_section_criteria">Criteria (values in effect)</string>
     <string name="q_criteria_hint">These are the rules actually in effect. They follow any change on the Features page immediately, and can only be viewed, not edited.</string>
-    <string name="q_criteria_full_bar_line">① Fake full bars downgrade: RSRP ≥ %1$d dBm and (Ping &gt; %2$d ms or SINR &lt; %3$d dB%4$s)</string>
+    <string name="q_criteria_full_bar_line">① Fake full bars downgrade%5$s: RSRP ≥ %1$d dBm and (Ping &gt; %2$d ms or SINR &lt; %3$d dB%4$s)</string>
+    <string name="q_criteria_full_bar_nr_only"> (5G / 5G+ only)</string>
     <string name="q_criteria_full_bar_ping_fail">, or ping fails completely</string>
     <string name="q_criteria_full_bar_rule">Applies when: RSRP is above %1$d dBm, that is, the signal bars look full. Criteria: Ping &gt; %2$d ms or SINR &lt; %3$d dB — matching either one counts as full bars without quality, and drops to 4G.</string>
+    <string name="q_criteria_nr_only_rule">Why 5G / 5G+ only: on 4G / 3G / 2G, ping easily runs high, and the downgrade target is 4G itself — at the radio level the switch changes nothing, yet the criteria stay satisfied, so the recovery counter never fills up and the device stays locked on 4G. Turn off &quot;Judge fake full bars on 5G / 5G+ only&quot; to go back to the old behaviour.</string>
     <string name="q_criteria_weak_line">② Weak signal downgrade: RSRP &lt; %1$d dBm</string>
     <string name="q_criteria_weak_off_line">② Weak signal downgrade: off, not part of the decision</string>
     <string name="q_criteria_rsrp_order_hint">The two RSRP thresholds are mutually exclusive: the weak signal threshold must be at least 1 dBm below the strong signal threshold. If the values do not satisfy this, the sliders keep your numbers while the effective values converge automatically — the values shown on this page are the ones in effect.</string>

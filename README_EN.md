@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.3.0** (`versionCode 2026100502`) |
+| Version | **1.4.0** (`versionCode 2026100503`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -45,10 +45,11 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 Two **independent** rules, and every threshold is adjustable in the app (the monitor page always renders the *effective* values, never a hardcoded string):
 
 ```
-Rule 1 — "fake full bar":
+Rule 1 — "fake full bar" (5G / 5G+ only since 1.4.0):
+  ⓪ camped on 5G (NR reported) or 5G+ (LTE reported but NR cells visible)  ← new gate
   ① RSRP >= strong threshold (default -85 dBm)     ← looks strong
   ② AND any of:
-       ping  > ping threshold (default 200 ms)
+       ping  > ping threshold (default 300 ms)
        SINR  < SINR threshold (default 0 dB)
        ping  fails entirely (separate switch, off by default)
   → downgrade
@@ -58,7 +59,7 @@ Rule 2 — "very weak signal" (separate switch, on by default):
   → downgrade (strength only, ignores ping/SINR)
 ```
 
-State machine: after a downgrade it enters a cooldown (default 60 s, adjustable down to 30 s); once the cooldown ends, **2 consecutive** healthy rounds restore the original mode; **2 consecutive** no-network rounds roll back immediately and leave auto mode; the sampling interval defaults to 60 s.
+State machine: after a downgrade it enters a cooldown (default 120 s, adjustable down to 30 s); once the cooldown ends, **2 consecutive** healthy rounds restore the original mode; **2 consecutive** no-network rounds roll back immediately and leave auto mode; the sampling interval defaults to 60 s.
 
 Ping is measured as **HTTP time-to-first-byte** against `http://www.bing.com/` by default, falling back to `cn.bing.com` → Baidu → vendor connectivity-check endpoints, and the UI shows the **exact failure reason**.
 
@@ -161,12 +162,35 @@ See **[`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)** for before/after numbers,
 | Change | Before | After | What you notice |
 |---|---|---|---|
 | Tasker / Locale interface | Three components always enabled; every Tasker command cold-started the app process | **Off by default**; flipping the switch disables those components at the system level, so broadcasts are never delivered | If you don't use automation you're no longer woken by Tasker; if you do, turn it on once in Features |
-| Sampling interval | Always the configured value | Shrinks by 20% per round while readings stay near a threshold (at most down to half), and snaps back as soon as they move away | Faster reactions on marginal signal; Features gains an "Adaptive sampling interval" switch and an "Adaptive sensitivity" slider |
+| Sampling interval | Always the configured value | Shrinks by the **adaptive shrink factor** per round while readings stay near a threshold (0.85 = 15% since 1.4.0, adjustable on the Features page; at most down to half), and snaps back as soon as they move away | Faster reactions on marginal signal; Features gains an "Adaptive sampling interval" switch plus "Adaptive sensitivity" and "Adaptive shrink factor" sliders |
 | Keep-alive start failure | A single vague "keep-alive broadcast failed", plus a misleading "service started" line right after it | `ForegroundServiceStartNotAllowedException` is detected separately and logged with the cause and the next step | When keep-alive silently fails, the log now says it is the battery-optimization setting |
 
 **Adaptive sampling changes the cadence only, never the decision**: threshold comparisons still use the raw readings, and `isNearThreshold()` has no caller on any decision path — it cannot change a downgrade or recovery outcome. The full write-up, plus one candidate that was investigated and *rejected as unsafe*, is in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §6.
 
 **New settings (1.3.0)**: `np_tasker_enabled` (**off**), `np_fake5g_adaptive_interval` (**on**), `np_fake5g_adaptive_margin` (**10 dBm**). No existing threshold or interval default was touched.
+
+### Fake full bars are 5G / 5G+ only + default-value changes (1.4.0)
+
+**What this fixes**: on 4G, as soon as the bars look full (RSRP above −85 dBm) but ping runs high, the older build declared "fake 5G full bars" and downgraded — except the downgrade target **is 4G**, so nothing changes at the radio level; the only effect is closing the 5G door. Worse, once downgraded the criteria **still hold**, so the recovery counter never fills up and the device stays locked on 4G, escaping only after two rounds with no network at all. That is the full cause chain behind "back on 4G it keeps triggering fake full bars".
+
+| Change | Before | After | What you notice |
+|---|---|---|---|
+| Where the fake-full-bar rule applies | Judged on any network type | **Judged only while camped on 5G / 5G+ (NSA dual connectivity)**; no longer on 4G / 3G / 2G | No more unexplained downgrades on 4G, and no more getting stuck there; judgements on real 5G are unchanged |
+| Ping threshold default | 200 ms | **300 ms** | The reading is a full first-byte time including DNS and connect, not a radio RTT; 200 ms was tight for a 4G cell edge |
+| Downgrade cooldown default | 60 s | **120 s** | Halves the window affected by a single mis-judgement; 5G⇄4G stops flip-flopping |
+| Adaptive sensitivity default | 10 dBm | **20 dBm** | Starts sampling more densely earlier |
+| Adaptive shrink factor | Hard-coded 20% | **15% (0.85) by default, adjustable** | Turn it down to react faster, up to save more power |
+| Why-downgraded display | Only "RSRP full but ping high" | States **which network type it was on**; when the gate blocks it, says plainly "Ping and SINR are not checked this round" | You can tell at a glance whether a round was judged on 4G or 5G |
+
+**How "5G / 5G+" is recognised**: `5G` = the data network reports NR directly; `5G+` = the data network still reports LTE but NR cells are visible in the cell list (NSA / EN-DC). **`4G+` (LTE carrier aggregation) does not count as 5G.**
+
+**This gate is on by default and can be turned off** — Features → "Judge fake full bars on 5G / 5G+ only". Turning it off restores the exact 1.3.0 behaviour. You may need to turn it off if your device cannot see NR cells on NSA (missing Precise Location permission), in which case even real 5G would be blocked.
+
+**Defaults apply only to sliders you never touched**: these read "stored value ?: default", so only an actual drag is remembered. Users who never touched them get the new defaults immediately; anyone who did keeps their own numbers — an upgrade never silently overwrites a value you set.
+
+**What was deliberately not changed**: the weak-signal rule (downgrade below −110 dBm) is **untouched** — it is mutually exclusive with the fake-full-bar rule (one needs RSRP > −85, the other < −110), so its outcome is bit-for-bit identical. The per-branch proof is in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §7.
+
+**New settings (1.4.0)**: `np_fake5g_nr_only` (**on**), `np_fake5g_adaptive_step` (**0.85**); `np_fake5g_ping` (**300 ms**), `np_fake5g_cooldown` (**120 s**), `np_fake5g_adaptive_margin` (**20 dBm**).
 
 ---
 

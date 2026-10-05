@@ -33,6 +33,13 @@ internal fun MonitorCriteriaLines(thresholds: DowngradeThresholds) {
             } else {
                 ""
             },
+            // 制式门控是判定前提的一部分，必须写在规则主句里：
+            // 只看后面的 Ping / SINR 会以为它在任何制式下都生效。
+            if (thresholds.fakeFullBarOnNrOnly) {
+                stringResource(R.string.q_criteria_full_bar_nr_only)
+            } else {
+                ""
+            },
         ),
         emphasized = true,
     )
@@ -44,6 +51,11 @@ internal fun MonitorCriteriaLines(thresholds: DowngradeThresholds) {
             thresholds.sinrThreshold,
         ),
     )
+    // 只在门控开着时解释一次「为什么限 5G / 5G+」：关掉后这条限制不存在，
+    // 再解释就会变成误导。
+    if (thresholds.fakeFullBarOnNrOnly) {
+        MonitorNoteLine(text = stringResource(R.string.q_criteria_nr_only_rule))
+    }
     MonitorNoteLine(
         text = if (thresholds.downgradeOnWeakSignal) {
             stringResource(

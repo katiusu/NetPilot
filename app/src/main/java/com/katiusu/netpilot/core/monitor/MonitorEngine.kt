@@ -81,7 +81,7 @@ object MonitorEngine {
             }
             publish(e)
             // 连续「读数靠近门限」的轮数。0 = 用配置的间隔；每多靠近一轮就乘一次
-            // ADAPTIVE_STEP_FACTOR，任何一轮不靠近立刻归零。
+            // thresholds.adaptiveStepFactor（默认 0.85，可在功能页调），任何一轮不靠近立刻归零。
             var nearStreak = 0
             while (isActive) {
                 val t = MonitorSettings.thresholds()
@@ -132,8 +132,8 @@ object MonitorEngine {
     /**
      * 把「连续靠近门限的轮数」换算成本轮实际等待的毫秒数。
      *
-     * 每多靠近一轮就乘一次 [MonitorSettings.ADAPTIVE_STEP_FACTOR]（0.8），但**最多只缩到
-     * 配置值的一半**（[MonitorSettings.ADAPTIVE_MIN_FACTOR]）。为什么必须有下限：判定阈值是
+     * 每多靠近一轮就乘一次 [DowngradeThresholds.adaptiveStepFactor]（默认 0.85，可调），
+     * 但**最多只缩到配置值的一半**（[MonitorSettings.ADAPTIVE_MIN_FACTOR]）。为什么必须有下限：判定阈值是
      * 固定的，采样再密也不会让读数更准，反而让 modem 查询与 HTTP 探测本身变成耗电源 ——
      * 自适应可以变快，但不能变成「一直快」。
      *
@@ -145,8 +145,10 @@ object MonitorEngine {
         if (!t.adaptiveIntervalEnabled || nearStreak <= 0) {
             return base.coerceIn(15, 3600) * 1000L
         }
+        // 倍率来自用户配置（1.4.0 起可调），下限仍用常量夹住：
+        // 无论用户把倍率调多小，间隔都不会缩到配置值一半以下。
         val factor = Math.pow(
-            MonitorSettings.ADAPTIVE_STEP_FACTOR.toDouble(),
+            t.adaptiveStepFactor.toDouble(),
             nearStreak.toDouble(),
         ).coerceAtLeast(MonitorSettings.ADAPTIVE_MIN_FACTOR.toDouble())
         return (base * factor).toInt().coerceIn(15, 3600) * 1000L

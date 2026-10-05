@@ -70,6 +70,7 @@ private fun featureSections(specs: List<OptionSpec>): List<HookSection> = listOf
             MonitorSettings.KEY_SINR,
             MonitorSettings.KEY_PING,
             MonitorSettings.KEY_PING_FAIL,
+            MonitorSettings.KEY_NR_ONLY,
             MonitorSettings.KEY_WEAK_SIGNAL,
             MonitorSettings.KEY_WEAK_RSRP,
             MonitorSettings.KEY_TOGGLE_ENDC,
@@ -93,6 +94,7 @@ private fun featureSections(specs: List<OptionSpec>): List<HookSection> = listOf
             MonitorSettings.KEY_INTERVAL,
             MonitorSettings.KEY_ADAPTIVE_INTERVAL,
             MonitorSettings.KEY_ADAPTIVE_MARGIN,
+            MonitorSettings.KEY_ADAPTIVE_STEP,
             MonitorSettings.KEY_AUTO_START,
         ),
     ),
@@ -169,6 +171,17 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         titleRes = R.string.np_fake5g_ping_fail_title,
         summaryRes = R.string.np_fake5g_ping_fail_summary,
         defaultBoolean = false,
+        dependsOn = MonitorSettings.KEY_ENABLED,
+    ),
+    // 制式门控：修的是「真 4G 上 Ping 偏高 → 被判假满格 → 降级目标又是 4G →
+    // 射频侧毫无变化、恢复计数却永远涨不上去 → 永久锁在 4G」这条链路。
+    // 默认值只从 MonitorSettings 取，不在这里写死。
+    OptionSpec(
+        key = MonitorSettings.KEY_NR_ONLY,
+        type = OptionType.SWITCH,
+        titleRes = R.string.np_fake5g_nr_only_title,
+        summaryRes = R.string.np_fake5g_nr_only_summary,
+        defaultBoolean = MonitorSettings.DEFAULT_FAKE5G_NR_ONLY,
         dependsOn = MonitorSettings.KEY_ENABLED,
     ),
     OptionSpec(
@@ -308,6 +321,22 @@ internal fun featureSpecs(): List<OptionSpec> = listOf(
         sliderDecimals = 0,
         sliderUnitRes = R.string.np_unit_dbm,
         sliderValueLabelRes = R.string.np_adaptive_margin_title,
+        dependsOn = MonitorSettings.KEY_ADAPTIVE_INTERVAL,
+    ),
+    // 「缩多快」与「缩到多低」是两件事：下限固定在 ADAPTIVE_MIN_FACTOR，
+    // 每轮的缩短比例交给这个滑块。默认 0.85（= 每轮缩 15%）。
+    OptionSpec(
+        key = MonitorSettings.KEY_ADAPTIVE_STEP,
+        type = OptionType.SLIDER,
+        titleRes = R.string.np_adaptive_step_title,
+        summaryRes = R.string.np_adaptive_step_summary,
+        defaultFloat = MonitorSettings.DEFAULT_ADAPTIVE_STEP,
+        sliderMin = MonitorSettings.ADAPTIVE_STEP_MIN,
+        sliderMax = MonitorSettings.ADAPTIVE_STEP_MAX,
+        sliderStep = MonitorSettings.ADAPTIVE_STEP_STEP,
+        sliderDecimals = 2,
+        sliderUnitRes = R.string.np_unit_times,
+        sliderValueLabelRes = R.string.np_adaptive_step_title,
         dependsOn = MonitorSettings.KEY_ADAPTIVE_INTERVAL,
     ),
     OptionSpec(

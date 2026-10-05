@@ -57,9 +57,11 @@
     <string name="np_fake5g_sinr_title">SINR quality threshold</string>
     <string name="np_fake5g_sinr_summary">In dB (default 0). Only checked when the signal is strong: SINR below it counts as poor quality, and higher values are stricter. If SINR cannot be read, this criterion is skipped and Ping is used instead</string>
     <string name="np_fake5g_ping_title">Ping limit</string>
-    <string name="np_fake5g_ping_summary">In ms (default 200). Only checked when the signal is strong: Ping above it counts as poor quality, and lower values are stricter and trigger more easily</string>
+    <string name="np_fake5g_ping_summary">In ms (default 300). Only checked when the signal is strong: Ping above it counts as poor quality, and lower values are stricter and trigger more easily. This reading covers the whole first-byte path including DNS and connection setup rather than radio RTT, so the default is deliberately generous</string>
     <string name="np_fake5g_ping_fail_title">Count complete ping failure as poor</string>
     <string name="np_fake5g_ping_fail_summary">Off by default. On: if every ping fails it also counts as poor quality and still downgrades; Off: logged only, no downgrade. Enable it only if probes often fail completely</string>
+    <string name="np_fake5g_nr_only_title">Judge fake full bars on 5G / 5G+ only</string>
+    <string name="np_fake5g_nr_only_summary">On by default. On: Ping / SINR only decide &quot;fake full bars&quot; while camped on 5G or 5G+ (NSA dual connectivity); on 4G / 3G / 2G they no longer decide. Off: the old behaviour, where Ping / SINR decide on any network type. Why it is on by default: on 4G, ping easily exceeds the limit, and the downgrade target is 4G itself — at the radio level the switch changes nothing, yet the criteria stay satisfied, so the recovery counter never fills up and the device gets locked on 4G for good. Trade-off: if your device cannot see NR cells on NSA (missing Precise Location permission), 5G may stop triggering a downgrade — turn this switch off if that happens</string>
     <string name="np_fake5g_weak_signal_title">Also downgrade on weak signal</string>
     <string name="np_fake5g_weak_signal_summary">On by default. On: when RSRP falls below the weak signal threshold below, it switches to 4G; Off: weak signal is only recorded and the network mode stays unchanged</string>
     <string name="np_fake5g_weak_rsrp_title">RSRP weak signal threshold</string>
@@ -71,7 +73,7 @@
     <string name="np_fake5g_lock_lte_mode_title">Restore target mode</string>
     <string name="np_fake5g_lock_lte_mode_summary">Defaults to follow carrier. The network mode written back when the cooldown ends and the network is restored; it is derived automatically from the SIM card as 5G auto, so swapping SIMs needs no changes. Choosing the wrong one may leave 5G unavailable after restoring</string>
     <string name="np_fake5g_cooldown_title">Downgrade cooldown</string>
-    <string name="np_fake5g_cooldown_summary">In s (default 60 = 1 minute). No restore is attempted for this long after a downgrade, so it does not bounce straight back to 5G; a longer cooldown saves more power but brings 5G back more slowly</string>
+    <string name="np_fake5g_cooldown_summary">In s (default 120 = 2 minutes). No restore is attempted for this long after a downgrade, so it does not bounce straight back to 5G; a longer cooldown saves more power but brings 5G back more slowly</string>
     <string name="np_fake5g_recovery_title">Healthy rounds required to restore</string>
     <string name="np_fake5g_recovery_summary">In rounds (default 2). After the cooldown ends, this many consecutive healthy rounds are required before restoring; a larger value is more stable but slower, while 1 lets a single jitter trick it back to 5G</string>
     <string name="np_fake5g_no_net_rollback_title">No-network rollback threshold</string>
@@ -81,9 +83,11 @@
     <string name="np_monitor_autostart_title">Start monitoring on boot</string>
     <string name="np_monitor_autostart_summary">Restores monitoring and the downgrade state after a reboot</string>
     <string name="np_adaptive_interval_title">Adaptive sampling interval</string>
-    <string name="np_adaptive_interval_summary">On by default. While readings stay close to a threshold the interval shrinks by 20% per round (at most down to half the configured value); it snaps back as soon as they move away. Reacts faster near the edge, at the cost of more frequent sampling and probing</string>
+    <string name="np_adaptive_interval_summary">On by default. While readings stay close to a threshold the interval shrinks each round by the factor below (at most down to half the configured value); it snaps back as soon as they move away. Reacts faster near the edge, at the cost of more frequent sampling and probing</string>
     <string name="np_adaptive_margin_title">Adaptive sensitivity</string>
-    <string name="np_adaptive_margin_summary">In dBm (default 10). A sample counts as &quot;near a threshold&quot; when RSRP is within this of either threshold, SINR within a third of it, or ping within 5x of it</string>
+    <string name="np_adaptive_margin_summary">In dBm (default 20). A sample counts as &quot;near a threshold&quot; when RSRP is within this of either threshold, SINR within a third of it, or ping within 5x of it</string>
+    <string name="np_adaptive_step_title">Adaptive shrink factor</string>
+    <string name="np_adaptive_step_summary">Default 0.85 (15% shorter per round). Each consecutive round that stays near a threshold multiplies the sampling interval by this value, e.g. 60 s → 51 → 43 → 37 …; it never shrinks past half the configured value or below 15 s. Lower reacts faster and drains more; higher saves more but reacts later</string>
     <string name="np_tasker_enabled_title">Enable Tasker / Locale interface</string>
     <string name="np_tasker_enabled_summary">Off by default. When off, the command receiver, the Locale plugin and its config screen are disabled at the system level, so Tasker broadcasts cannot wake this app at all (strictly zero background cost). Turn it on to use Tasker actions immediately; users upgrading from 1.2.0 must turn it on once</string>
     <string name="np_datacard_manage_title">SIM cards &amp; rules</string>
@@ -97,6 +101,7 @@
     <string name="np_unit_ms"> ms</string>
     <string name="np_unit_sec"> s</string>
     <string name="np_unit_rounds"> rounds</string>
+    <string name="np_unit_times">x</string>
 
     <!-- Network mode dropdown -->
     <string name="np_mode_follow_carrier">Follow carrier (5G auto)</string>

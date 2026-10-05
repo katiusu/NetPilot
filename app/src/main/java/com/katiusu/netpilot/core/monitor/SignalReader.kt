@@ -189,13 +189,17 @@ object SignalReader {
             }
         }
 
+        // 小区列表里是否见过 NR 小区。两处用处：解释「SINR 为什么读不到」，
+        // 以及进快照供「假满格只在 5G / 5G+ 上判定」使用 —— NSA 组网下
+        // dataNetworkType 可能仍报 LTE，只看 rawType 会把 5G+ 当成 4G。
+        val sawNr = strengthList.any { it is CellSignalStrengthNr }
         val sinrReasonKind = if (sinr == null) {
             sinrUnavailableReason(
                 hasPhoneState = hasPhoneState,
                 hasFineLocation = hasFineLocation,
                 locationEnabled = locationServiceOn,
                 rawNetworkType = rawType,
-                sawNr = strengthList.any { it is CellSignalStrengthNr },
+                sawNr = sawNr,
                 sawLte = strengthList.any { it is CellSignalStrengthLte },
             )
         } else {
@@ -211,6 +215,10 @@ object SignalReader {
         // 完全相同。调用方只在「屏幕关闭 + 未处于降级态」时才会把 allowProbeSkip
         // 置真（降级态里 pingMs == null 会被当成一次「无网回退」计数，语义不同）。
         // 跳过时快照带上 probeSkipped，界面据此显示「已跳过探测」而不是「无响应」。
+        //
+        // 1.4.0 起「信号强」还不够：假满格只在 5G / 5G+ 上判定（见
+        // DowngradeThresholds.fakeFullBarOnNrOnly），非 NR 驻留时 pingMs 连上面那条
+        // 分支都不会被读到，所以「探不探都不改判定」这个结论只会更强，不会更弱。
         val skipProbe = allowProbeSkip && !(rsrp != null && rsrp > strongRsrpThreshold)
         val ping = if (skipProbe) {
             PingResult(ms = null, error = null, target = pingTarget)
@@ -225,6 +233,7 @@ object SignalReader {
             slot = slotOfSubId(subId),
             networkType = displayType,
             rawNetworkType = rawType,
+            sawNr = sawNr,
             operatorName = operatorName,
             rsrp = rsrp,
             sinr = sinr,

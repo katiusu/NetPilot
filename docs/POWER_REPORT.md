@@ -526,7 +526,7 @@ bash _build.sh :app:assembleRelease --no-configuration-cache   # === EXIT=0 === 
 | 项 | 值 |
 |---|---|
 | `NetPilot-1.3.0-2026100502-debug.apk` | 43,757,363 B · MD5 `6c12a5ab0e6cb959871430fb6ecbcbcc` |
-| `NetPilot-1.3.0-2026100502-release.apk` | 33,146,557 B · MD5 `0e528d52fef4390ca48fd5e6cd3069e8` · SHA-256 `744b44e10f1bf8ade85f5035560ca41aa67a214d0646c1feed7987b51841b84a` |
+| `NetPilot-1.4.0-2026100503-release.apk` | 33,146,557 B · MD5 `0e528d52fef4390ca48fd5e6cd3069e8` · SHA-256 `744b44e10f1bf8ade85f5035560ca41aa67a214d0646c1feed7987b51841b84a` |
 | `aapt2 dump badging` | `versionCode='2026100502' versionName='1.3.0'` · `targetSdkVersion:'36'` · `compileSdkVersion='37'` |
 | `native-code` | `arm64-v8a` `armeabi-v7a` `x86` `x86_64` |
 | release 签名 | `CN=NetPilot, OU=Mobile, O=katiusu, L=Beijing, ST=Beijing, C=CN`，SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.0.1 / 1.1.0 / 1.2.0 同一把） |
@@ -537,7 +537,116 @@ bash _build.sh :app:assembleRelease --no-configuration-cache   # === EXIT=0 === 
 | 来源核查 | `python3 tools/check_provenance.py` → `checked 7 pair(s), worst duplicated share 27.2% (threshold 25%)`，唯一 REVIEW 项是既有的 `ShizukuControllerService.kt`（已标注 reviewed：AIDL 接口签名 + 类声明）；1.3.0 新增的 `TaskerGate.kt` 不复制任何第三方代码 |
 
 交付物（放在仓库根，`.apk` 已被 `.gitignore` 排除，不会进版本库）：
-`NetPilot-1.3.0-2026100502-debug.apk`、`NetPilot-1.3.0-2026100502-release.apk`。
+`NetPilot-1.3.0-2026100502-debug.apk`、`NetPilot-1.4.0-2026100503-release.apk`。
+
+## 7. 1.4.0 增补（假满格的 5G / 5G+ 门控 + 判定参数默认值调整）
+
+### 7.1 起因：真 4G 上会「一直」触发假满格
+
+用户报告（m00947）：「在回到 4g 时，可能 ping 太大一直触发假 5g 满格」。排查后发现三条互相咬合的成因，**缺任何一条都不会是「一直」**：
+
+| # | 成因 | 1.3.0 里的位置 |
+|---|---|---|
+| 1 | 判定规则**没有制式门控**：蜂窝路径只读 `rsrp` / `sinr` / `pingMs`，从不看当前驻留在几 G。所以一条真 4G 链路只要 RSRP 强于 −85 dBm 且 ping > 上限，就会被判成「假 5G 满格」 | `core/monitor/FakeSignalDetector.kt` 的 `judge()` |
+| 2 | **降级目标就是 4G**：在 4G 上写「4G 优先」，射频侧什么都不会变，唯一效果是把 5G 门关死 | `DowngradeThresholds.downgradeMode`（默认 9） |
+| 3 | **降级后永久卡死**：落到 4G 后判据依然成立 ⇒ `judgement.fake` 恒真 ⇒ `recoveryCount` 永远涨不到 `recoveryCount`（默认 2）；唯一逃生口是「连续 2 轮彻底无网」触发 rollback，之后立刻又被判回去 | `core/monitor/AutoDowngradeEngine.kt` 冷却闸门之后的 `if (!judgement.fake)` 分支 |
+
+成因 3 是关键，也是最严重的一条：`recoveryCount` 在「仍满足降级条件」时**既不加也不清零**。所以这不是「偶尔误判」，而是**单次误判之后无法自愈**——设备被锁在降级制式上，只有断网两轮才可能出来。
+
+### 7.2 改动清单（C12 / C13）
+
+| # | 改动（文件） | 级别 | 省电 / 正确性原理 | 前 | 后 | 回滚 |
+|---|---|---|---|---|---|---|
+| C12-1 | `core/monitor/MonitorModels.kt`：`SignalSnapshot` 新增 `sawNr: Boolean = false`；新增 `fun isOnNr()` | 判定语义（按用户批准） | NSA / EN-DC 下数据网络仍可能上报 LTE，但 `allCellInfo` 已经见到 NR 小区。`sawNr` 原本只内联在 `sinrUnavailableReason()` 里算过一次，**没有进快照**；提取成字段后判定层才拿得到 | 无此字段 | `isOnNr() = rawNetworkType == NETWORK_TYPE_NR \|\| sawNr` | 删除字段与函数 |
+| C12-2 | `core/monitor/FakeSignalDetector.kt`：`if (isStrong)` 分支新增 `nrOnlyBlocked = thresholds.fakeFullBarOnNrOnly && !snapshot.isOnNr()`，用 `if (!nrOnlyBlocked)` 包住 Ping / SINR / Ping 失败三段 | 判定语义（按用户批准） | 非 5G 时这三条 reason 一律不产生 ⇒ `fake` 只能由弱信号规则给出 | 任何制式都判 | 只在 5G / 5G+ 判 | 设置里关掉「假满格只在 5G / 5G+ 判定」 |
+| C12-3 | `core/monitor/MonitorModels.kt`：新增 `val fakeFullBarOnNrOnly: Boolean = true` | 新开关（用户要求默认开） | 机型在 NSA 上读不到 NR 小区（缺「精确位置」权限）时，门控会误伤真 5G ⇒ 必须留逃生口 | — | 默认 true | 同上 |
+| C12-4 | `core/monitor/MonitorSettings.kt` + `ui/screen/features/FeaturesPage.kt`：`KEY_NR_ONLY = "np_fake5g_nr_only"`，SWITCH，`dependsOn = KEY_ENABLED` | 接线 | 走 `ConfigState`，带 `np_` 前缀 ⇒ 会被配置导出/导入带上 | — | — | 删除 spec |
+| C12-5 | `core/monitor/SignalReader.kt`：把内联的 `strengthList.any { it is CellSignalStrengthNr }` 提取为局部 `val sawNr`，两处复用（`sinrUnavailableReason` 与快照组装） | 数据采集 | 一次遍历、两处用途；快照新增 `sawNr = sawNr` | 只用于 SINR 原因 | 同时进快照 | 还原内联 |
+| C12-6 | **可观测性（用户选定方案 D）**：`FakeJudgement.detail` 三处带上制式——假满格「判定为假满格（4G LTE）：…」、弱信号「判定为信号过差（5G NR）：…」、正常但被门控挡住时明确写「当前是 4G LTE，假满格只在 5G / 5G+ 上判定，本轮不检查 Ping 与 SINR（…）」 | 零行为变化 | 用户看到「一直触发」时第一件要回答的事就是「当时到底在 4G 还是 5G」；必须把「没判」和「判了正常」区分开，否则读数是强信号、Ping 也照样显示，用户会以为规则坏了 | 无制式信息 | 有 | 还原字符串 |
+| C12-7 | `ui/screen/monitor/MonitorCriteria.kt` + `strings_quality.xml`：规则主句加第 5 个占位符 `%5$s`（`（仅 5G / 5G+）`），门控开启时额外渲染一条 `q_criteria_nr_only_rule` 解释 | 零行为变化（只读页） | 门控是**判定前提**的一部分，不写进主句就会让人以为后面那半句在任何制式下都生效；解释只在门控开着时出现，关掉后不渲染，避免误导 | 无 | 有 | 还原 |
+| C13-1 | `MonitorModels.kt`：`pingThresholdMs` **200 → 300** | 默认值（用户指定） | 这个读数是「DNS + TCP 建连 + HTTP 首字节」的**冷路径**耗时（`SignalReader.httpProbe()` 每次 `Connection: close` + `disconnect()`），量级本就比无线 RTT 大一截；200 ms 对 4G 尾段偏紧 | 200 | 300 | 功能页滑块 |
+| C13-2 | `MonitorModels.kt`：`cooldownSec` **60 → 120** | 默认值（用户指定） | 冷却期内不尝试恢复 ⇒ 单次误判的影响窗口减半，也避免 5G⇄4G 反复横跳（每次切制式都掉一次数据连接） | 60 | 120 | 功能页滑块 |
+| C13-3 | `MonitorModels.kt`：`adaptiveMarginDbm` **10 → 20** | 默认值（用户指定） | 带宽更宽 ⇒ 更早开始加密采样 | 10 | 20 | 功能页滑块 |
+| C13-4 | `MonitorModels.kt` + `MonitorSettings.kt` + `MonitorEngine.kt` + `FeaturesPage.kt`：自适应倍率从硬编码常量 `ADAPTIVE_STEP_FACTOR = 0.8` 迁到 `DowngradeThresholds.adaptiveStepFactor = 0.85f`，并做成可调滑块（`KEY_ADAPTIVE_STEP`，`0.50f..0.95f`，步进 `0.01f`，两位小数） | 默认值 + 新开关 | 倍率越大越省电、反应越慢 | 0.8 硬编码 | 0.85 可调 | 功能页滑块 |
+
+### 7.3 「5G+」的定义（必须讲清，否则这条改动会被误解）
+
+代码里**本来没有** `5G+` 这个概念（`grep '5G+|NR_CA|EN-DC'` 只命中既有的 `toggleEndc` 开关）。本次给它下了一个可执行的定义：
+
+| 显示 | 含义 | 判据 |
+|---|---|---|
+| **5G** | 数据网络直接上报 NR | `rawNetworkType == TelephonyManager.NETWORK_TYPE_NR` |
+| **5G+** | 数据网络仍报 LTE，但小区列表里已经见到 NR 小区（NSA / EN-DC） | `sawNr == true` |
+| **4G+** | LTE 载波聚合，**不算** 5G | `rawNetworkType == 19`（`NETWORK_TYPE_LTE_CA`），显示「4G+ LTE-CA」 |
+
+`isOnNr()` 取前两者的并集。注意 `sawNr` 依赖 `allCellInfo`，而它在部分机型上需要「精确位置」权限；读不到时恒为 `false` ⇒ 那类机型在 NSA 下会退化成「只在 SA 上判」，这正是 7.2 里 C12-3 保留开关的原因，也是 §7.6 必须让用户真机验证的一条。
+
+### 7.4 正确性证明：为什么这条改动**不会**漏检
+
+这是本段最需要证明的部分——放宽判定的改动天然有「漏检」风险，而漏检比误判糟糕得多。逐条列：
+
+1. **弱信号规则完全没动。** `judge()` 的另一条规则（`thresholds.downgradeOnWeakSignal && rsrp != null && rsrp < thresholds.weakRsrpThreshold`）与门控**互斥**：它在 `if (isStrong)` 之外，而 `isStrong` 是 `rsrp > rsrpThreshold`（默认 −85 dBm），弱信号是 `rsrp < weakRsrpThreshold`（默认 −110 dBm）——两者不可能同时成立。所以「信号真的差」这条路径的判定结果**逐位不变**。
+2. **门控只影响「信号强」这一个分支。** `nrOnlyBlocked` 只在 `if (isStrong)` 内被求值，非强信号时它连碰都碰不到。
+3. **被挡住的 reason 在 4G 上本来就不该产生。** 三条 reason（Ping 超限、SINR 过低、Ping 全失败）描述的是「5G 满格但质量差」。在 4G 上它们是**事实描述仍然成立、但结论不成立**——原因见 7.1 的成因 2/3。原脚本跑在「5G 手机上、默认信号强就是 5G」，这个假设在本工程不成立。
+4. **有一个真实的行为收窄，必须如实承认。** 门控开启后，一台**驻留在 4G 且 RSRP 强、ping 高**的设备不再降级。这是**故意**的：降级目标就是 4G，写下去射频侧毫无变化，只会让 `recoveryCount` 卡死（成因 3）。换句话说，被去掉的不是「一个有效的降级动作」，而是「一个只在日志里看起来有动作、实际什么都没做的写入」。用户若认为 4G 上仍应降级，关掉开关即完全退回 1.3.0 行为。
+5. **`isStrongSignal()` / `judge()` 的其他分支逐位未改**：Wi-Fi 早退、弱信号、兜底 `fake=false` 三条路径的返回结构没动，只改了 `detail` 文案（`detail` 不参与判定，只进日志与界面）。
+6. **C2 的短路只会更强。** 1.4.0 起「信号强」不再意味着「假满格会看 ping」——非 NR 时 `pingMs` 连强信号分支都不会被读到。所以「探不探都不改判定」这个结论在 1.4.0 上比 1.2.0 时更宽：原来的短路条件（屏幕关 + 未降级 + 非强信号）保持不变，可以只收缩、不需要放宽。
+
+### 7.5 默认值迁移的语义（必须让用户知道）
+
+`HookSliderCard` / `HookCards` 读的是 `ConfigState.float(key, spec.defaultFloat)` / `ConfigState.bool(key, spec.defaultBoolean)`，**只在用户真的拖过滑条或点过开关时才写入**。所以：
+
+- **从没动过**某个滑条 / 开关的用户，改 `DEFAULT_*` 与 `spec.default*` 对他**立即生效**；
+- **动过**的用户保留自己设的值，**不会被覆盖**——这一点是有意的：升级不该悄悄改掉用户明确调过的参数。
+
+因此 7.2 里 C13-1..4 四个默认值改动，只对「没调过这几项的用户」改变行为，其余用户维持原样。报告里把这个口径写清楚，避免把「升级后我觉得还是 200」当成 bug。
+
+### 7.6 量化对照（1.3.0 → 1.4.0，全部为确定性推算）
+
+| 项 | 1.3.0 | 1.4.0 | 说明 |
+|---|---|---|---|
+| 4G 上触发假满格的轮次 | 每轮都可能 | **0**（门控开启时） | 成因 1 被消除 |
+| 4G 上「误判后永久锁死」 | 只有断网 2 轮才可能解除 | **不再进入该状态** | 成因 3 随之消失 |
+| ping 落在 200–300 ms 的轮次是否判 fake | 是 | **否** | C13-1；这条同时降低 5G 上的误判 |
+| 单次误判的恢复保护窗口 | 60 s | **120 s** | C13-2 |
+| 靠近门限时的采样间隔（示例：基准 60 s、连续 4 轮靠近） | 60 → 48 → 38.4 → 30.7 s | 60 → 51 → 43.4 → 36.9 s | C13-3/C13-4；1.4.0 的**采样密度更低**（更省电），代价是反应略慢 |
+| 开始自适应缩短的门限距离 | RSRP 10 dBm 内 | **20 dBm 内** | C13-3；更早进入、但单轮间隔更大 |
+
+**与 1.2.0 的关系**：这一节**没有推翻** §1–§5 的任何结论。C2 的短路条件、C3 的心跳与退避、C4 的日志节流、C5 的通知去重与孤儿清扫全部保持不变；C10 的自适应间隔仍然只调采样节奏、**不参与任何判定**（§6.3 的结论继续成立，`isNearThreshold()` 依旧没有判定路径的调用者）。
+
+### 7.7 产物与验收（1.4.0）
+
+### 7.7.1 实测产物（2026-10-05 构建，全部命令已在本文档内复现）
+
+| 项 | 值 |
+|---|---|
+| debug APK | `NetPilot-1.4.0-2026100503-debug.apk` · 43 763 247 B · MD5 `30394f9eb8b5e366cee1aa8fd372247a` |
+| release APK | `NetPilot-1.4.0-2026100503-release.apk` · 33 152 441 B · MD5 `36bf9793e1637cc66c5bafe00def252a` · SHA-256 `2196f71e3ab30b8e618ab69b37be06bc956302fb8180f73db1c58f2e7463ea31` |
+| `versionCode` / `versionName` | `2026100503` / `1.4.0` |
+| `targetSdk` / `compileSdk` | `36` / `37`（`platformBuildVersionName='17'`） |
+| 原生库 | `arm64-v8a` / `armeabi-v7a` / `x86` / `x86_64` |
+| release 签名 | `CN=NetPilot, OU=Mobile, O=katiusu, L=Beijing, ST=Beijing, C=CN`，SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.0.1 / 1.1.0 / 1.2.0 / 1.3.0 同一把 key） |
+| 16 KB 页对齐 | `Verification successful` |
+| 组件默认禁用（C9 回归） | 清单里 `enabled=false` 命中 **3** 次（Tasker 命令接收器 / Locale 插件 / 插件配置界面） |
+| 构建 | `bash _build.sh :app:assembleDebug --no-configuration-cache` → `EXIT=0`（3m30s）；`:app:assembleRelease` → `EXIT=0`（7m54s）。两次 `APK_CHECK: manifest=True arsc=True -> OK` |
+| 来源复核 | `python3 tools/check_provenance.py` → `checked 7 pair(s), worst duplicated share 27.2%`，唯一 REVIEW 项是既有的 `ShizukuControllerService.kt`（已标注 reviewed） |
+| 架构自检 | `scannedFiles: 107`、`cycles: []`、超大模块 5 个（`MonitorPage.kt` 710 / `MainActivity.kt` 644 / `TaskerEditActivity.kt` 547 / `SettingsPage.kt` 540 / `LiquidGlassNavigationBar.kt` 533，均为既有）。**注意 `moduleCount: 0` / `importEdges: 0` —— 该分析器解析不出 Kotlin 包导入，「无环」只能作为「未新增环」的弱证据**，不能当成依赖图已核验 |
+
+```bash
+/opt/android-sdk/build-tools/36.0.0/aapt2 dump badging NetPilot-1.4.0-2026100503-release.apk | head -1
+# 期望：versionCode='2026100503' versionName='1.4.0' targetSdkVersion:'36' compileSdkVersion:'37'
+
+/opt/android-sdk/build-tools/35.0.0/apksigner verify --print-certs NetPilot-1.4.0-2026100503-release.apk
+# 期望：SHA-256 34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c
+
+/opt/android-sdk/build-tools/36.0.0/zipalign -c -P 16 -v 4 NetPilot-1.4.0-2026100503-release.apk
+# 期望：Verification successful
+```
+
+真机必验三条（agent 不能装包，需你操作）：
+1. **插 4G 卡 / 锁 4G，确认不再触发假满格降级**；此时监控页判定区的「假满格降级（仅 5G / 5G+）」后面应出现那条解释。
+2. **5G 上仍能触发**：把 ping 上限调到很低（例如 50 ms）制造判定，确认假满格照常降级。
+3. **关掉「假满格只在 5G / 5G+ 判定」后回到旧行为**：4G 上应重新能触发，且解释行消失。
 
 ## 附录 A：改动文件与回滚
 
@@ -591,23 +700,23 @@ res/values-en/strings_np.xml                                    C8 / C9 / C10
 | 全部回滚 | `git checkout -- .` + 删除三个新增的 `.kt` 文件（`git status` 就能看到全部改动） |
 | 只回滚某一项 | 按 §2 / §6.1 每行的「回滚」列操作，都是 1–3 处的定点还原 |
 | 不改代码就能关掉的项 | C2：把 `MonitorEngine` 主循环的 `e.tick(allowProbeSkip = true)` 改回 `e.tick()`（唯一的代码级开关）；C9：设置里关掉「Tasker / Locale 接口」；C10：设置里关掉「自适应采样间隔」 |
-| 真机回滚 | 同一把签名 key，可直接覆盖安装任一旧版 APK（`SharedPreferences` 不会被清）：`NetPilot-1.2.0-2026100501-{debug,release}.apk`、`NetPilot-1.1.0-2026100500-{debug,release}.apk` |
+| 真机回滚 | 同一把签名 key，可直接覆盖安装任一旧版 APK（`SharedPreferences` 不会被清）：`NetPilot-1.3.0-2026100502-{debug,release}.apk`、`NetPilot-1.2.0-2026100501-{debug,release}.apk`、`NetPilot-1.1.0-2026100500-{debug,release}.apk` |
 
 ## 附录 B：报告里每张表的复现命令
 
 ```bash
 # 版本 / targetSdk / 原生库（发布前必看：核对 versionCode/versionName 与 build.gradle.kts 是否一致）
-/opt/android-sdk/build-tools/36.0.0/aapt2 dump badging NetPilot-1.3.0-2026100502-release.apk | head -1
+/opt/android-sdk/build-tools/36.0.0/aapt2 dump badging NetPilot-1.4.0-2026100503-release.apk | head -1
 
 # 签名（注意：36.0.0 里没有 apksigner，用 35.0.0 的）
-/opt/android-sdk/build-tools/35.0.0/apksigner verify --print-certs NetPilot-1.3.0-2026100502-release.apk
+/opt/android-sdk/build-tools/35.0.0/apksigner verify --print-certs NetPilot-1.4.0-2026100503-release.apk
 
 # 16 KB 页对齐
-/opt/android-sdk/build-tools/36.0.0/zipalign -c -P 16 -v 4 NetPilot-1.3.0-2026100502-release.apk
+/opt/android-sdk/build-tools/36.0.0/zipalign -c -P 16 -v 4 NetPilot-1.4.0-2026100503-release.apk
 
 # Tasker 三个组件在打包后的清单里确实是 enabled=false（期望输出 3，见 §6.6）
 /opt/android-sdk/build-tools/36.0.0/aapt2 dump xmltree --file AndroidManifest.xml \
-  NetPilot-1.3.0-2026100502-release.apk | grep -c "enabled.*false"
+  NetPilot-1.4.0-2026100503-release.apk | grep -c "enabled.*false"
 
 # 来源 / 许可复核
 python3 tools/check_provenance.py

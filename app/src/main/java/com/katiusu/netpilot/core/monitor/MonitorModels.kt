@@ -1,5 +1,7 @@
 package com.katiusu.netpilot.core.monitor
 
+import android.telephony.TelephonyManager
+
 /**
  * 一次采样的完整快照。
  *
@@ -14,6 +16,14 @@ data class SignalSnapshot(
     val networkType: String = "未知",
     /** `TelephonyManager.NETWORK_TYPE_*` 原始值，0 表示未知。 */
     val rawNetworkType: Int = 0,
+    /**
+     * `allCellInfo` 里是否**看到过 NR 小区**。
+     *
+     * 与 [rawNetworkType] 是两条互补的判据：NSA（EN-DC）组网下数据网络可能仍上报 LTE，
+     * 但小区列表里已经有 NR 小区了 —— 只看 [rawNetworkType] 会把这种「5G+」当成 4G。
+     * 读不到小区信息（缺 READ_PHONE_STATE 或精确位置）时恒为 `false`。
+     */
+    val sawNr: Boolean = false,
     val operatorName: String = "",
     /** 参考信号接收功率，单位 dBm，恒为负数。 */
     val rsrp: Int? = null,
@@ -57,6 +67,18 @@ data class SignalSnapshot(
 
     /** 信号「满格」：RSRP 严格强于阈值（与 Network_Enhance 的 `|RSRP| < 85` 一致）。 */
     fun isStrongSignal(rsrpThreshold: Int): Boolean = rsrp != null && rsrp > rsrpThreshold
+
+    /**
+     * 当前是否驻留在 5G / 5G+ 上。
+     *
+     * 「5G」= 数据网络直接上报 NR（[TelephonyManager.NETWORK_TYPE_NR]，SA 与部分 NSA 如此）。
+     * 「5G+」= 数据网络仍上报 LTE，但 [sawNr] 为真，也就是 NSA / EN-DC 双连接。
+     * **`NETWORK_TYPE_LTE_CA`(19) 在界面上叫「4G+」，属于 LTE 载波聚合，不算 5G。**
+     *
+     * 用途：`FakeSignalDetector` 的「假满格」规则只在 5G / 5G+ 上有意义，
+     * 原因见 [DowngradeThresholds.fakeFullBarOnNrOnly]。
+     */
+    fun isOnNr(): Boolean = rawNetworkType == TelephonyManager.NETWORK_TYPE_NR || sawNr
 
     /**
      * 本轮读数是否「靠近」某条降级门限。
@@ -153,17 +175,38 @@ data class DowngradeThresholds(
     val enabled: Boolean = true,
     /** RSRP 门槛；`RSRP > -85` 才算强信号。 */
     val rsrpThreshold: Int = -85,
+    /**
+     * 「假满格」是否**只在 5G / 5G+ 上判定**；默认开。
+     *
+     * 为什么需要这条：假满格的全部意义是「5G 信号格是满的，但实际跑不动，所以退回 4G」。
+     * 当前驻留在 4G / 3G / 2G 时，规则里的 Ping 与 SINR 不再是「5G 假满格」的证据 ——
+     * 一条本来就不快的 4G 链路同样会 Ping 偏高，而这时降级目标本身就是 4G，写下去
+     * 射频侧什么都不会变，唯一效果是把 5G 门关上；更糟的是降级后判据依然成立，
+     * 引擎永远累计不到「恢复正常轮数」，会被**永久锁在 4G**（见 docs/POWER_REPORT.md §7）。
+     *
+     * 关掉它就退回 1.3.0 的行为（任何驻留制式下都按 Ping / SINR 判定）。机型在 NSA 上
+     * 读不到 NR 小区（缺精确位置权限）导致规则不触发时，可以关掉这条限制。
+     */
+    val fakeFullBarOnNrOnly: Boolean = true,
     /** SINR 门槛；`SINR < 0` 视为质量差。 */
     val sinrThreshold: Int = 0,
-    /** Ping 门槛；`Ping > 200ms` 视为质量差。 */
-    val pingThresholdMs: Int = 200,
+    /**
+     * Ping 门槛；`Ping > 300ms` 视为质量差。
+     *
+     * 默认从 200 提到 300：这个读数是**冷路径 HTTP 首字节**（DNS 解析 + TCP 建连 +
+     * 服务端 TTFB，见 `SignalReader.httpProbe`），不是无线 RTT，200 ms 在信号不错的
+     * 4G 上也会被常态越过，造成大量误判。300 ms 仍能抓住真正「满格跑不动」的场景。
+     */
+    val pingThresholdMs: Int = 300,
     /**
      * 降级后多久内不尝试恢复（秒）。
      *
      * 原脚本用 1800（30 分钟），实测太保守：一旦降级，半小时内即使网络早已恢复也
-     * 不会回到 5G，用户会以为「5G 丢了」。这里默认 60 秒（1 分钟），滑条下限 30 秒。
+     * 不会回到 5G，用户会以为「5G 丢了」。1.4.0 起默认 120 秒（2 分钟）：60 秒在
+     * 「刚降到 4G，读数还没稳」时就撞上恢复判定，制式来回抖动比多等一分钟更伤。
+     * 滑条下限仍是 30 秒。
      */
-    val cooldownSec: Int = 60,
+    val cooldownSec: Int = 120,
     /** 冷却结束后累计多少轮正常才恢复。 */
     val recoveryCount: Int = 2,
     /** 降级态下连续多少轮无网/无响应就整体回退。 */
@@ -215,13 +258,25 @@ data class DowngradeThresholds(
      */
     val adaptiveIntervalEnabled: Boolean = true,
     /**
-     * 「靠近门限」的宽度，单位 dBm；默认 10。
+     * 「靠近门限」的宽度，单位 dBm；默认 20。
      *
      * 只是把「多近才算近」交给用户：太小则几乎不缩短间隔（等于关掉自适应），
      * 太大则长期贴着缩短后的间隔跑（等于把耗电固定在近 2 倍）。SINR / Ping
      * 两条规则的带宽由它按固定比例推导，见 [SignalSnapshot.isNearThreshold]。
+     *
+     * 1.4.0 起默认从 10 提到 20：10 dBm 只覆盖门限紧邻的一圈，正常驻留时几乎永远
+     * 「不靠近」，自适应等于没开。
      */
-    val adaptiveMarginDbm: Int = 10,
+    val adaptiveMarginDbm: Int = 20,
+    /**
+     * 每连续靠近门限一轮，采样间隔乘的系数；默认 0.85。
+     *
+     * 1.3.0 里这是硬编码常量 `MonitorSettings.ADAPTIVE_STEP_FACTOR = 0.8`。改成可调
+     * 是因为「缩多快」和「缩到多低」是两件事：0.5 两三轮就撞下限（采样本该是渐进的），
+     * 0.95 又几乎不缩；0.85 对应每轮缩 15%，60s → 51 → 43 → 37 …… 比 0.8 平缓。
+     * 下限仍由 `MonitorSettings.ADAPTIVE_MIN_FACTOR` 兜住。
+     */
+    val adaptiveStepFactor: Float = 0.85f,
 )
 
 /** 引擎对外暴露的阶段，仅用于展示。 */

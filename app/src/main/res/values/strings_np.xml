@@ -57,9 +57,11 @@
     <string name="np_fake5g_sinr_title">SINR 质量阈值</string>
     <string name="np_fake5g_sinr_summary">单位 dB（默认 0）。仅当信号强时才看它：SINR 低于它算质量差，数值越大越严格；读不到 SINR 时这条不生效，改用 Ping</string>
     <string name="np_fake5g_ping_title">Ping 上限</string>
-    <string name="np_fake5g_ping_summary">单位 ms（默认 200）。仅当信号强时才看它：Ping 高于它算质量差，数值越小越严格、越容易触发降级</string>
+    <string name="np_fake5g_ping_summary">单位 ms（默认 300）。仅当信号强时才看它：Ping 高于它算质量差，数值越小越严格、越容易触发降级。这个读数是含 DNS 与建连的完整首字节耗时，不是无线 RTT，所以默认给得比较宽松</string>
     <string name="np_fake5g_ping_fail_title">Ping 失败也算差</string>
     <string name="np_fake5g_ping_fail_summary">默认关。开：Ping 全部失败也按质量差处理、照样降级；关：只记日志不降级。经常整片探测不通才建议开</string>
+    <string name="np_fake5g_nr_only_title">假满格只在 5G / 5G+ 判定</string>
+    <string name="np_fake5g_nr_only_summary">默认开启。开：只有当前驻留在 5G 或 5G+（NSA 双连接）时，才拿 Ping / SINR 判「假满格」；在 4G / 3G / 2G 上不再判。关：退回旧行为，任何制式下都按 Ping / SINR 判。为什么默认开：4G 上 Ping 本来就容易超过上限，而那时的降级目标正是 4G——切了等于没切，判据却一直成立，「恢复正常轮数」永远攒不够，设备会被永久锁在 4G。副作用：机型在 NSA 上读不到 NR 小区（缺「精确位置」权限）时，5G 也可能不再触发降级，真遇到就关掉这个开关</string>
     <string name="np_fake5g_weak_signal_title">信号过差也降级</string>
     <string name="np_fake5g_weak_signal_summary">默认开。开：RSRP 低于下面的弱信号阈值就换 4G；关：弱信号只记录，不改制式</string>
     <string name="np_fake5g_weak_rsrp_title">RSRP 弱信号阈值</string>
@@ -71,7 +73,7 @@
     <string name="np_fake5g_lock_lte_mode_title">恢复目标制式</string>
     <string name="np_fake5g_lock_lte_mode_summary">默认「跟随运营商」。冷却结束恢复时写回的制式，按 SIM 卡自动推导出 5G 自动，换卡不用改；乱选可能恢复后上不了 5G</string>
     <string name="np_fake5g_cooldown_title">降级冷却时间</string>
-    <string name="np_fake5g_cooldown_summary">单位 秒（默认 60 = 1 分钟）。降级后这么久内不尝试恢复，免得刚切到 4G 又立刻弹回 5G；调大更省电，但 5G 回来更慢</string>
+    <string name="np_fake5g_cooldown_summary">单位 秒（默认 120 = 2 分钟）。降级后这么久内不尝试恢复，免得刚切到 4G 又立刻弹回 5G；调大更省电，但 5G 回来更慢</string>
     <string name="np_fake5g_recovery_title">恢复所需正常轮数</string>
     <string name="np_fake5g_recovery_summary">单位 轮（默认 2）。冷却结束后要连续这么多轮正常才恢复；调大更稳但更慢，调成 1 会被单次抖动骗回 5G</string>
     <string name="np_fake5g_no_net_rollback_title">无网回退阈值</string>
@@ -81,9 +83,11 @@
     <string name="np_monitor_autostart_title">开机自动启动监控</string>
     <string name="np_monitor_autostart_summary">重启后自动恢复监控与降级状态</string>
     <string name="np_adaptive_interval_title">自适应采样间隔</string>
-    <string name="np_adaptive_interval_summary">默认开启。当读数靠近判定门限时，采样间隔逐轮缩短 20%（最多缩到设置值的一半）；一旦远离门限立刻恢复成设置值。靠近门限时反应更快，代价是更频繁的采样与网络探测</string>
+    <string name="np_adaptive_interval_summary">默认开启。当读数靠近判定门限时，采样间隔逐轮按下面的倍率缩短（最多缩到设置值的一半）；一旦远离门限立刻恢复成设置值。靠近门限时反应更快，代价是更频繁的采样与网络探测</string>
     <string name="np_adaptive_margin_title">自适应灵敏度</string>
-    <string name="np_adaptive_margin_summary">单位 dBm（默认 10）。RSRP 距任一门限不超过此值、SINR 不超过它的三分之一、Ping 不超过它的 5 倍时，算作「靠近门限」</string>
+    <string name="np_adaptive_margin_summary">单位 dBm（默认 20）。RSRP 距任一门限不超过此值、SINR 不超过它的三分之一、Ping 不超过它的 5 倍时，算作「靠近门限」</string>
+    <string name="np_adaptive_step_title">自适应缩短倍率</string>
+    <string name="np_adaptive_step_summary">默认 0.85（每轮缩短 15%）。每连续靠近门限一轮，采样间隔就乘这个数，例如 60 秒 → 51 → 43 → 37……；最低只缩到设置值的一半，且不低于 15 秒。调小反应更快、更耗电；调大更省电、更迟钝</string>
     <string name="np_tasker_enabled_title">启用 Tasker / Locale 接口</string>
     <string name="np_tasker_enabled_summary">默认关闭。关闭时命令接收器、Locale 插件与插件配置界面会被系统直接禁用，Tasker 广播不会唤醒本应用（后台开销严格为零）；打开后 Tasker 动作立即生效。从 1.2.0 升级上来的用户需要重新打开一次</string>
     <string name="np_datacard_manage_title">数据卡与规则</string>
@@ -97,6 +101,7 @@
     <string name="np_unit_ms"> ms</string>
     <string name="np_unit_sec"> 秒</string>
     <string name="np_unit_rounds"> 轮</string>
+    <string name="np_unit_times"> 倍</string>
 
     <!-- 制式下拉项 -->
     <string name="np_mode_follow_carrier">跟随运营商（5G 自动）</string>

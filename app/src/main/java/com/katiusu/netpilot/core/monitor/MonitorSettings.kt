@@ -28,6 +28,10 @@ object MonitorSettings {
     const val KEY_DOWNGRADE_MODE = "np_fake5g_downgrade_mode"
     const val KEY_LOCK_LTE_MODE = "np_fake5g_lock_lte_mode"
     const val KEY_PING_FAIL = "np_fake5g_ping_fail"
+
+    /** 「假满格」是否只在 5G / 5G+ 上判定（默认开，见 [DEFAULT_FAKE5G_NR_ONLY]）。 */
+    const val KEY_NR_ONLY = "np_fake5g_nr_only"
+
     const val KEY_TOGGLE_ENDC = "np_fake5g_endc"
 
     /**
@@ -49,6 +53,9 @@ object MonitorSettings {
     /** 自适应「靠近门限」的宽度（dBm）。 */
     const val KEY_ADAPTIVE_MARGIN = "np_fake5g_adaptive_margin"
 
+    /** 自适应每连续靠近一轮，采样间隔乘的系数（1.4.0 起可调，之前是硬编码 0.8）。 */
+    const val KEY_ADAPTIVE_STEP = "np_fake5g_adaptive_step"
+
     /**
      * 网络质量降级的默认开关状态：**默认开启**。
      *
@@ -61,14 +68,26 @@ object MonitorSettings {
 
     const val DEFAULT_RSRP = -85
     const val DEFAULT_SINR = 0
-    const val DEFAULT_PING = 200
+
     /**
-     * 降级冷却默认 60 秒。
+     * 「假满格」是否只在 5G / 5G+ 上判定的默认值：**默认开**。
+     *
+     * 这条限制修的是「驻留在 4G 时被 ping 拖进假满格降级、然后永久锁在 4G」，
+     * 完整因果链见 [DowngradeThresholds.fakeFullBarOnNrOnly] 与 docs/POWER_REPORT.md §7。
+     * 默认开是因为默认值下的误判代价（锁死 4G）远高于漏判代价（该降没降，用户还能手动切）。
+     */
+    const val DEFAULT_FAKE5G_NR_ONLY = true
+
+    /** Ping 上限默认 300 ms（1.4.0 从 200 提高，原因见 [DowngradeThresholds.pingThresholdMs]）。 */
+    const val DEFAULT_PING = 300
+    /**
+     * 降级冷却默认 120 秒（1.4.0 从 60 提高）。
      *
      * 上游脚本用 1800 秒（30 分钟）太长：降级本来就发生在「满格但跑不动」时，冷却过久会让
-     * 网络已经恢复还长时间停在 4G。滑条下限 30 秒（见 FeaturesPage 的 KEY_COOLDOWN 规格）。
+     * 网络已经恢复还长时间停在 4G。但 60 秒又偏短 —— 刚降到 4G 的那一两轮读数往往还没稳，
+     * 太早开始累计恢复轮数会让制式来回抖。滑条下限 30 秒（见 FeaturesPage 的 KEY_COOLDOWN 规格）。
      */
-    const val DEFAULT_COOLDOWN = 60
+    const val DEFAULT_COOLDOWN = 120
     /** 恢复正常默认 2 轮：3 轮在 60 秒采样间隔下要等 3 分钟才对「已经好了」有反应。 */
     const val DEFAULT_RECOVERY = 2
     const val DEFAULT_NO_NET_ROLLBACK = 2
@@ -85,18 +104,28 @@ object MonitorSettings {
     /** 自适应采样间隔默认开启：用户要的是「该快的时候快」，而不是自己算什么时候该快。 */
     const val DEFAULT_ADAPTIVE_INTERVAL = true
 
-    /** 自适应灵敏度默认 10 dBm（含义见 [DowngradeThresholds.adaptiveMarginDbm]）。 */
-    const val DEFAULT_ADAPTIVE_MARGIN = 10
+    /** 自适应灵敏度默认 20 dBm（含义见 [DowngradeThresholds.adaptiveMarginDbm]）。 */
+    const val DEFAULT_ADAPTIVE_MARGIN = 20
 
     /**
-     * 每连续靠近门限一轮，采样间隔就乘这个系数（0.8 = 每轮缩短 20%）。
+     * 每连续靠近门限一轮，采样间隔乘的系数；默认 0.85（= 每轮缩短 15%）。
      *
-     * 定成常量而不是可调项：用户要的是「靠近门限时更灵敏」这个效果，不是一套采样节奏
-     * 调参面板；真觉得采样太吵，直接关掉 [KEY_ADAPTIVE_INTERVAL] 就行。
-     * 放在这里而不是 MonitorEngine：它和 [ADAPTIVE_MIN_FACTOR] 是一对，分开容易只改一半
-     * —— 步长改小了却不改下限，间隔就会一步撞到底。
+     * 1.3.0 里它是硬编码常量 `ADAPTIVE_STEP_FACTOR = 0.8`；1.4.0 起由用户通过
+     * [KEY_ADAPTIVE_STEP] 调整，这里只保留默认值。放在这里而不是 MonitorEngine：
+     * 它和 [ADAPTIVE_MIN_FACTOR] 是一对，分开容易只改一半 —— 步长改小了却不改下限，
+     * 间隔就会一步撞到底。
      */
-    const val ADAPTIVE_STEP_FACTOR = 0.8f
+    const val DEFAULT_ADAPTIVE_STEP = 0.85f
+
+    /**
+     * [KEY_ADAPTIVE_STEP] 的滑条范围与步长。
+     *
+     * 低于 0.5 时两三轮就撞上 [ADAPTIVE_MIN_FACTOR]，自适应退化成一开就到底；
+     * 高于 0.95 则每轮只缩几个百分点，等于没缩。两端都是「这个滑块调了也没意义」。
+     */
+    const val ADAPTIVE_STEP_MIN = 0.5f
+    const val ADAPTIVE_STEP_MAX = 0.95f
+    const val ADAPTIVE_STEP_STEP = 0.05f
 
     /**
      * 缩短的下限：最多缩到配置间隔的一半，且永不突破技术下限 15 秒。
@@ -119,6 +148,22 @@ object MonitorSettings {
         else -> default
     }
 
+    /**
+     * 读取自适应倍率，并夹进 [ADAPTIVE_STEP_MIN]..[ADAPTIVE_STEP_MAX]。
+     *
+     * 收敛逻辑与 [intValue] 相同（滑块写 Float、导入的配置可能是字符串）；额外的夹取
+     * 是必须的：这个值会直接进 `Math.pow`，一旦配置被写成 0 或负数，采样间隔会塌成
+     * 0 秒 —— 那等于把监控循环变成没有间隔的死循环。
+     */
+    private fun stepFactorValue(): Float {
+        val raw = when (val v = ConfigState.get(KEY_ADAPTIVE_STEP)) {
+            is Number -> v.toFloat()
+            is String -> v.trim().toFloatOrNull()
+            else -> null
+        } ?: return DEFAULT_ADAPTIVE_STEP
+        return raw.coerceIn(ADAPTIVE_STEP_MIN, ADAPTIVE_STEP_MAX)
+    }
+
     fun thresholds(): DowngradeThresholds = DowngradeThresholds(
         enabled = ConfigState.bool(KEY_ENABLED, DEFAULT_ENABLED),
         rsrpThreshold = intValue(KEY_RSRP, DEFAULT_RSRP),
@@ -131,11 +176,13 @@ object MonitorSettings {
         downgradeMode = intValue(KEY_DOWNGRADE_MODE, DEFAULT_DOWNGRADE_MODE),
         lockLteMode = intValue(KEY_LOCK_LTE_MODE, DEFAULT_LOCK_LTE_MODE),
         downgradeOnPingFail = ConfigState.bool(KEY_PING_FAIL, false),
+        fakeFullBarOnNrOnly = ConfigState.bool(KEY_NR_ONLY, DEFAULT_FAKE5G_NR_ONLY),
         toggleEndc = ConfigState.bool(KEY_TOGGLE_ENDC, false),
         weakRsrpThreshold = effectiveWeakRsrp(),
         downgradeOnWeakSignal = ConfigState.bool(KEY_WEAK_SIGNAL, DEFAULT_WEAK_SIGNAL),
         adaptiveIntervalEnabled = ConfigState.bool(KEY_ADAPTIVE_INTERVAL, DEFAULT_ADAPTIVE_INTERVAL),
         adaptiveMarginDbm = intValue(KEY_ADAPTIVE_MARGIN, DEFAULT_ADAPTIVE_MARGIN),
+        adaptiveStepFactor = stepFactorValue(),
     )
 
     /**
