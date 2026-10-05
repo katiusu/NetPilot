@@ -348,18 +348,25 @@ object SystemCompatInfo {
     ): String {
         val viaChannel = runCatching { channel.readAuthStore(subId) }.getOrNull()
         if (viaChannel is AuthStore.Read.Value) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaChannel.networkTypes}（经 ${channel.label} 读回）"
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaChannel.networkTypes}" +
+                "（sub_id=$subId，经 ${channel.label} 读回）"
         }
         if (viaChannel is AuthStore.Read.Unset) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} ${AuthStore.describeRead(viaChannel)}（经 ${channel.label} 读回）"
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} ${AuthStore.describeRead(viaChannel)}" +
+                "（sub_id=$subId，经 ${channel.label} 读回）"
+        }
+        // 1.5.1：行不存在时，Root 通道的读路径会再枚举一次整张表，并把「表里现在有哪些 sub_id」
+        // 拼进 detail —— 这一段比「读不到」有用得多，直接端出来（它自己已经带了 sub_id）。
+        if (viaChannel is AuthStore.Read.NoRow && !viaChannel.detail.isNullOrBlank()) {
+            return viaChannel.detail
         }
         val viaApp = runCatching { AuthStore.read(context.contentResolver, subId) }.getOrNull()
         if (viaApp is AuthStore.Read.Value) {
-            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaApp.networkTypes}（应用进程直接读回）"
+            return "siminfo.${AuthStore.COLUMN_ALLOWED_NETWORK_TYPES} = ${viaApp.networkTypes}（sub_id=$subId，应用进程直接读回）"
         }
         val channelReason = viaChannel?.let { AuthStore.describeRead(it) } ?: "通道未实现"
         val appReason = viaApp?.let { AuthStore.describeRead(it) } ?: "应用进程未执行"
-        return "读不到（${channel.label}：$channelReason；应用进程：$appReason）"
+        return "读不到（sub_id=$subId；${channel.label}：$channelReason；应用进程：$appReason）"
     }
 
     /**

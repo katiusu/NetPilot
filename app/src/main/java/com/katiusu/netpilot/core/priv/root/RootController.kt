@@ -318,7 +318,36 @@ class RootController(private val context: Context) : NetworkControlChannel {
             if (read is AuthStore.Read.Value || read is AuthStore.Read.Unset) return@withContext read
             last = read
         }
+        // 1.5.1：行没查到时不收摊，再枚举一次整张表 ——「没有这个 subId 的行」这句话本身没法分析，
+        // 必须同时知道表里现在有哪些行、以及框架给的 subId 候选是哪些（很常见的一种情况是
+        // 传进来的 subId 就是 -1：默认数据卡还没定）。
+        if (last is AuthStore.Read.NoRow) return@withContext explainNoRow(subId)
         last
+    }
+
+    /**
+     * `siminfo` 表里没有目标 subId 时，把「表里到底有什么」读回来再给结论。
+     *
+     * 只在**读**路径做这件事：写路径与写后回读必须严格盯着目标 subId，
+     * 拿别的行的值当成功就是造假 —— 所以这里也绝不改写目标，只把原因讲清楚。
+     */
+    private fun explainNoRow(subId: Int): AuthStore.Read {
+        val result = RootShell.exec(AuthStore.listCommand())
+        WriteDiag.detail(
+            "权威存储枚举原始结果：exit=${result.code} " +
+                "stdout=${result.stdout.trim().take(480)} stderr=${result.stderr.trim().take(240)}"
+        )
+        val rows = AuthStore.parseSimInfoRows(result.stdout)
+        val candidates = runCatching { AuthStore.candidateSubIds() }.getOrDefault(emptyList())
+        val detail = if (rows.isEmpty()) {
+            "sub_id=$subId 在 siminfo 表里没有行，整张表现在是空的" +
+                "（本机没有插卡，或 TelephonyProvider 还没登记任何卡）；框架候选 subId=$candidates"
+        } else {
+            "sub_id=$subId 在 siminfo 表里没有行；表里现有 ${rows.size} 行：" +
+                "${AuthStore.describeRows(rows)}；框架候选 subId=$candidates"
+        }
+        WriteDiag.detail("权威存储读不到的确切原因：$detail")
+        return AuthStore.Read.NoRow(detail)
     }
 
     override suspend fun writeAuthStore(subId: Int, networkTypes: Long): AuthStore.Write =

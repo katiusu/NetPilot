@@ -1,19 +1,20 @@
 # NetPilot 测试指南
 
-产物：`NetPilot-1.5.0-2026100504-release.apk`（签名版）与 `NetPilot-1.5.0-2026100504-debug.apk`
-（`versionName = 1.5.0`、`versionCode = 2026100504`，`minSdk 34 / targetSdk 36`，包名 `com.katiusu.netpilot`。
+产物：`NetPilot-1.5.1-2026100505-release.apk`（签名版）与 `NetPilot-1.5.1-2026100505-debug.apk`
+（`versionName = 1.5.1`、`versionCode = 2026100505`，`minSdk 34 / targetSdk 36`，包名 `com.katiusu.netpilot`。
 release 与 debug 是两把签名，不能互相覆盖安装）。
 
 APK 只交付、不安装。要自己装的话：
 
 ```bash
-adb install -r NetPilot-1.5.0-2026100504-release.apk
+adb install -r NetPilot-1.5.1-2026100505-release.apk
 ```
 
 > 1.2.0 的耗电优化验收步骤写在 **§16**，1.3.0 的增量（自动化接口开关 + 自适应采样间隔）写在 **§17**，
 > 1.4.0 的假满格门控 + 默认值调整写在 **§18**；
-> 1.5.0（**本版，2026100504**）的日志落盘 + 写入诊断 + 桌面图标 + 更新开关 + 写入链路修复
+> 1.5.0（2026100504，已发布）的日志落盘 + 写入诊断 + 桌面图标 + 更新开关 + 写入链路修复
 > （权威存储交叉回读 / 掩码越界拒绝 / 权限显式化）+ 运营商识别 + Tasker 门控全部写在 **§19**（19.1–19.16）；
+> 1.5.1（**本版，2026100505**）的权威存储读取修复 + 日志可分析性 + 日志页倒序写在 **§20**（20.1–20.6）；
 > 改动的量化数据与真值表证明在 [`POWER_REPORT.md`](POWER_REPORT.md)。
 
 ---
@@ -767,6 +768,7 @@ adb shell am broadcast -a com.katiusu.netpilot.action.KEEPALIVE_RESTART -p com.k
    而失败原因**不是**权限。日志页与设置页应写「**读不到**」，形如
    `读不到：allowed_network_types: AMS 找不到本进程的应用记录（该通道进程不是应用进程，Shizuku 用户服务由 app_process 拉起），补授权无效；读写权威存储只能用 Root 通道（java.lang.SecurityException: Unable to find app for caller android.app.IApplicationThread$Stub$Proxy@… (pid=…) when getting content provider telephony）`。
    看到「补授权无效」就**不要再给 Shizuku 补权限**了 —— 这是进程身份问题，加多少权限都过不去（见 §19.16）。
+   > 1.5.1 起这段文案拆成按原因分别说明（身份名单 / 缺 SIMINFO 库权限 / AMS 无调用方记录），见 §20.4。
 6. 只有**真的缺权限**时才显示 `被拒绝：…`（例如应用进程直读权威存储而 uid 不持有读权限）。两者在设置页与日志页一眼可分：
    「被拒绝」= 去授权，「读不到」= 换通道。
 
@@ -848,6 +850,7 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
 
 1. 打开设置页「系统兼容性」，看「**权威存储**」那一行。Shizuku 通道下它应显示 §19.9 第 5 条那段
    「读不到：… 补授权无效；读写权威存储只能用 Root 通道」，**而不是**「被拒绝」。
+   （1.5.1 起改为按三种原因分别给出说明，见 §20.4。）
 2. **为什么会有这个补丁**：`ContentResolver.acquireProvider` 会先让 AMS 按调用方 pid 找一条应用进程记录
    （`getRecordForApp`）；Shizuku 用户服务进程由 Shizuku 守护进程用 `app_process` 拉起，从未
    `attachApplication`，AMS 侧没有它的记录，于是直接抛
@@ -858,3 +861,58 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
    `IActivityManager.getContentProviderExternal`，那个入口不需要应用进程记录，所以**同一张表在 Root 通道下能读写**。
 4. **判读**：真机复现时请把设置页那两行（「权威存储」「本机可用的写入方法」）与日志页对应记录一起截图。
    本条是**纯分类与文案修正**：不改判定、不改写入顺序、不需要动任何开关或权限。
+
+## 20. 1.5.1：权威存储读取修复 + 日志可分析性 + 日志页倒序
+
+### 20.0 版本号说明（先看这条）
+
+- 本版 `versionName = 1.5.1`、`versionCode = 2026100505`。
+- `2026100505` 曾被一个**从未发布**的 1.6.0 构建用过（同一把 release key），所以这一版可以直接**覆盖安装**那个包；1.5.0 已发布，正常覆盖安装即可（release 签名与 1.5.0 相同）。
+- 交付物：`NetPilot-1.5.1-2026100505-release.apk` / `NetPilot-1.5.1-2026100505-debug.apk`。APK 只交付、不安装。
+
+### 20.1 日志：结论行必须带原因（不需要开任何开关）
+
+1. 触发一次会失败的切换（没有 Root / Shizuku 授权时点切换，或把制式切到本机不支持的值）。
+2. 进「运行日志」。应当看到一条 ERROR/WARN 的结论行，形如 `卡 1 切换 NR/LTE 失败：…原因…`；**不再是**光秃秃的「切换失败」。
+3. 可能出现在原因里的原文：`没有可用的 ITelephony 通道`、`模式 X 不在本机位掩码表内…已拒绝写入`、`权限被拒(uid=…)`、`settings put global … 未成功`、`权威存储：…`。若确实没有更深一层原因，会退化成 `通道没有报出具体原因（可在设置页打开「写入详细诊断日志」后重试）`。
+4. 同一条失败只应出现**一次**结论行；原因里不应出现「过期原因」（本版 `consumeFailure()` 取后即清空）。
+
+### 20.2 日志：逐步问题归「写入详细诊断日志」开关管
+
+1. 设置 → 系统兼容性 → 打开「写入详细诊断日志」。
+2. 再触发同样的失败切换：应能看到**每一步**的问题（逐策略返回值、`content update` 的 exit/stdout、`settings put` 的原始输出、回读原文、`ContentResolver` 是否有 Context）。
+3. **关掉开关**，重复第 2 步：逐步的行不再出现，但 20.1 的结论行**仍然出现且仍带原因**（这条是硬要求；如果关掉开关后原因变成了空的，就是分级写错了）。
+4. 对照 1.5.0：当时有 6 处过程行（反射失败、三条策略返回值、`settings put` 原始结果、Shizuku 侧权威存储回退结果）是无条件输出的，本版把它们降为详细级。
+
+### 20.3 日志页倒序
+
+1. 进「运行日志」：最新一条在最上面，往下越来越旧。
+2. 切「仅警告 / 仅错误」过滤器：顺序仍是新→旧。
+3. 点「复制全部」/「分享」：导出文本仍是**时间顺序（旧→新）**，与界面相反 —— 这是刻意的（导出要能顺着读）。
+4. 清空日志后立刻产生一条新日志：新日志出现在最上面，滚动位置不跳到底部。
+
+### 20.4 权威存储：三种「读不到」必须分得开
+
+在设置页「系统兼容性」卡片看「权威存储」那一行：
+
+1. **Root 通道**（已授权 su）：
+   - 目标行不存在 → `sub_id=N 在 siminfo 表里没有行；表里现有 M 行：…；框架候选 subId=…`（M 行里每行含 subId / simId / allowed_network_types）。
+   - 整张表为空（没插卡 / provider 未登记）→ `…整张表现在是空的…`。
+   - **不应**再出现只有「没有这个 subId 的行」而没有后续解释的文案。
+2. **应用进程**（uid 10xxx）：对应 `Access SIMINFO table from not phone/system UID` 的说明 —— 指出这是 TelephonyProvider 的**身份名单**（只放行 system / phone / root），**补授权无效**，不是「权限没给」。
+3. **Shizuku 通道**（uid 2000）：对应 `Unable to find app for caller … when getting content provider telephony` 的说明 —— AMS 找不到调用方进程记录（Shizuku 用户服务由 `app_process` 拉起、从未 `attachApplication`），同样与权限无关。
+4. 三条文案必须**互不相同**且各自指向正确原因。如果三条写成同一句（1.5.0 就是这样，把 AMS 那句套在了身份名单那种情况上），就是本版要修的那个错。
+5. 打开详细诊断后重试：应能看到枚举整张表的命令原文与原始输出（`content query --uri content://telephony/siminfo --projection sub_id:sim_id:allowed_network_types`，**不带** `--where`），以及「权威存储读不到的确切原因」那一行。
+
+### 20.5 subId 不再轻易是 -1
+
+1. 在只插一张卡、且系统没给出默认数据卡 subId 的机型上：`getDefaultDataSubId` 应回落到「活动卡 / 默认语音卡」的首个 subId，详细日志里会出现 `默认数据卡未给出 subId（-1），改用候选卡列表首个 subId=…`。
+2. 硬约束：写入与回读仍然严格盯着**目标 subId** —— 不会因为「读不到」就把写入改到别的 subId。
+3. 若确实一张卡都没有：`siminfo` 为空是正常现象（20.4 第 1 条会说明这一点），不应出现崩溃或反复重试。
+
+### 20.6 本版不回归的旧行为
+
+- 1.5.0 的 §19（19.1–19.16）全部仍然成立。
+- **判定语义、默认值、用户可见行为没有变化**；本版只改「读不到时怎么解释」与「日志怎么分级 / 排序」。
+- `siminfo` 的写入顺序（ITelephony → 权威存储 → settings）与严格回读校验没变；表外模式仍然拒绝写入。
+- Tasker 事件门控、运营商识别、自动更新开关的行为与 1.5.0 相同。

@@ -98,9 +98,16 @@ object NetPilot {
             return false
         }
         val ok = ControlManager.setMode(subId, mode)
+        // 1.5.1：失败原因必须跟着结论一起落进日志页。
+        // 原因产生在写入链路深处（WriteDiag 的 warn/detail），这里只拿得到 Boolean，所以由
+        // WriteDiag 把最近一条原因暂存起来、结论行取走 —— 不开详细开关也能看到「卡在哪一步、
+        // 为什么」；取走后清空，避免下一次失败带上过期的原因。
+        val why = com.katiusu.netpilot.core.priv.WriteDiag.consumeFailure()
         LogStore.log(
             TAG,
-            if (ok) "卡 $subId 制式已切换为 ${mode.label}" else "卡 $subId 切换 ${mode.label} 失败",
+            if (ok) "卡 $subId 制式已切换为 ${mode.label}"
+            else "卡 $subId 切换 ${mode.label} 失败：" +
+                why.ifBlank { "通道没有报出具体原因（可在设置页打开「写入详细诊断日志」后重试）" },
             if (ok) com.katiusu.netpilot.core.monitor.LogLevel.INFO
             else com.katiusu.netpilot.core.monitor.LogLevel.ERROR,
         )

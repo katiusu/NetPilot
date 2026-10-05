@@ -38,12 +38,15 @@ android {
         // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
         // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
         targetSdk = 36
-        versionCode = 2026100504
-        // versionName 是给人看的语义版本；versionCode 是构建号（2026100504 = 2026-10-05 第 4 次构建），
+        versionCode = 2026100505
+        // versionName 是给人看的语义版本；versionCode 是构建号（2026100505 = 2026-10-05 第 5 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
-        // 1.5.0 没有发布过（2026100504 这个号从未出过 Release），所以「写入链路修复 + 权威存储」
-        // 这些原本打算作为 1.6.0 发布的内容直接并进 1.5.0，不额外占一个版本号。
-        versionName = "1.5.0"
+        // 1.5.1：把「provider 不认调用方身份」与「真的缺权限」分开（uid 名单 / AMS 应用进程记录 /
+        // ACCESS_TELEPHONY_SIMINFO_DB 三种成因各自的原文与解释都写准）、读不到时枚举整张 siminfo 表、
+        // 默认数据 subId 为空时按候选卡补齐、日志页倒序、每一步失败都带原因。
+        // 注意：2026100505 这个构建号曾被一个从未发布的 1.6.0 构建用过（同一把签名 key），
+        // 所以本版可以直接覆盖安装那个包。
+        versionName = "1.5.1"
 
     }
 

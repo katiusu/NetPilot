@@ -143,8 +143,9 @@ object TelephonyReflection {
         is Binding.Ready -> binding.stub
         is Binding.Broken -> {
             Log.e(TAG, "$caller 反射获取 ITelephony 失败：${binding.reason}")
-            // 这是整条写入链的第一个断点，必须让它在应用内日志页可见。
-            WriteDiag.warn("$caller 反射获取 ITelephony 失败：${binding.reason}")
+            // 1.5.1：这是过程细节（第一步为什么断），归详细诊断开关管；结论由 setNetworkMode
+            // 里那条无条件的「没有可用的 ITelephony 通道」warn 承担，默认也看得见。
+            WriteDiag.detail("$caller 反射获取 ITelephony 失败：${binding.reason}")
             null
         }
     }
@@ -427,8 +428,14 @@ object TelephonyReflection {
             WriteDiag.detail("$caller 目标 subId=$subId mode=$networkMode -> 位掩码=$networkTypes")
             // 逐候选的追踪只在详细模式开启时才构造；常态下 trace 为 null，零额外开销。
             val trace: ((String) -> Unit)? = if (WriteDiag.isVerbose) { { WriteDiag.detail(it) } } else null
-            // 权限被拒时无条件记录（不受详细模式开关影响）：它是「写不进去」的直接根因。
-            val onDenied: (String) -> Unit = { WriteDiag.warn("$caller ITelephony 写入 $it") }
+            // 1.5.1 的分工：**过程**（哪一条策略怎么失败、被谁拒、原文是什么）归详细开关管；
+            // **结论**（这次写入成没成、为什么没成）必须无条件看得见。所以每条被拒的原文先收集起来，
+            // 由下面那条最终的 warn 一次性带出去；verbose 打开时再逐条实时打一份。
+            val failures = mutableListOf<String>()
+            val onDenied: (String) -> Unit = {
+                failures += it
+                WriteDiag.detail("$caller ITelephony 写入被拒：$it")
+            }
 
             val reasonWrite = dispatch(stub, "setAllowedNetworkTypesForReason", allowedTypeWrites(subId, networkTypes), trace, onDenied)
             if (reasonWrite is CallResult.Hit) {
@@ -459,8 +466,11 @@ object TelephonyReflection {
             // setAllowedNetworkTypesForReason，另两条已不存在 —— 也就是说这里的「三条策略」
             // 在多数新机上是**一条**，不写清楚会被误读成「三条都试过了所以没辙」。
             WriteDiag.warn(
-                "$caller ITelephony 写入策略全部失败 subId=$subId mode=$networkMode；本机实际可用：" +
-                    describeWriteMethods()
+                "$caller ITelephony 写入策略全部失败 subId=$subId mode=$networkMode bitmask=$networkTypes；本机实际可用：" +
+                    describeWriteMethods() +
+                    "；逐策略问题：" +
+                    failures.joinToString("；")
+                        .ifEmpty { "三条策略都调用到了，但没有一条返回成功（AOSP 14+ 多数机型只剩策略1）" }
             )
             false
         } catch (failure: Throwable) {

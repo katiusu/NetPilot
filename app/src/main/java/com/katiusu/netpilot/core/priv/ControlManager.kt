@@ -192,7 +192,18 @@ object ControlManager {
                 channel.activeSlots().firstOrNull { it.first == slot }?.let { return it.second }
             }
         }
-        return runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrDefault(-1)
+        val direct = runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrDefault(-1)
+        if (direct >= 0) return direct
+        // 1.5.1：默认数据卡还没定下来时上面会返回 -1，而 -1 拿去查 siminfo 永远只能得到
+        // 「没有这个 subId 的行」—— 日志里看起来像 provider 读不出来，其实是目标本身是空的。
+        // 退到「活动卡列表 → 默认语音卡」这两个公开来源，并把这次换目标记进详细日志：
+        // 目标变了就必须让人看得见，否则「读到了别的卡的值」会变成新的隐形行为。
+        val fallback = AuthStore.candidateSubIds().firstOrNull()
+        if (fallback != null) {
+            WriteDiag.detail("默认数据卡未给出 subId（-1），改用候选卡列表首个 subId=$fallback（活动卡/默认语音卡）")
+            return fallback
+        }
+        return -1
     }
 
     /**

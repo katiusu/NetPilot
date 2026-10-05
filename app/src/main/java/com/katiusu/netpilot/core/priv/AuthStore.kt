@@ -3,6 +3,7 @@ package com.katiusu.netpilot.core.priv
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.net.Uri
+import android.telephony.SubscriptionManager
 
 /**
  * Android 11+ 的「允许的网络类型」**权威存储**。
@@ -36,6 +37,9 @@ object AuthStore {
     /** AOSP 的列名；少数固件用过单数形式，按顺序试探。 */
     const val COLUMN_ALLOWED_NETWORK_TYPES = "allowed_network_types"
 
+    /** 卡槽序号（`sim_id`）。只在枚举整张表时用来看「这一行是哪张卡」，不参与读写判定。 */
+    const val COLUMN_SIM_ID = "sim_id"
+
     val CANDIDATE_COLUMNS = listOf(COLUMN_ALLOWED_NETWORK_TYPES, "allowed_network_type")
 
     /** 建表默认值：读到它表示「这一行没有记录过」，而不是「被限制成 0 种制式」。 */
@@ -52,8 +56,14 @@ object AuthStore {
         /** 这一行在，但该列为空 / 等于 [UNSET_VALUE]。 */
         data class Unset(val column: String) : Read
 
-        /** 这个 subId 在 `siminfo` 里没有行。 */
-        data object NoRow : Read
+        /**
+         * 这个 subId 在 `siminfo` 里没有行。
+         *
+         * `detail` 是 1.5.1 补的：光说「没有这个 subId 的行」用户没法往下分析 —— 得同时讲清
+         * 「整张表里现在有哪些行」（[listCommand] 枚举出来的）和「框架给的 subId 从哪来」，
+         * 才能真正区分「本机没插卡」与「目标 subId 取错了」。null 时才回落到旧文案。
+         */
+        data class NoRow(val detail: String? = null) : Read
 
         /** 被权限拦下（SecurityException）。 */
         data class Denied(val reason: String) : Read
@@ -90,6 +100,79 @@ object AuthStore {
         // 在日志里长得一模一样（都是「没读到」），只有原文能区分这两件事。
         WriteDiag.detail("权威存储查询命令：$command")
         return command
+    }
+
+    /**
+     * 枚举命令：**不带 `--where`**，把整张 `siminfo` 表读回来。
+     *
+     * 为什么要它：`--where sub_id=<n>` 查不到行时 `content` 只回一句 `No result found`，
+     * 日志里就只剩「没有这个 subId 的行」—— 而真正需要知道的是「表里到底有哪些 sub_id」：
+     * 是根本没插卡，还是传进来的 subId 取错了。1.5.1 起读不到时补一次枚举，把表内容记进日志。
+     */
+    fun listCommand(): String = RootShell.quote(
+        listOf(
+            CONTENT_BIN, "query",
+            "--uri", CONTENT_URI_STRING,
+            "--projection", "$COLUMN_SUB_ID:$COLUMN_SIM_ID:$COLUMN_ALLOWED_NETWORK_TYPES"
+        )
+    )
+
+    /** 枚举回来的一行：只保留诊断需要的三列。 */
+    data class SimInfoRow(val subId: Int, val simId: Int, val allowedNetworkTypes: Long)
+
+    /**
+     * 解析枚举输出。逐行扫、遇到 `键=值` 才取值 —— 与 [parseQueryOutput] 同样的宽容：
+     * 第一字段会被 `Row: 0 ` 前缀污染，所以键取「按空格切开后的最后一段」；
+     * 没给 projection 的列自然缺席，不做任何假设。
+     */
+    fun parseSimInfoRows(output: String): List<SimInfoRow> {
+        val rows = mutableListOf<SimInfoRow>()
+        for (line in output.lineSequence()) {
+            if (line.isBlank()) continue
+            val fields = mutableMapOf<String, String>()
+            for (field in line.split(',')) {
+                val parts = field.split('=', limit = 2)
+                if (parts.size != 2) continue
+                fields[parts[0].trim().substringAfterLast(' ')] = parts[1].trim()
+            }
+            val subId = fields[COLUMN_SUB_ID]?.toIntOrNull() ?: continue
+            rows += SimInfoRow(
+                subId = subId,
+                simId = fields[COLUMN_SIM_ID]?.toIntOrNull() ?: -1,
+                allowedNetworkTypes = fields[COLUMN_ALLOWED_NETWORK_TYPES]?.toLongOrNull() ?: UNSET_VALUE
+            )
+        }
+        return rows
+    }
+
+    /** 把枚举结果压成一行，直接进日志与设置页。 */
+    fun describeRows(rows: List<SimInfoRow>): String =
+        if (rows.isEmpty()) "（空表）"
+        else rows.joinToString("、") {
+            "sub_id=${it.subId}(sim_id=${it.simId}, allowed_network_types=${it.allowedNetworkTypes})"
+        }
+
+    /**
+     * 框架侧「当前可能有卡」的 subId 候选，按可信度排序。
+     *
+     * 为什么需要：`getDefaultDataSubscriptionId()` 在「默认数据卡还没定」时返回 -1，
+     * 而 `-1` 拿去查 `siminfo` 永远是 `No result found` —— 日志里就变成「读不到」，
+     * 看起来像 provider 的问题，其实是目标 subId 本身是空的。1.5.1 起把候选一起报出来。
+     *
+     * 只用**静态**的公开 API 是本方法的硬约束：`getActiveSubscriptionInfoList()` 是实例方法
+     * （要 `SubscriptionManager.from(context)`，本对象只处理命令行与判定，不持有 Context），
+     * `getActiveSubscriptionIdList()` 干脆是隐藏 API，两者都拿不到。
+     * 每一步都 runCatching：这些 API 在缺 READ_PHONE_STATE / 无卡时都会抛。
+     */
+    fun candidateSubIds(): List<Int> {
+        val ids = linkedSetOf<Int>()
+        runCatching { SubscriptionManager.getDefaultDataSubscriptionId() }.getOrNull()
+            ?.let { if (it >= 0) ids.add(it) }
+        runCatching { SubscriptionManager.getDefaultVoiceSubscriptionId() }.getOrNull()
+            ?.let { if (it >= 0) ids.add(it) }
+        runCatching { SubscriptionManager.getDefaultSmsSubscriptionId() }.getOrNull()
+            ?.let { if (it >= 0) ids.add(it) }
+        return ids.toList()
     }
 
     /** `content update --uri ... --where sub_id=<id> --bind allowed_network_types:l:<mask>`。 */
@@ -141,8 +224,8 @@ object AuthStore {
     }
 
     private fun classifyQueryRaw(code: Int, stdout: String, stderr: String, column: String): Read {
-        if (isNoAppRecord(stderr)) {
-            return Read.Unavailable("$column: $NO_APP_RECORD_HINT（${stderr.trim().take(160)}）")
+        callerHint(stderr)?.let {
+            return Read.Unavailable("$column: $it（原文：${stderr.trim().take(160)}）")
         }
         if (isDenied(stderr)) return Read.Denied(stderr.trim().take(160))
         val text = stdout.trim()
@@ -151,7 +234,7 @@ object AuthStore {
                 "命令没有输出（exit=$code" + (if (stderr.isBlank()) "" else "，" + stderr.trim().take(120)) + "）"
             )
         }
-        if (text.contains("No result found", ignoreCase = true)) return Read.NoRow
+        if (text.contains("No result found", ignoreCase = true)) return Read.NoRow(null)
         val value = parseQueryOutput(text, column)
             ?: return Read.Unavailable("输出里找不到 $column 列（${text.take(120)}）")
         return if (value <= 0L) Read.Unset(column) else Read.Value(value, column)
@@ -165,8 +248,8 @@ object AuthStore {
     }
 
     private fun classifyUpdateRaw(code: Int, stdout: String, stderr: String): Write {
-        if (isNoAppRecord(stderr)) {
-            return Write.Failed("$NO_APP_RECORD_HINT（${stderr.trim().take(160)}）")
+        callerHint(stderr)?.let {
+            return Write.Failed("$it（原文：${stderr.trim().take(160)}）")
         }
         if (isDenied(stderr)) return Write.Denied(stderr.trim().take(160))
         if (code != 0) {
@@ -179,46 +262,86 @@ object AuthStore {
         stderr.contains("SecurityException", ignoreCase = true) ||
             stderr.contains("Permission Denial", ignoreCase = true)
 
-    // ── 「真的缺权限」与「AMS 不认这个调用方进程」必须分开 ──
+    // ── 「真的缺权限」与「provider 根本不认这个调用方」必须分开 ──
 
     /**
-     * 判据：AMS 的 `Unable to find app for caller … when getting content provider …`。
+     * 判据：这条 SecurityException 说的是不是「调用方身份不被接受」，而不是「少某个权限」。
      *
-     * 这句话与权限无关。`ContentResolver.acquireProvider` 会先让 AMS 按**调用方 pid** 找一条
-     * 应用进程记录（`getRecordForApp`），找不到就直接抛 SecurityException —— 而由 Shizuku 守护进程
-     * 用 `app_process` 拉起来的用户服务进程从未 `attachApplication`，AMS 侧根本没有它的记录，
-     * 于是**给多少权限都过不去**。1.5.0 真机日志实测（Redmi / Android 15、Shizuku 通道）：
+     * 1.5.1 把判据从一条扩成三条。真机日志里出现的原句其实是
+     * `Access SIMINFO table from not phone/system UID`，而 1.5.0 只认 AMS 那句
+     * `Unable to find app for caller`，于是这条被判成「被拒绝」——把用户引向「去补授权」，
+     * 而它根本不是权限问题。三种原文对应三种成因，见各自的常量注释。
+     *
+     * 返回 null = 判据都不命中，那就按普通「缺权限」处理（[Read.Denied] / [Write.Denied]）。
+     */
+    private fun callerHint(message: String): String? = when {
+        message.contains("Access SIMINFO table from not phone/system UID", ignoreCase = true) ->
+            HINT_UID_WHITELIST
+        message.contains("No permission to access SIMINFO table", ignoreCase = true) ->
+            HINT_SIMINFO_DB_PERMISSION
+        message.contains("Unable to find app for caller", ignoreCase = true) ||
+            message.contains("when getting content provider", ignoreCase = true) -> HINT_NO_APP_RECORD
+        else -> null
+    }
+
+    /**
+     * `Access SIMINFO table from not phone/system UID` —— provider 里的硬编码 UID 名单。
+     *
+     * AOSP `TelephonyProvider.checkPermissionForSimInfoTable()` 先调
+     * `ensureCallingFromSystemOrPhoneUid("Access SIMINFO table from not phone/system UID")`，
+     * 判定是 `TelephonyPermissions.isSystemOrPhone(uid) || UserHandle.isSameApp(uid, Process.ROOT_UID)`
+     * —— 源码里 root 那一支的注释是「Allow ROOT for testing. ROOT can access underlying DB files anyways.」。
+     * 所以 siminfo 只认 system(1000) / phone(1001) / root(0)：应用进程（uid=10xxx）与
+     * Shizuku 的 shell（2000）都在名单外。
+     *
+     * 关键结论：这是 provider 代码里的**身份判断**，不是权限 —— 补授权改不了它。
+     */
+    private const val HINT_UID_WHITELIST =
+        "TelephonyProvider 的 siminfo 表只对 system(1000)/phone(1001)/root(0) 开放（provider 里的硬编码 uid 名单，" +
+            "不是可以授予的权限），本通道进程不在名单里；补授权无效 —— 读写权威存储只能用 Root 通道"
+
+    /**
+     * `No permission to access SIMINFO table` —— 过了 uid 名单之后的第二道门。
+     *
+     * 同函数里紧跟其后的是 `checkCallingOrSelfPermission("android.permission.ACCESS_TELEPHONY_SIMINFO_DB")`，
+     * 那是 signature|privileged 级权限，只有系统/电话进程拿得到。
+     */
+    private const val HINT_SIMINFO_DB_PERMISSION =
+        "即使过了 uid 名单，provider 还要求 android.permission.ACCESS_TELEPHONY_SIMINFO_DB" +
+            "（signature|privileged，只有系统/电话进程拿得到），补授权无效 —— 读写权威存储只能用 Root 通道"
+
+    /**
+     * `Unable to find app for caller … when getting content provider …` —— AMS 侧的问题。
+     *
+     * `ContentResolver.acquireProvider` 会先让 AMS 按**调用方 pid** 找一条应用进程记录
+     * （`getRecordForApp`），找不到直接抛 SecurityException；Shizuku 守护进程用 `app_process`
+     * 拉起的用户服务进程从未 `attachApplication`，AMS 侧没有它的记录。1.5.0 真机日志实测：
      *
      * ```
      * shizuku 权威存储读取：subId=1 -> 被拒绝：allowed_network_types: Unable to find app for caller
      *   android.app.IApplicationThread$Stub$Proxy@a67e245 (pid=28246) when getting content provider telephony
      * ```
      *
-     * 为什么值得单独判一次：这两种失败的**异常类型完全相同、只有消息不同**，但用户该做的事
-     * 完全相反 —— 前者要换 Root 通道（是进程身份问题，补授权没用），后者才该去补权限。
-     * 旧版一律归类成「被拒绝」，等于把用户引向一条走不通的路。
-     *
-     * 附带事实：Root 通道之所以没这个问题，是因为它走 `/system/bin/content`，而 `cmd content`
-     * 内部用的是隐藏 API `IActivityManager.getContentProviderExternal`，那个入口不需要应用进程记录。
+     * 与权限无关（给多少权限都过不去）。Root 通道没这个问题：它走 `/system/bin/content`，
+     * `cmd content` 内部用的是隐藏 API `IActivityManager.getContentProviderExternal`，
+     * 那个入口不需要应用进程记录。
      */
-    private fun isNoAppRecord(message: String): Boolean =
-        message.contains("Unable to find app for caller", ignoreCase = true) ||
-            message.contains("when getting content provider", ignoreCase = true)
-
-    /** 归类成「本通道做不到」时统一带上的原因说明，设置页与日志页都会原样展示。 */
-    private const val NO_APP_RECORD_HINT =
-        "AMS 找不到本进程的应用记录（该通道进程不是应用进程，Shizuku 用户服务由 app_process 拉起），" +
-            "补授权无效；读写权威存储只能用 Root 通道"
+    private const val HINT_NO_APP_RECORD =
+        "AMS 按调用方 pid 找不到应用进程记录（Shizuku 用户服务由 app_process 拉起、从未 attachApplication）；" +
+            "与权限无关，补授权无效 —— 改用 Root 通道（它走 /system/bin/content，用的是 getContentProviderExternal，" +
+            "不需要应用进程记录）"
 
     private fun deniedRead(column: String, failure: SecurityException): Read {
         val message = failure.message.orEmpty()
-        return if (isNoAppRecord(message)) Read.Unavailable("$column: $NO_APP_RECORD_HINT（$message）")
+        val hint = callerHint(message)
+        return if (hint != null) Read.Unavailable("$column: $hint（原文：$message）")
         else Read.Denied("$column: $message")
     }
 
     private fun deniedWrite(failure: SecurityException): Write {
         val message = failure.message.orEmpty()
-        return if (isNoAppRecord(message)) Write.Failed("$NO_APP_RECORD_HINT（$message）")
+        val hint = callerHint(message)
+        return if (hint != null) Write.Failed("$hint（原文：$message）")
         else Write.Denied(message)
     }
 
@@ -245,7 +368,10 @@ object AuthStore {
                 )
                 cursor?.use {
                     if (!it.moveToFirst()) {
-                        last = Read.NoRow
+                        last = Read.NoRow(
+                            "sub_id=$subId 在 siminfo 表里没有行（ContentResolver 这条路径只做单行查询，" +
+                                "不枚举整张表；要看表里到底有什么，只能用 Root 通道）"
+                        )
                     } else {
                         val index = it.getColumnIndex(column)
                         if (index < 0) {
@@ -293,7 +419,7 @@ object AuthStore {
     fun describeRead(read: Read): String = when (read) {
         is Read.Value -> "= ${read.networkTypes}（列 ${read.column}）"
         is Read.Unset -> "未设置（列 ${read.column} 为空或为建表默认值 $UNSET_VALUE）"
-        Read.NoRow -> "没有这个 subId 的行"
+        is Read.NoRow -> read.detail ?: "没有这个 subId 的行"
         is Read.Denied -> "被拒绝：${read.reason}"
         is Read.Unavailable -> "读不到：${read.reason}"
     }
@@ -313,7 +439,7 @@ object AuthStore {
     fun encodeRead(read: Read): String = when (read) {
         is Read.Value -> "VALUE|${read.networkTypes}|${read.column}"
         is Read.Unset -> "UNSET|${read.column}"
-        Read.NoRow -> "NOROW"
+        is Read.NoRow -> if (read.detail == null) "NOROW" else "NOROW|" + read.detail.replace('|', '/')
         is Read.Denied -> "DENIED|" + read.reason.replace('|', '/')
         is Read.Unavailable -> "UNAVAILABLE|" + read.reason.replace('|', '/')
     }
@@ -326,7 +452,7 @@ object AuthStore {
                 if (value == null) Read.Unavailable(raw) else Read.Value(value, parts.getOrNull(2).orEmpty())
             }
             "UNSET" -> Read.Unset(parts.getOrNull(1).orEmpty())
-            "NOROW" -> Read.NoRow
+            "NOROW" -> Read.NoRow(parts.drop(1).joinToString("|").ifEmpty { null })
             "DENIED" -> Read.Denied(parts.drop(1).joinToString("|"))
             "UNAVAILABLE" -> Read.Unavailable(parts.drop(1).joinToString("|"))
             else -> Read.Unavailable(raw)

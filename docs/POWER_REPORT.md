@@ -919,6 +919,11 @@ Our shell-uid app_process server has none.」
 | 判据 / 出口 | 旧 | 新 |
 |---|---|---|
 | 输出或异常消息含 `Unable to find app for caller` / `when getting content provider`（`isNoAppRecord`） | 与权限失败同归 `Denied` | `Read.Unavailable` / `Write.Failed`，并带上 `NO_APP_RECORD_HINT`（「…补授权无效；读写权威存储只能用 Root 通道」） |
+
+> **1.5.1 更新**：这一条单一判据已扩展成 `AuthStore.callerHint()` 的三条判据 ——
+> 身份名单（`Access SIMINFO table from not phone/system UID`）、缺 SIMINFO 库权限
+> （`No permission to access SIMINFO table`）、AMS 无调用方记录（`Unable to find app for caller`），
+> 分别给不同文案；并新增「读到 NoRow 时枚举整张表」。见 §9.1 / §9.2。
 | 其它 `SecurityException` / `Permission Denial` | `Denied` | 不变（仍是「被拒绝：」） |
 | `describeRead` / `describeWrite` | 「被拒绝：」/「失败：」混在一起 | 分别为「读不到：」与「失败：」，与「被拒绝：」在设置页和日志页一眼可分 |
 
@@ -1024,6 +1029,124 @@ bash _build.sh :app:assembleDebug --no-configuration-cache
 （`content query --uri content://telephony/...` → `[POLICY_BLOCKED] 短信授权不包含其他内容提供者或 URI 参数`），
 **无法在 agent 侧真机验证**。
 
+## 9. 1.5.1 增补（权威存储读取修复 + 日志可分析性 + 日志页倒序）
+
+> 本版 `versionName = 1.5.1`、`versionCode = 2026100505`。1.5.0 已发布，这是它的第一个补丁版本；
+> 判定语义、默认值与用户可见行为**一律不变**。
+
+### 9.1 起因：三条真机日志被同一句「读不到」概括
+
+1.5.0 发布后，真机上出现三种**不同**的失败，但设置页与日志页把它们写成了同一个样子：
+
+| 真机看到的原文 | 实际原因 | 发生在哪 |
+|---|---|---|
+| `没有这个 subId 的行` | `siminfo` 表里确实没有这一行（或整张表为空 —— 本机没插卡 / provider 未登记） | Root 通道（`content query` 单行查询） |
+| `被拒绝：allowed_network_types: Access SIMINFO table from not phone/system UID` | TelephonyProvider 的**身份名单**只放行 system(1000) / phone(1001) / root(0) | 应用进程（uid 10xxx）与 Shizuku（uid 2000） |
+| `Unable to find app for caller … when getting content provider telephony` | AMS 找不到调用方 pid 的**应用进程记录**（该进程由 `app_process` 启动、从未 `attachApplication`） | Shizuku 用户服务进程 |
+
+用户指出「这个中文你肯定翻译错了」—— 1.5.0 的 `NO_APP_RECORD_HINT`（讲 AMS 记录）被套在了第二种情况上。
+
+**AOSP 依据**（`packages/providers/TelephonyProvider`；main 与 `android-15.0.0_r1` 两份源码均已核对）：
+
+- `checkPermissionForSimInfoTable()`：先 `ensureCallingFromSystemOrPhoneUid("Access SIMINFO table from not phone/system UID")`，再 `checkCallingOrSelfPermission("android.permission.ACCESS_TELEPHONY_SIMINFO_DB")`，否则 `SecurityException("No permission to access SIMINFO table")`。
+- `isCallingFromSystemOrPhoneUid()`：`TelephonyPermissions.isSystemOrPhone(callingUid) || UserHandle.isSameApp(callingUid, Process.ROOT_UID)`，源码注释原文「Allow ROOT for testing. ROOT can access underlying DB files anyways.」⇒ **名单 = system / phone / root**。
+- 结论：**第一种判据是身份判断，不是权限** —— 应用进程与 Shizuku 补任何权限都不会通过（`ACCESS_TELEPHONY_SIMINFO_DB` 是 signature|privileged，第三方拿不到）；root 是**被特意放行**的，所以 Root 通道「读不到」只可能是「表里没有那一行」，不是被拒。
+
+### 9.2 改动清单（C28 – C31）
+
+| # | 改动文件 | 级别 | 为什么 | 验证方式 | 回滚 |
+|---|---|---|---|---|---|
+| C28 | `core/priv/WriteDiag.kt`、`core/priv/TelephonyReflection.kt`、`core/priv/PrivilegedCli.kt`、`core/priv/shizuku/ShizukuController(Service).kt`、`core/NetPilot.kt` | 可分析性（真问题） | 1.5.0 的结论行只有「切换失败」四个字，原因埋在深处、且多半只在详细开关打开时才有 | TESTING §20.1 / §20.2 | 还原 `warn`/`detail` 分级与 `NetPilot.setMode` 的日志行 |
+| C29 | `core/priv/AuthStore.kt`、`core/priv/root/RootController.kt`、`core/priv/ControlManager.kt`、`core/priv/WriteCompat.kt` | 真 bug（诊断错误） | 三种「读不到」被混为一谈；Root 通道只说「没有这个 subId 的行」而不说表里到底有什么；subId 为 -1 时整条链路无解 | TESTING §20.4 / §20.5 | 还原 `callerHint` 三条判据、`NoRow(detail)`、`explainNoRow()` 与 subId 候选补齐 |
+| C30 | `ui/screen/log/LogPage.kt` | 可用性 | 日志页旧→新，最需要看的最新一条在最下面；导出保持旧→新 | TESTING §20.3 | 去掉 `.asReversed()` 与 `animateScrollToItem(1)` |
+| C31 | `app/build.gradle.kts` | 版本 | 1.5.0 已发布，补丁必须换版本号 | TESTING §20.0 | 改回 2026100504 / 1.5.0 |
+
+### 9.3 日志分级：结论带原因，步骤归开关
+
+- **结论行（无条件）**：`NetPilot.setMode` 的成功/失败行、每条链路最终的失败原因、决策（拒绝写表外模式、没有可用通道、目标行不存在、权限被判身份名单拦下）。失败行现在是 `卡 N 切换 X 失败：<最深一层的失败原因>`。
+- **原因怎么跨层传上来**：`WriteDiag` 增加 `@Volatile lastFailure` + `rememberFailure()` / `consumeFailure()`；`warn()` 无条件记，`detail()` **只在详细开关打开时**记。`NetPilot.setMode` 拿到的仍然只是 `Boolean`，失败时 `consumeFailure()` 取走原因并清空（避免下一次失败带上过期原因）。Shizuku 通道另在应用进程侧 `rememberFailure()` 补一句能指明方向的结论（服务侧逐条原因只在详细开关下可见）。
+- **过程行（详细开关）**：逐策略返回值、`content update` / `settings put` 的原始 exit 与输出、回读原文、`ContentResolver` 是否就绪、逐列试探。1.5.1 把 1.5.0 里 **6 处**误放在 `always` 的过程行降为 `detail`（`TelephonyReflection` 的反射失败、三条策略返回值、`PrivilegedCli.writeSettings` 原始结果、`ShizukuControllerService` 的权威存储回退结果）。
+- 硬要求：**关掉详细开关后，结论行必须仍然带原因**（原因来自 `warn` 与「开关打开时的 `detail`」；若确实没有更深一层原因，显示「通道没有报出具体原因」）。
+
+### 9.4 与耗电 / 资源的关系
+
+| 项 | 开销 |
+|---|---|
+| C28 原因暂存 | 一次 `String` 字段写入（内存），无 I/O；`consumeFailure()` 是一次读 + 置空 |
+| C29 枚举整张表 | **只在已经确定「目标行不存在」之后**执行一次 `content query`（无 `--where`）；读得到时完全不执行 |
+| C29 subId 候选补齐 | 只在系统返回 -1 时调用一次公开 API（`getActiveSubscriptionInfoList()`），且包在 `runCatching` 里 |
+| C29 逐列试探 | 与 1.5.0 相同（最多两列，均只在读不到时） |
+| C30 倒序 | `asReversed()` 是列表视图，无拷贝；导出时再翻一次 |
+
+结论：本版**没有常态新增开销**，只在「已经失败」的路径上多做一次诊断查询。
+
+### 9.5 量化对照（1.5.0 → 1.5.1）
+
+| 项 | 1.5.0 | 1.5.1 | 说明 |
+|---|---|---|---|
+| `versionCode` / `versionName` | 2026100504 / 1.5.0 | **2026100505 / 1.5.1** | 补丁版本（C31） |
+| 失败结论行是否带原因 | ✗（只有「切换失败」） | ✓（带最深一层原因） | C28 |
+| 过程行的归属 | 6 处混在无条件级别 | 全部归「写入详细诊断日志」 | C28 |
+| 三种「读不到」是否分开 | ✗（AMS 文案套在身份名单那种情况上） | ✓（三条判据各自文案） | C29 |
+| Root 通道「没有这个 subId 的行」 | 只有这一句 | 追加「表里现有 N 行 / 整张表为空」+ 候选 subId | C29 |
+| 默认数据卡 subId 为 -1 时 | 整条链路卡住 | 回落到活动卡 / 默认语音卡，且不改写目标 subId | C29 |
+| 日志页顺序 | 旧→新 | **新→旧**（导出仍旧→新） | C30 |
+| 判定语义 / 默认值 / 用户可见行为 | — | **不变** | — |
+
+### 9.6 产物与验收（1.5.1 / 2026100505，最终）
+
+**9.6.1 产物**
+
+| 文件 | 大小 | SHA-256 |
+| --- | --- | --- |
+| `NetPilot-1.5.1-2026100505-release.apk` | 33,237,773 B | `30606dac74ca374c93b348e6fe1c4aa22904fe50c16404a820311392cbf2c8c1` |
+| `NetPilot-1.5.1-2026100505-debug.apk` | 43,864,959 B | `e55e5d5ff0bed578d4a3c414c8134f21e96e400bec534e441ce6d38ee2af8d19` |
+
+两个产物都用 `--no-configuration-cache` 构建。release 仍用项目里那把 release key（证书 SHA-256
+`34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`，与 1.3.0 起各版一致）——
+所以 2026100505 这个 versionCode 与那个**从未发布**的 1.6.0 测试包相同，装过测试包的设备可以直接覆盖升级。
+
+**9.6.2 复现命令**
+
+```bash
+# release
+bash _build.sh :app:assembleRelease --no-configuration-cache
+# debug：先清掉清单中间产物，避免 configuration cache 复用旧的合并清单
+rm -rf app/build/intermediates/{merged_manifest,merged_manifests,packaged_manifests,manifest_merge_blame_file,compatible_screen_manifest}/debug \
+       app/build/outputs/apk/debug
+bash _build.sh :app:assembleDebug --no-configuration-cache
+
+# 核验
+BT=/opt/android-sdk/build-tools/36.0.0
+BTS=/opt/android-sdk/build-tools/37.0.0
+$BT/aapt2 dump badging NetPilot-1.5.1-2026100505-release.apk | head -1
+$BT/aapt2 dump xmltree --file AndroidManifest.xml NetPilot-1.5.1-2026100505-release.apk | grep -c 'android.intent.action.MAIN'
+$BT/aapt2 dump xmltree --file AndroidManifest.xml NetPilot-1.5.1-2026100505-release.apk | grep -c 'enabled.*false'
+$BTS/apksigner verify --print-certs NetPilot-1.5.1-2026100505-release.apk | grep -i 'SHA-256'
+$BT/zipalign -c -P 16 -v 4 NetPilot-1.5.1-2026100505-release.apk | tail -1
+sha256sum NetPilot-1.5.1-2026100505-*.apk
+```
+
+**9.6.3 实测结果**
+
+| 检查项 | 结果 |
+| --- | --- |
+| `aapt2 dump badging` | 两个产物都是 `versionCode='2026100505' versionName='1.5.1'`、`targetSdkVersion:'36'`、`compileSdkVersion:'37'` |
+| 启动图标 | `android.intent.action.MAIN` = **1**（release 与 debug） |
+| Tasker 组件默认关 | `enabled.*false` = **3**（release 与 debug） |
+| `zipalign -c -P 16 -v 4` | `Verification successful`（两个产物） |
+| apksigner 证书 | `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c` |
+| 新代码是否在产物里 | 解包 release 的 `classes*.dex` 后 `grep -a`：`整张表现在是空的` 1 次（C29 的 siminfo 枚举结论）、`逐策略问题` 1 次（C28 的结论行原因回传）；1.5.0 那句旧的 `该通道进程不是应用进程` 已不见（被三条判据取代） |
+| `python3 tools/check_provenance.py` | `EXIT=0`，`checked 7 pair(s), worst duplicated share 27.2%`（唯一 REVIEW 仍是 `ShizukuControllerService.kt`，已 reviewed） |
+| 架构自检 | `scannedFiles: 108`、`cycles: []`、超大模块仍是那 5 个（本版未新增） |
+
+**9.6.4 与耗电 / 资源的关系**：本版新增的都是「出错时才拼字符串」与一次读操作（失败路径上多跑一条 `content query`
+枚举 `siminfo`），成功路径零新增常驻开销；日志页倒序只是把同一个列表翻一次，不增加内存与 IO。唯一可感知的变化是
+日志内容变长（上限仍由 `LogStore.MAX_MESSAGE_CHARS = 2_000` 与 `MAX_ENTRIES = 400` 兜住）。
+
+**9.6.5 未做（需要真机）**：设置页那几行只读事实的实际取值、三种「读不到」在真机上是否分别显示、
+日志页是否确实新在上、结论行里是否带上了每一步的原因 —— 全部写在 [TESTING.md](TESTING.md) §20（20.1–20.6）供用户自测。
+
 ## 附录 A：改动文件与回滚
 
 **1.5.0 新增文件（2 个）**
@@ -1074,6 +1197,24 @@ TemplateApp.kt                                                  C26（去掉无�
 ui/screen/settings/SettingsPage.kt                              C15 / C19 / C20 / C25
 res/values/strings_keepalive.xml                                C15 / C19 / C20 / C25
 res/values-en/strings_keepalive.xml                             C15 / C19 / C20 / C25
+```
+
+**1.5.1 改动的文件**（未新增文件，全部是已存在文件的修改；同版本内补丁，不占新版本号）
+
+```
+app/build.gradle.kts                                            C31（版本号 1.5.1 / 2026100505）
+core/NetPilot.kt                                                C28（失败结论行带上原因）
+core/priv/AuthStore.kt                                          C29（callerHint 三判据 / NoRow 带原因 / siminfo 枚举 / subId 候选）
+core/priv/ControlManager.kt                                     C29（subId 为 -1 时用候选补齐）
+core/priv/PrivilegedCli.kt                                      C28（writeAuthStore / writeSettings 回传原因）
+core/priv/TelephonyReflection.kt                                C28（逐策略原因进结论行）
+core/priv/WriteCompat.kt                                        C29（描述行带 sub_id 与三种原因）
+core/priv/WriteDiag.kt                                          C28（lastFailure / consumeFailure）
+core/priv/root/RootController.kt                                C29（explainNoRow 枚举整张表）
+core/priv/shizuku/ShizukuController.kt                          C28
+core/priv/shizuku/ShizukuControllerService.kt                   C28
+ui/screen/log/LogPage.kt                                        C30（日志页倒序，导出仍按时间顺序）
+README.md / README_EN.md / docs/*.md                            文档同步
 ```
 
 **修改文件**

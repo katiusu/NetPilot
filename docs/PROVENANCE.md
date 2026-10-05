@@ -64,7 +64,7 @@ python3 tools/check_provenance.py     # 打印上表；两条已复核的重合�
 
 | 文件 | 说明 |
 |---|---|
-| `core/priv/AuthStore.kt`（1.5.0 新增） | 权威存储（TelephonyProvider `siminfo.allowed_network_types`）的读写与结果分类。列名、URI 形态与「建表默认值为 -1」来自 AOSP `packages/providers/TelephonyProvider` 的公开源码（Apache-2.0）以及真机 `framework.jar` dex 字符串池的核实，**没有复制任何第三方工程的代码**；`tools/check_provenance.py` 的比对集里不含它 |
+| `core/priv/AuthStore.kt`（1.5.0 新增，1.5.1 扩充分类与 siminfo 枚举） | 权威存储（TelephonyProvider `siminfo.allowed_network_types`）的读写与结果分类。列名、URI 形态与「建表默认值为 -1」来自 AOSP `packages/providers/TelephonyProvider` 的公开源码（Apache-2.0）以及真机 `framework.jar` dex 字符串池的核实，**没有复制任何第三方工程的代码**；`tools/check_provenance.py` 的比对集里不含它 |
 | `core/priv/WriteDiag.kt`（1.5.0 新增） | 特权写入链路的诊断日志出口。按本工程自己的 `LogStore` / `ConfigState` 接口与 `PrivilegedCli` 的 stdout 契约写成，不参考任何第三方工程；`tools/check_provenance.py` 的 7 组比对里不含它（该脚本只比对已知有上游来源的文件） |
 
 ## Apache-2.0

@@ -88,8 +88,19 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
 
     override suspend fun getMode(subId: Int): Int = call(-1) { it.getCurrentNetworkMode(subId) }
 
-    override suspend fun setMode(subId: Int, mode: NetworkMode): Boolean =
-        call(false) { it.setNetworkMode(subId, mode.value) }
+    override suspend fun setMode(subId: Int, mode: NetworkMode): Boolean {
+        val ok = call(false) { it.setNetworkMode(subId, mode.value) }
+        if (!ok) {
+            // 1.5.1：Shizuku 通道的失败原因只存在于用户服务进程内部，应用进程这一侧
+            // （用户看到的结论行）本来只能拿到 false。这里补一句能指明方向的结论；
+            // 服务侧逐条原因仍归详细诊断开关管（见 ShizukuControllerService.setNetworkMode）。
+            WriteDiag.rememberFailure(
+                "Shizuku 用户服务里三条 ITelephony 策略都没成功，权威存储也没写进去" +
+                    "（打开「写入详细诊断日志」可看到服务侧的逐条原因）"
+            )
+        }
+        return ok
+    }
 
     override suspend fun readAuthStore(subId: Int): AuthStore.Read = AuthStore.decodeRead(
         call(AuthStore.encodeRead(AuthStore.Read.Unavailable("Shizuku 用户服务未绑定"))) { it.readAuthStore(subId) }

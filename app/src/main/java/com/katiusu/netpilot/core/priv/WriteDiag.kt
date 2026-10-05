@@ -81,14 +81,43 @@ object WriteDiag {
         verbose = verboseFlag
     }
 
+    /**
+     * 最近一条带原因的失败信息，供上层把它并进「结论行」。
+     *
+     * 为什么要有它：失败原因产生在写入链路深处（[warn]/[detail]），而用户真正看的那一行结论
+     * 在 `NetPilot.setMode` —— 那里只拿得到 `Boolean`。1.5.1 之前用户看到的只有「切换失败」
+     * 四个字，没法分析；现在原因跟着结论走。
+     */
+    @Volatile
+    private var lastFailure: String = ""
+
     /** 关键节点：无论详细模式是否开启都要能在日志页看见。 */
     fun always(message: String) = emit(message, LogLevel.INFO, unconditional = true)
 
-    /** 失败/异常等需要醒目标注的关键节点。 */
-    fun warn(message: String) = emit(message, LogLevel.WARN, unconditional = true)
+    /** 失败/异常等需要醒目标注的关键节点；同时把原因记下，等结论行取用。 */
+    fun warn(message: String) {
+        rememberFailure(message)
+        emit(message, LogLevel.WARN, unconditional = true)
+    }
 
-    /** 逐候选的尝试过程：只有详细模式开启时记录。 */
-    fun detail(message: String) = emit(message, LogLevel.DEBUG, unconditional = false)
+    /** 逐候选的尝试过程：只有详细模式开启时记录；也是「最深一层的失败原因」。 */
+    fun detail(message: String) {
+        // 只有真的会输出时才记：详细开关关着时，detail 不该影响结论行的内容。
+        if (verbose) rememberFailure(message)
+        emit(message, LogLevel.DEBUG, unconditional = false)
+    }
+
+    /** 记下一条失败原因（后写的覆盖先写的）。 */
+    fun rememberFailure(reason: String) {
+        if (reason.isNotBlank()) lastFailure = reason
+    }
+
+    /** 取走最近一条失败原因；取后清空，避免下一次结论行带上过期的原因。 */
+    fun consumeFailure(): String {
+        val reason = lastFailure
+        lastFailure = ""
+        return reason
+    }
 
     /**
      * 父进程把子进程一条 [CLI_PREFIX] 诊断行转发进日志页。

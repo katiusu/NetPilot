@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.5.0**（`versionName = "1.5.0"`，`versionCode = 2026100504`） |
+| 版本 | **1.5.1**（`versionName = "1.5.1"`，`versionCode = 2026100505`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 36） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -400,8 +400,36 @@ exit/stdout/stderr、逐列试探（`allowed_network_types` → `allowed_network
 文案写明「补授权无效；读写权威存储只能用 Root 通道」；真缺权限时仍然是「被拒绝」。只改分类与文案，
 不改判定、不改写入顺序（详见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.13）。
 
+> **1.5.1 又改了一次**：单一判据 `isNoAppRecord()` 换成三条判据的 `AuthStore.callerHint()` ——
+> 「身份名单」（`Access SIMINFO table from not phone/system UID`）、「缺 SIMINFO 库权限」
+> （`No permission to access SIMINFO table`）、「AMS 无调用方记录」（`Unable to find app for caller`）
+> 分别给不同说明。见 §19.1 与 [`docs/TESTING.md`](docs/TESTING.md) §20.4。
+
 验收步骤见 [`docs/TESTING.md`](docs/TESTING.md) §19.12–§19.14 与 §19.16，来源对照与代价见
 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §8.10–§8.13。
+
+### 19. 1.5.1 权威存储读取修复 + 日志可分析性 + 日志页倒序
+
+1.5.0 发布后，真机上出现了三种「读不到」，但它们其实是三个完全不同的原因。本版把原因拆开、把日志改成能分析的形式。
+
+**19.1 权威存储：三种「读不到」分别说清**
+
+- **Root 通道**：`siminfo` 表里没有目标 `sub_id` 的那一行时，不再只说「没有这个 subId 的行」，而是**枚举整张表**并报出现有几行（`sub_id` / `sim_id` / `allowed_network_types`）与框架给出的候选 subId；整张表为空时会说明这是「本机没插卡，或 TelephonyProvider 还没登记任何卡」。
+- **应用进程 / Shizuku**：`Access SIMINFO table from not phone/system UID` 与 `Unable to find app for caller …` 是**两种不同的原因**，现在各有各的说明 —— 前者是 TelephonyProvider 里的**身份名单**（只放行 system / phone / root，AOSP 源码注释写明 root 是特意放行、方便测试），后者是 AMS 找不到调用方进程记录（Shizuku 用户服务由 `app_process` 拉起、从未 `attachApplication`）。**两者都与权限无关，补授权永远不会通过**（`ACCESS_TELEPHONY_SIMINFO_DB` 是 signature|privileged，第三方拿不到）。
+- 1.5.0 把这后一种的说明错套在前一种上，本版改准 —— 分类函数由单一判据 `isNoAppRecord()` 换成三条判据的 `AuthStore.callerHint()`。
+- 另外：系统没给出默认数据卡 `subId`（返回 `-1`）时，现在会回落到「活动卡 / 默认语音卡」的首个 subId，不再让整条链路卡在 `-1`。**但绝不改写目标 subId** —— 写入与回读必须盯着同一张卡。
+- 验收见 [`docs/TESTING.md`](docs/TESTING.md) §20.4–§20.5，依据与代价见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §9.1。
+
+**19.2 日志：结论带原因，逐步问题归开关**
+
+- 失败结论行现在**带上原因**，不需要打开任何开关：`卡 1 切换 NR/LTE 失败：…`，而不是光秃秃的「切换失败」。原因由写入链路最深一层提供（`WriteDiag` 把最近一条原因暂存起来，`NetPilot.setMode` 取走并清空，避免下次带上过期原因）。
+- 每一步的过程细节（逐策略返回值、命令原文、`exit`/`stdout`、回读原文、`ContentResolver` 就绪情况）统一归「**写入详细诊断日志**」开关管；关掉开关后这些行不再出现，但**结论行里的原因不受影响**。1.5.0 有 6 处过程行误放在无条件级别，本版降级。
+- 日志页改为**倒序**（最新一条在最上面）；「复制全部 / 分享」导出仍是**时间顺序**（旧→新），方便顺着读。
+- 验收见 [`docs/TESTING.md`](docs/TESTING.md) §20.1–§20.3，分级设计见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §9.3。
+
+**19.3 版本与产物**：`versionName = 1.5.1`、`versionCode = 2026100505`。这个 versionCode 曾被一个**从未发布**的 1.6.0 构建用过（同一把 release key），所以可以直接覆盖安装那个包；正常覆盖安装 1.5.0 即可。产物与量化数据见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) §9.6。
+
+**19.4 本版不改什么**：判定语义、默认值、用户可见行为一律不变；`siminfo` 的写入顺序（ITelephony → 权威存储 → settings）与严格回读校验不变。
 
 ## 权限一览
 

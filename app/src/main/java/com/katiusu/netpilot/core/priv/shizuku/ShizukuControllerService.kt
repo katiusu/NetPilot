@@ -60,7 +60,9 @@ class ShizukuControllerService() : IShizukuController.Stub() {
             "$CALLER 三条 ITelephony 策略都没成，转写权威存储：subId=$subId mode=$networkMode -> 位掩码=$networkTypes"
         )
         val result = AuthStore.decodeWrite(writeAuthStore(subId, networkTypes))
-        WriteDiag.always("$CALLER ITelephony 失败后写权威存储：${AuthStore.describeWrite(result)}")
+        // 1.5.1：这一行是整个过程里的一步，归详细诊断开关管；结论（切换成功/失败 + 原因）
+        // 由应用进程侧的 ShizukuController.setMode / NetPilot.setMode 写进日志页。
+        WriteDiag.detail("$CALLER ITelephony 失败后写权威存储：${AuthStore.describeWrite(result)}")
         return result is AuthStore.Write.Ok
     }
 

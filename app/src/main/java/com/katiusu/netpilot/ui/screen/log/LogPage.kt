@@ -109,13 +109,15 @@ fun LogPageView(
         LogFilter.ALL -> allEntries.toList()
         LogFilter.WARN_UP -> allEntries.filter { it.level >= LogLevel.WARN }
         LogFilter.ERROR_ONLY -> allEntries.filter { it.level == LogLevel.ERROR }
-    }
+    }.asReversed()
+    // 1.5.1：显示改成倒序（新的在最上面）。底层 LogStore.entries 仍然是追加式的旧→新，
+    // 只在这里翻一次，所以过滤、导出、落盘的语义都没动。
 
-    // 有新日志就跟着滚到底。列表结构是「1 个头部 item + N 个日志 item」，
-    // 所以最后一条的下标正好是 entries.size。
+    // 有新日志就停在顶部。列表结构是「1 个头部 item + N 个日志 item」，
+    // 倒序之后最新的一条正好是第 1 号 item。
     LaunchedEffect(entries.size) {
         if (entries.isNotEmpty()) {
-            listState.animateScrollToItem(entries.size)
+            listState.animateScrollToItem(1)
         }
     }
 
@@ -126,7 +128,8 @@ fun LogPageView(
     /** 拼一份纯文本，供剪贴板与分享共用。 */
     fun buildText(): String {
         val sb = StringBuilder()
-        for (e in entries) {
+        // 界面是倒序（新→旧），但导出的文本按时间顺序（旧→新）更好读，这里翻回来一次。
+        for (e in entries.asReversed()) {
             sb.append(e.timeText()).append(' ')
                 .append(e.level.name).append(' ')
                 .append(e.tag).append(": ")
