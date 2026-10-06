@@ -222,6 +222,22 @@ object CarrierInfo {
     }
 
     /**
+     * 取指定卡在某个代际上的「运营商自动模式值」（1.5.3 后续新增）。
+     *
+     * 为什么会有这个：界面里四个代际组（5G/4G/3G/2G）各有一行「自动适配运营商」，点它要写的是
+     * **该代际**的运营商档，不能都写 5G 那一档。
+     *
+     * 与 [defaultModeForActiveSubscription] 的关系：后者固定回答 5G 那一档，是自动降级「恢复」
+     * 写回的值，**语义不动**；本函数只是把同一张表按代际取一遍（`gen = 5` 时两者结果相同）。
+     * 识别不出运营商时按代际各自的通用档兜底，见 [NetworkMode.carrierAutoForGen]。
+     */
+    fun defaultModeForGen(context: Context, subId: Int, gen: Int): Int {
+        val (mcc, mnc) = simMccMnc(context, subId)
+        val mode = runCatching { NetworkMode.carrierAutoForGen(gen, mcc, mnc) }.getOrNull()
+        return (mode ?: NetworkMode.fromValue(26))?.value ?: 26
+    }
+
+    /**
      * 识别到的运营商名（「中国移动」…），识别不出返回空串。
      *
      * 为什么单独暴露一段：设置页要能显示「这台机器把这个号段认成了哪家」。运营商默认值表

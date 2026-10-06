@@ -43,10 +43,30 @@ class TemplateApp : Application() {
      *
      * 单开一个守护线程：清扫要绑用户服务、可能等 15 秒，绝不能占住 Application.onCreate
      * 把冷启动拖慢。失败一律静默 —— 它只是省内存，不承担任何功能。
+     *
+     * 1.5.3：这条线程改成**有界重试**。为什么必须重试：它在 Application.onCreate 里就起来了，
+     * 而开机/升级冷启动那一刻 Shizuku 服务端常常还没起来（或被系统按住），绑定必然失败；
+     * 旧实现「失败也算做过」，于是唯一一次机会被一次注定失败的尝试烧掉，而进程又有
+     * MonitorService 的 START_STICKY + 15 分钟心跳长期活着 —— 再也没有第二次 onCreate，
+     * 用户后来正常用起 Shizuku 也清不掉上次遗留的孤儿（实测本机有一个从开机留到现在、
+     * 约 59 MB 的 `:np_service`）。
+     *
+     * 4 次尝试：立刻 / 30 秒 / 2 分钟 / 5 分钟；任何一次**真的执行成功**（返回 >= 0）就停，
+     * Shizuku 一直没起来时每次只是一次很便宜的探测，期间进程本来也要活着。
      */
     private fun pruneShizukuOrphans() {
         Thread {
-            runCatching { runBlocking { ControlManager.pruneOrphanedServices() } }
+            val delaysMs = longArrayOf(0L, 30_000L, 120_000L, 300_000L)
+            var attempt = 0
+            var done = false
+            while (!done && attempt < delaysMs.size) {
+                if (delaysMs[attempt] > 0L) runCatching { Thread.sleep(delaysMs[attempt]) }
+                val result = runCatching { runBlocking { ControlManager.pruneOrphanedServices() } }
+                    .getOrDefault(-1)
+                // >= 0 表示清扫命令真的跑过了（哪怕清了 0 个），不必再试；-1 表示没执行，稍后重试。
+                done = result >= 0
+                attempt++
+            }
         }.apply {
             isDaemon = true
             name = "NetPilot-OrphanPrune"

@@ -1721,7 +1721,8 @@ Receiver / Provider 由 AGP 默认规则保留。**构建后已核对**：上述
 
 | 文件 | 大小（字节） | MD5 | SHA-256 |
 | --- | --- | --- | --- |
-| `NetPilot-1.5.3-2026100601-release.apk` | 4 153 775 | `6ec4c5e1394aeac7cdf44d19cee4f0a8` | `f5eb0b3914791aa9547998c4940c7adf43db903400fa3253f6ad117698d69952` |
+| `NetPilot-1.5.3-2026100601-release.apk` | 4 153 775 | `37752ed35a2fa02ddf5d955e7d3f915a` | `45f1fac6a6914acf8f335467030d509fc26d7a82138e6772325cb081abc36b5b` |
+> 同一版本号构建了两次（用户要求「版本号不变」）；上表是**最终交付产物**的哈希，构建与校验细节见 §12.6。
 
 - 编译校验（先跑）：`bash _build.sh :app:compileDebugKotlin` → **BUILD SUCCESSFUL in 53s**。
   首次编译失败一次：合成项兜底写了 `NetworkMode.FALLBACK`，而它是 companion 里的 `private` ⇒ 改成字面量 `26` 并写明「这就是 `CarrierInfo` 自己文档里的兜底值」。
@@ -1730,3 +1731,152 @@ Receiver / Provider 由 AGP 默认规则保留。**构建后已核对**：上述
 - 可直接覆盖安装 1.5.2（同一把 release key、versionCode 更高）；APK **只交付、不安装**。
 - 本次**未创建 GitHub Release**（按用户要求只提交并推送代码）。
 - 验收步骤： [`TESTING.md`](TESTING.md) §22.0 – §22.7。
+
+## 12. 1.5.3 追加（同一版本号 2026100601）：制式列表各代际「自动适配运营商」+ 孤儿进程清扫修复 + 假 WARN 修复
+
+> 本节与 §11 是**同一个版本**（`versionName = "1.5.3"`、`versionCode = 2026100601`，用户明确要求
+> 「版本号不变」）。§11.4 / §11.5 里「34 项 → 29 + 1 个合成项」的描述**已被 §12.2 覆盖**：用户选择
+> **不隐藏任何条目**，四个运营商版 5G 自动照旧列出，只在每个代际组顶部**增加**一行合成项。
+> 同一版本号下构建了两次，APK 哈希以 §12.6 为准（§11.6 的哈希是第一次构建的，已过期）。
+
+### 12.1 本轮三条需求与范围
+
+| # | 需求（用户原话要点） | 本轮的处置 |
+| --- | --- | --- |
+| T1 | 「制式选择器上 4g 3g 2g 都照着 5g 来改运营商自动」 | 新增各代际运营商解析表 + 每个代际组顶部一行合成项（§12.2） |
+| T2 | 「再修掉这种孤儿进程，不过需要先做侦查」 | 先只读侦查（两个 subagent 报告），再按根因修门控 + 有界重试 + 结果可见（§12.3） |
+| T3 | 「侦查和修理 … shizuku getDefaultSlot：binder 调用抛异常 a80/b80: rememberCoroutineScope left the composition」 | 定位为「把协程取消误报成失败」，修 `ShizukuController.call()` 的 catch（§12.4） |
+
+铁律不变：先测量 / 先侦查，再改。判定语义、默认值、写入顺序（ITelephony → 权威存储 → settings）与写后回读校验一律未动。
+
+### 12.2 T1：4G / 3G / 2G 也做「自动适配运营商」
+
+**为什么需要一张新表**：`NetworkMode.OPERATOR_DEFAULTS` **只覆盖 5G 一档**
+（电信 27 / 移动 32 / 联通 26 / 广电 33）—— 那是「5G 自动」的运营商组网位掩码。4G/3G/2G 的「自动」
+没有现成默认值，所以新增 `CARRIER_AUTO_BY_GEN`；推导规则是**把该运营商 5G 默认模式的位掩码
+逐级去掉更高代际**（此表由用户确认采用）：
+
+| 代际 | 中国移动 | 中国联通 | 中国电信 | 中国广电 | 认不出运营商时 |
+| --- | --- | --- | --- | --- | --- |
+| 5G | 32 | 26 | 27 | 33 | 26（沿用 `OPERATOR_DEFAULTS` / `carrierDefault`） |
+| 4G | 20 | 9 | 10 | 22 | 9 |
+| 3G | 18 | 0 | 21 | 21 | 0 |
+| 2G | 1 | 1 | 4 | 1 | 1 |
+
+- 新增 `NetworkMode.carrierAutoForGen(gen, mcc, mnc)`：`gen >= 5` 直接转发给**原有**的
+  `carrierDefault(mcc, mnc)`（语义与 1.5.2 完全相同 —— 自动降级恢复写的仍是它），4/3/2 走新表 + 上表最后一列兜底。
+- 新增 `CarrierInfo.defaultModeForGen(context, subId, gen)`（复用已有的私有 `simMccMnc`，读 SIM 的公开 API 逻辑未动）。
+- 界面（`ui/screen/features/FeaturesPage.kt` 的 `ModePickerDialog`）：每个代际组**顶部**加一行合成项，
+  文案仍是「自动适配运营商（中国移动）」（括号里是按当前默认数据卡认出来的运营商，认不出来就没有括号）；
+  勾选态 = 当前制式**等于该代际按本机 SIM 解析出的值**；点按那一刻才解析出真正写入的值。
+- **用户选择「不隐藏」的后果（如实记录）**：当当前制式恰好等于「本卡运营商在该代际的默认值」时，
+  合成项与那一行**都会打勾**（例：移动卡 + 4G 组、当前值 20 ⇒「自动适配运营商」与
+  「4G/3G/2G 自动 (TD)」同时 `✓`）。这是刻意保留的可见冗余，不是 bug；要消除只能隐藏被合并项。
+- 列表规模：34 项枚举 = 32 行（同名去重：3 归并到 0、22 归并到 10）+ 每代际 1 行合成项 = **36 行**。
+
+### 12.3 T2：`com.katiusu.netpilot:np_service` 孤儿进程为什么清不掉
+
+**只读侦查结论（两个 subagent，未改任何文件、未跑 gradle）**：
+- 两条清扫路径最终都调到 `ShizukuControllerService.pruneStaleProcesses()` →
+  `StaleProcessPruner.prune(pkg)`：扫 `/proc` 数字目录读 `cmdline`，杀掉所有 cmdline 含
+  `<包名>:np_service` 且 `pid != myPid && pid > 1` 的进程（`core/priv/shizuku/StaleProcessPruner.kt`，64 行）。
+- **根因①（主因）**：`pruneOrphanedServices()` 的 CAS 在两道门控**之前** ——
+  `pruneOrphanOnce.compareAndSet(false, true)` 先置位，再判断 `shizukuAlive()` / `ensureServiceBinding()`。
+  启动那一刻 Shizuku 常常还没起来（开机/升级被 `BootReceiver` 冷启动时尤其如此），于是**唯一一次机会
+  被一次注定失败的尝试烧掉**；而进程有 `MonitorService` 的 START_STICKY + 15 分钟心跳长期活着，
+  **再也没有第二次 `onCreate`**。
+- **根因②**：另一条路径 `pruneStaleServices()` 只在**真的要用特权通道**（probe 成功）时才走到；本机主力是 root
+  ⇒ 那条是死代码（`ControlManager.acquire()` 先试 Root）。
+- **根因③**：清扫结果只写 `WriteDiag.detail`，简要日志模式下不输出 ⇒「清没清掉」从日志里看不见。
+- 实测本机：`root 8800 1 … com.katiusu.netpilot:np_service`，PPID=1、RSS 60 812 KB ≈ 59 MB，而 pid 序列
+  （主进程 8386 < 8800 < app_process 15065 < shizuku_server 15400）说明它的父进程已死、当前 Shizuku server
+  根本不认识它 —— 典型孤儿。
+
+**修法（本轮落地）**：
+1. 两个标志的语义统一成「**清扫命令真的成功执行过**才算做过」：门控在前，只有 AIDL 调用返回 `>= 0` 才置位
+   （`pruneStaleOnce` 与 `pruneOrphanOnce` 同步改）。
+2. 返回值区分「**没执行**」(-1，`PRUNE_NOT_RUN`) 与「执行了、清了 N 个」(>= 0)：调用方据此决定是否重试
+   （`PRUNE_DONE = 0` 表示已经清过、不必再试）。
+3. `TemplateApp.pruneShizukuOrphans()` 改成**有界重试**：立刻 / 30 s / 2 min / 5 min 共 4 次，任何一次真的
+   执行成功就停；仍是守护线程，不拖慢 `Application.onCreate`。
+4. 结果可见：真的回收了进程时用 `WriteDiag.always`（无条件 INFO，简要模式也写进日志页）记一行
+   「shizuku 启动清扫：回收 N 个残留用户服务进程」；没清到时仍是 detail —— 免得每次启动都往日志页刷一行。
+5. **新增防误杀**：`ControlManager.pruneOrphanedServices()` 里若缓存中正握着一条活的 **Shizuku** 通道，
+   就直接跳过本次清扫（`cachedChannel?.method == ControlMethod.SHIZUKU`）—— 清扫是在用户服务进程里杀掉
+   所有同类进程，会把当前正在用的那个一起杀掉；root 通道不依赖 `:np_service`，不受影响。
+
+**诚实边界**：Shizuku 的公共 API 不提供「用户服务进程 pid / 进程列表」（javap 全量核对过），因此无法只杀
+「确实没用的那个」；本方案依赖 `StaleProcessPruner` 原有的判据（在用户服务进程内执行、跳过 `myPid`），
+只是把它**真的跑到**，并用第 5 条把「正在用」的场景排除掉。
+
+### 12.4 T3：那两条 WARN 是什么，为什么不是故障
+
+**日志模板唯一出处**：`core/priv/shizuku/ShizukuController.kt` 的 `call()` 里
+`WriteDiag.failure("shizuku $op：binder 调用抛异常 ${e.javaClass.simpleName}: ${e.message}")`。
+`$op` = `"getDefaultSlot"`；观测到的 `a80` / `b80` 是 **R8 混淆后的类名**，经 `mapping.txt` +
+`apkanalyzer dex code --class` 反查定论：
+
+| 日志里的名字 | 来自哪个构建 | 真实类 |
+| --- | --- | --- |
+| `a80`（10-06 04:53:14） | 1.5.2 APK（`.class public final La80;`，super `Lgb1;`） | `androidx.compose.runtime.ForgottenCoroutineScopeException` |
+| `b80`（10-06 11:22:12） | 1.5.3 APK（`.class public final Lb80;`） | 同上（1.5.3 mapping：`ForgottenCoroutineScopeException -> b80:`） |
+
+两条的消息体都是 `rememberCoroutineScope left the composition` ⇒ 这是 Compose 在
+**`rememberCoroutineScope()` 所在组合被销毁**时用来取消该作用域 Job 的取消原因
+（`ForgottenCoroutineScopeException extends PlatformOptimizedCancellationException`，即 `CancellationException`
+的子类；兄弟类 `LeftCompositionCancellationException` 的消息是 "The coroutine scope left the composition"，
+属于 `LaunchedEffect`）。
+
+**链路**：`ui/screen/home/HomePage.kt:75` 的 `rememberCoroutineScope()`（`:100` / `:115` / `:262-265` 三处调用
+`NetPilot.defaultDataSubId()`）在页面**整体离开组合**时被取消 —— 触发条件是滑离两页以上
+（`MainActivity.kt` 的 `beyondViewportPageCount = 1`，组合窗口只有当前页 ±1）、Activity 重建或对话框关闭。
+此时正卡在 `call("getDefaultSlot")` 的 `withContext(Dispatchers.IO)` 恢复点上的协程抛出取消，
+被 `call()` 的 `catch (e: Throwable)` 当成故障记成 WARN（每条 WARN 还会触发一次日志落盘）。
+功能影响：**无** —— binder 事务已下发，返回值本来就无人使用；真正的隐患是「真异常与取消混在一起」。
+
+**修法**：在 `catch (e: Throwable)` 之前补 `catch (e: CancellationException) { throw e }`
+（`call()` 与 `ensureServiceBinding()` 两处；后者旧写法会把绑定期取消记成「用户服务未绑定」），
+KDoc 的「绝不抛给 UI」补上「**但协程取消除外**」。超时 / 未绑定 / 真异常的降级判定完全不变，
+取消按协程规则上抛，调用方（都在 `scope.launch` 或 `runCatching` 里）只会安静结束协程，不会崩。
+
+### 12.5 改动清单（本轮 T1–T3）
+
+| 编号 | 文件 | 改动 |
+| --- | --- | --- |
+| C56 | `core/mode/NetworkMode.kt` | 新增 `CARRIER_AUTO_BY_GEN`、`CARRIER_AUTO_FALLBACK_BY_GEN`、`carrierAutoForGen(gen, mcc, mnc)` |
+| C57 | `core/monitor/MonitorSettings.kt` | `CarrierInfo.defaultModeForGen(context, subId, gen)` |
+| C58 | `ui/screen/features/FeaturesPage.kt` | 组内不再过滤（34 项全保留）；每个代际组顶部一行合成项 + `autoModeByGen` 勾选态 |
+| C59 | `core/priv/shizuku/ShizukuController.kt` | 两个清扫标志改为「成功才置位」、返回 -1/0/N 区分语义、回收数改用 `WriteDiag.always`；`catch (CancellationException) { throw e }` ×2 |
+| C60 | `core/priv/ControlManager.kt` | `pruneOrphanedServices()` 返回 -1 约定 + 「缓存里是活 Shizuku 通道就跳过清扫」防误杀 |
+| C61 | `TemplateApp.kt` | 启动清扫改 4 次有界重试（0 / 30 s / 2 min / 5 min） |
+
+**判定语义不变的论证**：T1 只改列表呈现与 `setMode` 的入参来源（新表是 5G 表的逐级推导 + 用户确认的映射），
+`carrierDefault()` 未动 ⇒ 自动降级恢复、`DEFAULT_DOWNGRADE`、`quickPresets`、`SHORT_LABEL_*` 全部不变；
+T2 只改清扫时机与返回值，不进任何降级判定路径；T3 只改异常分类，成功路径一行未动。
+
+### 12.6 产物与验收（本轮追加构建）
+
+- 同一版本号（1.5.3 / 2026100601）下的**第二次构建**，产物仍叫 `NetPilot-1.5.3-2026100601-release.apk`
+  （**只出 release**；R8 配置未变：`isMinifyEnabled = true` + `proguard-android-optimize.txt` +
+  `app/proguard-rules.pro` 的 5 条 keep）。
+
+| 文件 | 大小（字节） | MD5 | SHA-256 |
+| --- | --- | --- | --- |
+| `NetPilot-1.5.3-2026100601-release.apk` | 4 153 775 | `37752ed35a2fa02ddf5d955e7d3f915a` | `45f1fac6a6914acf8f335467030d509fc26d7a82138e6772325cb081abc36b5b` |
+
+- 编译校验：`bash _build.sh :app:compileDebugKotlin` → **BUILD SUCCESSFUL in 22s**（增量，只有 `compileDebugKotlin` 执行）。
+- release 构建：`bash _build.sh :app:assembleRelease --no-configuration-cache` → **BUILD SUCCESSFUL in 11m 42s**，
+  `Task :app:minifyReleaseWithR8` 已执行；dex 合计 **3 151 324 B、1 个**（本轮改动前的 1.5.3 为 3 149 832 B ⇒ **+1 492 B**）。
+- 静态校验：`aapt2 dump badging` → `versionCode='2026100601' versionName='1.5.3'`、minSdk 34 / targetSdk 36 /
+  compileSdk 37；APK **150 条目**、`AndroidManifest.xml`（16 620 B）与 `resources.arsc`（813 588 B）完好；
+  5 条 keep 目标（`PrivilegedCli`、`ShizukuControllerService`、`IShizukuController` 与其 `$Stub` / `$Stub$Proxy`）
+  以及 `MainActivity` / `MonitorService` / `BootReceiver` / `KeepAliveReceiver` / `NetworkModeTileService` /
+  `DowngradeTileService` 全部在 dex 字符串池里；`apksigner verify` 通过、证书 SHA-256 `34100875…ac4c`
+  （与 1.3.0 以来同一把 key）；`zipalign -c 4` 通过。
+- `mapping.txt` 里 `androidx.compose.runtime.ForgottenCoroutineScopeException -> b80:` 仍在 —— 反查 12.4 表格的证据可复现。
+- 架构自检（`code_architecture_review`，108 文件）：**无循环依赖**、无扇入/扇出热点；超大模块 5 个（均为既有）：
+  `ui/screen/monitor/MonitorPage.kt` 710、`MainActivity.kt` 643、`ui/screen/settings/SettingsPage.kt` 621、
+  `ui/screen/log/LogPage.kt` 592、`ui/screen/features/FeaturesPage.kt` 592。
+- 安装说明：versionCode 与上一版相同（用户要求不改版本号），签名相同 ⇒ 覆盖安装是允许的
+  （Android 只要求签名一致，`adb install -r` 即可覆盖）。**APK 只交付、不安装。**
+- 验收步骤： [`TESTING.md`](TESTING.md) §23.0 – §23.6。

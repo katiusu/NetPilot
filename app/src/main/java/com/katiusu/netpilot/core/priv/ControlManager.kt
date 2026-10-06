@@ -296,11 +296,18 @@ object ControlManager {
      *
      * 走 [ShizukuController.pruneOrphanedServices] 而不是 [acquire]：清孤儿的目的是省内存，
      * 不能顺手把通道缓存改成「已绑定」状态，也不能因为网络健康就走不到这一步。
-     * Shizuku 不可用时返回 0 —— 这条路径失败不影响任何功能。
+     * Shizuku 不可用（或这次没能执行）返回 -1 —— 这条路径失败不影响任何功能，调用方
+     * （TemplateApp 启动线程）看到负数就稍后重试，看到 >= 0 就说明清扫真的跑过了。
+     *
+     * 1.5.3：如果缓存里正握着一条活的 **Shizuku** 通道，就直接跳过这次清扫 ——
+     * 清扫是在用户服务进程里杀掉所有 `<包名>:np_service` 进程，而当前通道正在用的那个
+     * 也是同类，清它会顺手杀掉自己正在用的服务。root 通道不受清扫影响（它不依赖
+     * `:np_service`），所以只有 Shizuku 通道需要跳过。
      */
     suspend fun pruneOrphanedServices(): Int {
-        val ctx = contextOrNull() ?: return 0
-        return runCatching { ShizukuController(ctx).pruneOrphanedServices() }.getOrDefault(0)
+        if (cachedChannel?.method == ControlMethod.SHIZUKU) return -1
+        val ctx = contextOrNull() ?: return -1
+        return runCatching { ShizukuController(ctx).pruneOrphanedServices() }.getOrDefault(-1)
     }
 
     // ---------------- 内部 ----------------

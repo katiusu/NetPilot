@@ -13,6 +13,7 @@ import com.katiusu.netpilot.core.priv.ChannelStatus
 import com.katiusu.netpilot.core.priv.ControlMethod
 import com.katiusu.netpilot.core.priv.NetworkControlChannel
 import com.katiusu.netpilot.core.priv.WriteDiag
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -209,8 +210,12 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
      * 清扫只是省内存，失败一律静默，绝不影响通道可用性。
      */
     private suspend fun pruneStaleServices() {
-        if (!pruneStaleOnce.compareAndSet(false, true)) return
+        // 1.5.3：标志改成「真的把清扫命令发出去并得到回答」之后才置位（理由见 [pruneStaleOnce]）。
+        // 旧写法先 CAS 再调用，一次超时/绑定失败就把这次机会烧掉，同进程内不会再来第二次。
+        if (pruneStaleOnce.get()) return
         val removed = call("pruneStaleProcesses", -1) { it.pruneStaleProcesses() }
+        if (removed < 0) return
+        pruneStaleOnce.set(true)
         if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
         WriteDiag.detail("shizuku 清扫残留用户服务进程：杀掉 $removed 个")
     }
@@ -227,16 +232,34 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
      * 清完立刻 [destroy]（unbind remove = true），既不留常驻进程，也不占用
      * [com.katiusu.netpilot.core.priv.ControlManager] 的通道缓存。
      *
-     * @return 清掉的孤儿进程数；Shizuku 没装 / 没授权 / 绑定失败一律返回 0（全静默）。
+     * @return 清掉的孤儿进程数（>= 0，含 0）；**负数表示这次没执行**（Shizuku 未运行 /
+     *   没授权 / 绑定失败 / 调用失败），调用方可以在稍后重试 —— 这个「没执行」和「执行了但
+     *   一个都没清到」必须分开，否则调用方无法知道该不该重试（1.5.3）。
      */
     suspend fun pruneOrphanedServices(): Int {
-        if (!pruneOrphanOnce.compareAndSet(false, true)) return 0
-        if (!shizukuAlive()) return 0
-        if (!ensureServiceBinding()) return 0
+        // 1.5.3 修掉的两个缺陷（旧写法：CAS 在最上面，然后才是两道门控）：
+        // ① 门控必须在置位之前 —— 启动清扫是在 Application.onCreate 里立刻起线程的，而开机/升级
+        //    冷启动那一刻 Shizuku 服务端常常还没起来（或被系统按住），绑定必然失败；旧写法把
+        //    「唯一一次机会」烧在那次失败上，本次进程内再也不会重试，于是用户后来正常用起
+        //    Shizuku 也清不掉上次遗留的孤儿（实测本机就有一个从开机留到现在、约 59 MB 的
+        //    `:np_service`）。
+        // ② 标志只在**命令真的发出去并得到回答**之后才置位，返回值区分「没执行」(-1) 与
+        //    「执行了、清了 N 个」(>= 0)，好让调用方按需要重试。
+        if (pruneOrphanOnce.get()) return PRUNE_DONE
+        if (!shizukuAlive()) return PRUNE_NOT_RUN
+        if (!ensureServiceBinding()) return PRUNE_NOT_RUN
         return try {
             val removed = call("pruneStaleProcesses", -1) { it.pruneStaleProcesses() }
-            if (removed > 0) Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
-            WriteDiag.detail("shizuku 启动清扫：杀掉 $removed 个残留用户服务进程")
+            if (removed < 0) return PRUNE_NOT_RUN
+            pruneOrphanOnce.set(true)
+            if (removed > 0) {
+                Log.i(TAG, "pruned $removed stale Shizuku user service process(es)")
+                // 简要模式下 detail 会被丢掉，而「孤儿到底清没清掉」正是这类改动唯一能自证的东西；
+                // 只在真清到东西时用无条件级别，免得每次启动都往日志页刷一行。
+                WriteDiag.always("shizuku 启动清扫：回收 $removed 个残留用户服务进程")
+            } else {
+                WriteDiag.detail("shizuku 启动清扫：没有需要回收的残留进程")
+            }
             removed
         } finally {
             // 无论清没清到，都解绑这次临时绑定的用户服务 —— 否则清扫动作本身就变成了新的孤儿。
@@ -271,6 +294,10 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
                 WriteDiag.failure("shizuku 绑定：${BIND_TIMEOUT_MS}ms 内没等到 onServiceConnected")
             }
             bound
+        } catch (e: CancellationException) {
+            // 1.5.3：协程取消不是「绑定失败」。绑定期被取消（页面离开组合、TileService 被销毁）
+            // 旧代码会记成「用户服务未绑定」，把正常取消误报成故障 —— 原样上抛。
+            throw e
         } catch (e: Throwable) {
             Log.e(TAG, "bindUserService failed: ${e.javaClass.simpleName}: ${e.message}")
             WriteDiag.failure("shizuku 绑定：bindUserService 抛异常 ${e.javaClass.simpleName}: ${e.message}")
@@ -284,7 +311,8 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
      * ⚠ 进特权进程的 binder 调用**可能永久挂住**：同步 binder transaction 没有内核级超时，
      * 用户服务里一旦死循环，调用方就再也回不来。这里用 [CALL_TIMEOUT_MS] 包一层只能保证
      * 协程在挂起状态下可被取消；对阻塞在 transact 上的同步调用它无法真正中断，
-     * 所以每个调用都必须是幂等/可重入的，超时或异常一律降级成 [default]，绝不抛给 UI。
+     * 所以每个调用都必须是幂等/可重入的，超时或真异常一律降级成 [default]，绝不抛给 UI；
+     * **但协程取消除外**（1.5.3）：取消要原样上抛，见下面的 catch (e: CancellationException)。
      */
     private suspend fun <T> call(op: String, default: T, block: (IShizukuController) -> T): T {
         if (service == null && !ensureServiceBinding()) {
@@ -311,6 +339,16 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
                     drainRemoteDiag()
                 }
             }
+        } catch (e: CancellationException) {
+            // 1.5.3 修：协程取消不是「binder 调用失败」。
+            // 日志页里那两条 `shizuku getDefaultSlot：binder 调用抛异常 a80/b80:
+            // rememberCoroutineScope left the composition` 就是这么来的：调用方是页面/对话框的
+            // Composition 作用域，页面离开组合（滑走两页以上、Activity 重建、对话框关闭）时
+            // Compose 用 ForgottenCoroutineScopeException（CancellationException 的子类）取消该作用域，
+            // 取消在 withContext 的恢复点抛出，被下面的 catch (Throwable) 当故障记了下来 ——
+            // 每条 WARN 还会触发一次日志落盘。取消必须原样上抛，否则「真异常」与「正常取消」
+            // 混在一起，诊断价值被稀释。
+            throw e
         } catch (e: Throwable) {
             Log.w(TAG, "binder call failed: ${e.javaClass.simpleName}: ${e.message}")
             WriteDiag.failure("shizuku $op：binder 调用抛异常 ${e.javaClass.simpleName}: ${e.message}")
@@ -369,6 +407,12 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
         const val DRAIN_TIMEOUT_MS = 3_000L
         const val POLL_INTERVAL_MS = 100L
 
+        /** [pruneOrphanedServices] 的「这次没执行」返回值：Shizuku 未运行 / 绑定失败 / 调用失败。 */
+        const val PRUNE_NOT_RUN = -1
+
+        /** [pruneOrphanedServices] 的「已经清过、不必再试」返回值。 */
+        const val PRUNE_DONE = 0
+
         /**
          * 孤儿进程清扫的两个入口各用**独立**标志，不能共用。
          *
@@ -377,6 +421,11 @@ class ShizukuController(private val context: Context) : NetworkControlChannel {
          * 先赢，于是 [pruneStaleServices]（probe 成功后才走的那条）实际从不生效；反过来
          * 若 probe 先赢，启动清扫就直接返回 0，上一次运行遗留的孤儿无人清。
          * 两条路径各自只做一次即可，互不顶掉。
+         *
+         * 1.5.3 再修：这两个标志的语义统一成「**清扫命令真的成功执行过**才算做过」——
+         * 不再用 compareAndSet 抢在调用之前置位。启动那一刻 Shizuku 没起来是常态，
+         * 「先置位再失败」会让唯一一次机会被一次注定失败的尝试烧掉，而进程又有
+         * MonitorService 的 START_STICKY + 15 分钟心跳长期活着，再也没有第二次 onCreate。
          */
         val pruneStaleOnce = AtomicBoolean(false)
         val pruneOrphanOnce = AtomicBoolean(false)

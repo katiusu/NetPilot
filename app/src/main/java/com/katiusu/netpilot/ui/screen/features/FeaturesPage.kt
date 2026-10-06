@@ -440,16 +440,18 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
     }
 
     val cur = current
-    // 1.5.3：合并列表里的重复项与「运营商专版 5G 自动」。
-    // 1) 26/27/32/33 四条都是「5G/4G/3G/2G 自动」，区别只在按哪家运营商组网；该选哪条
-    //    取决于插的哪张卡，让用户自己挑反而容易选错（选错更容易掉网），所以合并成一条
-    //    「自动适配运营商」—— 点按那一刻才按当前 SIM 的 MCC/MNC 解析出真正要写的值。
-    // 2) 0 与 3（都是「3G/2G 自动」）、10 与 22（都是「4G/3G/2G 自动 (全制式)」）底层是
-    //    同一组位掩码（回读都会归一），列表里并排两行一模一样的文字只会让人以为其中
-    //    一个不同，按 label 去重，保留枚举里靠前的那条。
+    // 1.5.3：列表里的两类合并。
+    // 1) 每个代际组顶部补一行「自动适配运营商」：同一代际的自动模式会按插的哪张卡分成好几条
+    //    （5G 的 26/27/32/33 连名字里都写着运营商），让用户自己挑本身就是错的设计，挑错更容易
+    //    掉网；点按那一刻才按当前 SIM 的 MCC/MNC 解析出**该代际**真正要写的值。
+    // 2) 0 与 3（都是「3G/2G 自动」）、10 与 22（都是「4G/3G/2G 自动 (全制式)」）底层是同一组
+    //    位掩码（回读都会归一），列表里并排两行一模一样的文字只会让人以为其中一个不同，
+    //    按 label 去重，保留枚举里靠前的那条。
+    // 3) 合成行**不隐藏**任何原有条目：隐藏会让某些值在界面上再也选不到（4G 的 9 还是网络降级
+    //    的默认目标），代价是当前值正好等于该运营商的默认档时，合成行与那一行会同时打勾 ——
+    //    两行本来就指向同一个值，打两个勾不算说谎。
     val pickerGroups = remember {
         NetworkMode.entries
-            .filter { it.value !in AUTO_CARRIER_MODES }
             .groupBy { it.gen }
             .map { (gen, modes) -> gen to modes.distinctBy { it.label } }
             .sortedByDescending { it.first }
@@ -466,6 +468,17 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
         stringResource(R.string.np_mode_auto_carrier_named, carrierName)
     } else {
         stringResource(R.string.np_mode_auto_carrier)
+    }
+    // 每个代际的解析结果，只用来决定合成行要不要打勾；点按时会重新解析一次（用户可能刚换卡）。
+    val autoModeByGen = remember(subId) {
+        if (subId < 0) {
+            emptyMap()
+        } else {
+            listOf(5, 4, 3, 2).associateWith { gen ->
+                runCatching { CarrierInfo.defaultModeForGen(context, subId, gen) }
+                    .getOrDefault(-1)
+            }
+        }
     }
 
     // 点一行 → 写一次制式。抽成局部函数是因为 1.5.3 之后两类行共用它：普通制式项，
@@ -520,20 +533,18 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    if (gen == 5) {
-                        ModePickerRow(
-                            label = autoCarrierLabel,
-                            selected = cur != null && cur in AUTO_CARRIER_MODES,
-                        ) {
-                            // 「自动适配运营商」要写的那条值只有点按这一刻才知道
-                            // （与自动降级恢复时用的是同一张 MCC/MNC 表、同一个入口）。
-                            // 兜底 26 就是 CarrierInfo 自己文档里写的兜底值（读不到 SIM 时它
-                            // 返回 26），这里只防它抛异常；NetworkMode 的 FALLBACK 是私有的。
-                            val target = runCatching {
-                                CarrierInfo.defaultModeForActiveSubscription(context, subId)
-                            }.getOrDefault(26)
-                            NetworkMode.fromValue(target)?.let { writeMode(it) }
-                        }
+                    // 「自动适配运营商」：要写的那条值只有点按这一刻才知道（与自动降级恢复
+                    // 时用的是同一张 MCC/MNC 表，按代际取一档）。兜底 26 就是 CarrierInfo 自己
+                    // 文档里写的兜底值（读不到 SIM 时它返回 26），这里只防它抛异常；
+                    // NetworkMode 的 FALLBACK 是私有的。
+                    ModePickerRow(
+                        label = autoCarrierLabel,
+                        selected = cur != null && cur == autoModeByGen[gen],
+                    ) {
+                        val target = runCatching {
+                            CarrierInfo.defaultModeForGen(context, subId, gen)
+                        }.getOrDefault(26)
+                        NetworkMode.fromValue(target)?.let { writeMode(it) }
                     }
                     modes.forEach { mode ->
                         ModePickerRow(label = mode.label, selected = mode.value == cur) {
@@ -570,15 +581,6 @@ private fun ModePickerRow(
         modifier = Modifier.fillMaxWidth(),
     )
 }
-
-/**
- * 被「自动适配运营商」合并掉的四条 5G 自动（1.5.3）。
- *
- * 26 联通 / 27 电信 / 32 移动 / 33 广电 —— 它们只在「按哪家运营商组网」上不同，而这取决于
- * 插的哪张卡；列表里让用户自己挑本身就是错的设计，挑错反而更容易掉网。
- * 判定「当前制式是否就是这一项」时也用它。
- */
-private val AUTO_CARRIER_MODES = setOf(26, 27, 32, 33)
 
 /** 制式分组标题（按 [NetworkMode.gen] 分四档）。 */
 private fun genTitleRes(gen: Int): Int = when (gen) {

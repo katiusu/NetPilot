@@ -199,6 +199,69 @@ enum class NetworkMode(val value: Int, val label: String, val gen: Int) {
         fun carrierDefault(mcc: String?, mnc: String?): NetworkMode =
             operatorEntry(mcc, mnc)?.mode ?: BY_VALUE.getValue(FALLBACK)
 
+        /**
+         * 各代际的「运营商自动」取值（键 = [NetworkMode.gen]），只覆盖 4G/3G/2G。
+         *
+         * 5G 那一档不进这张表：它由 [OPERATOR_DEFAULTS] 提供，同一份数字写两遍迟早会不一致，
+         * 而 5G 档是自动降级「恢复」真正写回的值，改错的代价最大。
+         *
+         * 数字怎么来的：把该运营商 5G 默认模式的位掩码**逐级去掉更高代际** —— 去掉 NR 得 4G 档、
+         * 再去掉 LTE 得 3G 档、只剩 2G 得 2G 档。同一条「自动适配运营商」在四个代际组里因此指向
+         * 同一张网的同一种组网方式，不会出现「5G 组认成联通、4G 组认成电信」这种事。
+         *
+         * | gen | 移动 | 联通 | 电信 | 广电 |
+         * | --- | --- | --- | --- | --- |
+         * | 5 | 32 | 26 | 27 | 33 |
+         * | 4 | 20 | 9 | 10 | 22 |
+         * | 3 | 18 | 0 | 21 | 21 |
+         * | 2 | 1 | 1 | 4 | 1 |
+         *
+         * 广电没有自己的 2G/3G：3G 档取 21（含 CDMA/EVDO 的全制式）、2G 档取 1（GSM），都是
+         * 「靠漫游能用的最小集合」，与它 5G 档取 33（全制式）的取舍一致。
+         */
+        private val CARRIER_AUTO_BY_GEN: Map<Int, Map<Carrier, NetworkMode>> = mapOf(
+            4 to mapOf(
+                Carrier.CHINA_MOBILE to LTE_TDSCDMA_GSM_WCDMA,
+                Carrier.CHINA_UNICOM to LTE_GSM_WCDMA,
+                Carrier.CHINA_TELECOM to LTE_CDMA_EVDO_GSM_WCDMA,
+                Carrier.CHINA_BROADNET to LTE_TDSCDMA_CDMA_EVDO_GSM_WCDMA,
+            ),
+            3 to mapOf(
+                Carrier.CHINA_MOBILE to TDSCDMA_GSM_WCDMA,
+                Carrier.CHINA_UNICOM to WCDMA_PREF,
+                Carrier.CHINA_TELECOM to TDSCDMA_CDMA_EVDO_GSM_WCDMA,
+                Carrier.CHINA_BROADNET to TDSCDMA_CDMA_EVDO_GSM_WCDMA,
+            ),
+            2 to mapOf(
+                Carrier.CHINA_MOBILE to GSM_ONLY,
+                Carrier.CHINA_UNICOM to GSM_ONLY,
+                Carrier.CHINA_TELECOM to CDMA,
+                Carrier.CHINA_BROADNET to GSM_ONLY,
+            ),
+        )
+
+        /** 识别不出运营商时各代际的通用档（4G/3G/2G；5G 由 [carrierDefault] 自己的兜底负责）。 */
+        private val CARRIER_AUTO_FALLBACK_BY_GEN: Map<Int, NetworkMode> = mapOf(
+            4 to LTE_GSM_WCDMA,
+            3 to WCDMA_PREF,
+            2 to GSM_ONLY,
+        )
+
+        /**
+         * 按 (mcc, mnc) 取「该代际的运营商自动模式」，供界面里每个代际组的那一行合成项使用。
+         *
+         * 5G 档直接复用 [carrierDefault]：两者按设计必须一致，而后者是自动降级恢复写回的值，
+         * 语义不能动。其余代际查 [CARRIER_AUTO_BY_GEN]；识别不出运营商（境外卡、未收录号段、
+         * SIM 未就绪）时给该代际的通用档；代际本身不在表里则给 [FALLBACK]。
+         */
+        fun carrierAutoForGen(gen: Int, mcc: String?, mnc: String?): NetworkMode {
+            if (gen >= 5) return carrierDefault(mcc, mnc)
+            val table = CARRIER_AUTO_BY_GEN[gen] ?: return BY_VALUE.getValue(FALLBACK)
+            return carrierOf(mcc, mnc)?.let { table[it] }
+                ?: CARRIER_AUTO_FALLBACK_BY_GEN[gen]
+                ?: BY_VALUE.getValue(FALLBACK)
+        }
+
         /** 制式值 → 可读长名（列表/日志用）；未知值不抛异常，而是显式提示。 */
         fun labelOf(value: Int): String = BY_VALUE[value]?.label ?: "未知模式($value)"
 
