@@ -63,6 +63,18 @@ object LogStore {
      */
     private const val PERSIST_INTERVAL_MS = 30_000L
 
+    /**
+     * 只发生 DEBUG 级日志时的落盘窗口（1.5.3）。
+     *
+     * 降级态会每个采样周期刷一条「仍满足降级条件」的 DEBUG，改动前它与 WARN 共用
+     * [PERSIST_INTERVAL_MS]，于是「后台一直有 DEBUG」就等于「每 30 秒把最近
+     * [PERSIST_ENTRIES] 条整份序列化 + commit 一次」。分档后这类活动按 5 分钟落盘，
+     * 长期停在一个降级状态时闪存写入降到原来的 1/10。日志页读的是内存里的环形缓冲，
+     * 界面看到的内容不受影响；代价是进程被系统杀掉时最多丢 5 分钟的**纯 DEBUG** 行
+     * （WARN/ERROR 仍走 30 秒窗口，ERROR 依旧立即强制落盘）。
+     */
+    private const val PERSIST_DEBUG_INTERVAL_MS = 300_000L
+
     /** 阻塞式落盘（用户点「清空日志」用）的最长等待，任何情况下都不卡死调用线程。 */
     private const val WRITE_TIMEOUT_MS = 2_000L
 
@@ -91,6 +103,10 @@ object LogStore {
 
     @Volatile
     private var dirty = false
+
+    /** 自上次落盘以来是否出现过 WARN/ERROR（1.5.3），决定这次用哪个落盘窗口。 */
+    @Volatile
+    private var importantSincePersist = false
 
     val entries: List<LogEntry> get() = buffer
 
@@ -127,6 +143,7 @@ object LogStore {
         buffer += entry
         while (buffer.size > MAX_ENTRIES) buffer.removeAt(0)
         dirty = true
+        if (level == LogLevel.WARN || level == LogLevel.ERROR) importantSincePersist = true
         maybePersist(force = level == LogLevel.ERROR)
     }
 
@@ -158,10 +175,13 @@ object LogStore {
     private fun persist(force: Boolean, blocking: Boolean) {
         val ctx = appContext ?: return
         val now = System.currentTimeMillis()
-        if (!force && now - lastPersistAt < PERSIST_INTERVAL_MS) return
+        // 1.5.3：DEBUG-only 的活动按更宽的窗口落盘，见 importantSincePersist。
+        val interval = if (importantSincePersist) PERSIST_INTERVAL_MS else PERSIST_DEBUG_INTERVAL_MS
+        if (!force && now - lastPersistAt < interval) return
         if (!dirty) return
         lastPersistAt = now
         dirty = false
+        importantSincePersist = false
         // 快照必须在这里取：buffer 是 Compose 的 SnapshotStateList，交给另一个线程延迟读不安全。
         val pending = buffer.takeLast(PERSIST_ENTRIES).toList()
         val task = Runnable { writeEntries(ctx, pending) }

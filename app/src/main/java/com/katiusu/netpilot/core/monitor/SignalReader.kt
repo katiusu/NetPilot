@@ -90,6 +90,15 @@ object SignalReader {
         pingTimeoutMs: Int,
         allowProbeSkip: Boolean,
         strongRsrpThreshold: Int,
+        /**
+         * 1.5.3 息屏降频：允许跳过时，这一轮无论信号强弱都跳。
+         *
+         * 与 [allowProbeSkip] 分开是因为两者含义不同：[allowProbeSkip] 由调用方判定
+         * 「这一轮跳过探测不会改变任何判定」，而本参数是调用方自己的**节流**决定
+         * （距上次真探不足窗口）。它只在 [allowProbeSkip] 为真时起作用 —— 界面快采、
+         * 「立即检测」、Tasker 采样这些用户主动要读数的路径必须永远真探。
+         */
+        forceSkipProbe: Boolean = false,
     ): SignalSnapshot {
         val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         val activeNetwork = runCatching { manager?.activeNetwork }.getOrNull()
@@ -219,7 +228,10 @@ object SignalReader {
         // 1.4.0 起「信号强」还不够：假满格只在 5G / 5G+ 上判定（见
         // DowngradeThresholds.fakeFullBarOnNrOnly），非 NR 驻留时 pingMs 连上面那条
         // 分支都不会被读到，所以「探不探都不改判定」这个结论只会更强，不会更弱。
-        val skipProbe = allowProbeSkip && !(rsrp != null && rsrp > strongRsrpThreshold)
+        // 1.5.3：allowProbeSkip 为真时，既有的「信号非强就跳」规则照旧；新增的
+        // forceSkipProbe 是调用方的息屏节流（信号强也跳），见 tick() 里的窗口说明。
+        val skipProbe = allowProbeSkip &&
+            (forceSkipProbe || !(rsrp != null && rsrp > strongRsrpThreshold))
         val ping = if (skipProbe) {
             PingResult(ms = null, error = null, target = pingTarget)
         } else {

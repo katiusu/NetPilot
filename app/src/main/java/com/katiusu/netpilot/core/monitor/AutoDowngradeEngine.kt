@@ -62,14 +62,27 @@ class AutoDowngradeEngine(private val context: Context) {
         val maySkipProbe = allowProbeSkip &&
             !_state.value.active &&
             !isScreenInteractive()
+        // 1.5.3：息屏后台轮次不再每轮都探。
+        // 原规则只在「信号非强」时跳（那一轮判定不读 pingMs），但信号强的那一轮照样会去
+        // ping —— 一次 HTTP 探测要唤醒网络栈，而屏幕关着的时候它的唯一读者是「假满格」
+        // 那条判定（弱信号/兜底分支只看 RSRP，见 FakeSignalDetector.judge 与
+        // docs/POWER_REPORT.md §3 的逐分支核对）。现在把息屏探测压到最多
+        // BACKGROUND_PROBE_BACKOFF_MS 一次：**判定规则一个字没改**，改的是「多久问一次」，
+        // 代价是息屏期间「假满格」最晚被推迟这么久才被发现；屏幕一亮、或者界面快采 /
+        // 「立即检测」/Tasker 采样这类主动读数（allowProbeSkip = false）立刻回到每轮真探。
+        val probeThrottled = maySkipProbe &&
+            System.currentTimeMillis() - lastProbeAtMs < BACKGROUND_PROBE_BACKOFF_MS
         val snapshot = SignalReader.read(
             context = context,
             subId = subId,
             pingTarget = thresholds.pingTarget,
             pingTimeoutMs = thresholds.pingTimeoutMs,
             allowProbeSkip = maySkipProbe,
+            forceSkipProbe = probeThrottled,
             strongRsrpThreshold = thresholds.rsrpThreshold,
         )
+        // 只有真的探了才刷新窗口起点；被跳过（无论哪条理由）的一轮不刷新。
+        if (!snapshot.probeSkipped) lastProbeAtMs = System.currentTimeMillis()
         // 只在「跳过/恢复」翻转时记一条日志：既能让用户查得到省电行为，
         // 又不会每轮刷一条（日志落盘本身也是耗电源之一）。
         if (snapshot.probeSkipped != probeSkipLogged) {
@@ -77,7 +90,7 @@ class AutoDowngradeEngine(private val context: Context) {
             LogStore.info(
                 TAG,
                 if (snapshot.probeSkipped) {
-                    "屏幕关闭且信号非强，本轮暂停 HTTP 探测（降级判定不受影响）"
+                    "屏幕关闭，本轮暂停 HTTP 探测（降级判定不受影响）"
                 } else {
                     "恢复 HTTP 探测"
                 },
@@ -92,6 +105,12 @@ class AutoDowngradeEngine(private val context: Context) {
 
     /** 上一次是否处于「跳过探测」状态，只用于翻转时记一条日志，避免每轮刷屏。 */
     private var probeSkipLogged = false
+
+    /** 最近一次**真探**的时刻（1.5.3 息屏降频），0 表示还没探过。 */
+    private var lastProbeAtMs = 0L
+
+    /** 上一次真正落盘的状态 JSON（1.5.3 脏检查），与当前状态一致时不再写盘。 */
+    private var lastPersistedJson: String? = null
 
     /**
      * 屏幕是否处于交互状态（亮着）。
@@ -302,9 +321,11 @@ class AutoDowngradeEngine(private val context: Context) {
     }
 
     private suspend fun readModeOrMinusOne(subId: Int): Int {
-        val channel = ControlManager.acquire() ?: return -1
-        val mode = channel.getMode(subId)
-        return mode.takeIf { it >= 0 } ?: -1
+        // 1.5.3：改走 ControlManager 的门面。它现在带 5 分钟的短期记忆，所以
+        // 「制式是不是已经等于降级目标」这个判断不会每轮都 fork 一个 app_process
+        // 去读同一个值（root 通道一次读实测 RSS ≈132 MB）；本引擎自己写完制式时，
+        // setMode 也会立刻把那份记忆刷成新值。
+        return ControlManager.getMode(subId)
     }
 
     private suspend fun writeMode(subId: Int, mode: Int, thresholds: DowngradeThresholds): Boolean {
@@ -379,6 +400,16 @@ class AutoDowngradeEngine(private val context: Context) {
         }.getOrDefault(DowngradeState())
     }
 
+    /**
+     * 落盘（1.5.3 起带脏检查）。
+     *
+     * 为什么必须查脏：降级态里 [applyTransition] 每轮都会调一次 persist —— 冷却中
+     * （默认 120 秒）和「仍满足降级条件」这两条路径都会走到，而这两条路径**根本不改
+     * 状态**。改动前每轮都要序列化一遍再排一次 SharedPreferences 写盘，一个持续存在的
+     * 假满格网络就等于每个采样周期一次无意义写入。内容与上次一致时直接返回；状态真正
+     * 变了（降级成功 / 恢复计数 / 无网计数 / 自愈 / 手动清除）时序列化结果必然不同，
+     * 落盘时机一个字没变。
+     */
     private fun persist(state: DowngradeState) {
         val json = JSONObject()
             .put("active", state.active)
@@ -389,12 +420,24 @@ class AutoDowngradeEngine(private val context: Context) {
             .put("savedMode", state.savedMode)
             .put("lastEvent", state.lastEvent)
             .put("lastEventAtMs", state.lastEventAtMs)
-        prefs.edit().putString(KEY_STATE, json.toString()).apply()
+            .toString()
+        if (json == lastPersistedJson) return
+        lastPersistedJson = json
+        prefs.edit().putString(KEY_STATE, json).apply()
     }
 
     companion object {
         const val TAG = "降级引擎"
         private const val PREFS_NAME = "netpilot_downgrade"
         private const val KEY_STATE = "state"
+
+        /**
+         * 息屏后台轮次的探测降频窗口（1.5.3）。
+         *
+         * 屏幕关着的时候，一次 HTTP 探测的唯一读者是「假满格」那条判定（见 [tick]），
+         * 而那条规则本来就是「连续多轮才动作」；把息屏探测压到 5 分钟一次，换来息屏期间
+         * 约 5 倍的探测/网络唤醒次数减少。亮屏后立刻恢复每轮真探。
+         */
+        private const val BACKGROUND_PROBE_BACKOFF_MS = 5 * 60 * 1000L
     }
 }

@@ -45,11 +45,13 @@
     <string name="np_section_fake5g">降级判定条件</string>
     <string name="np_section_policy">降级与恢复策略</string>
     <string name="np_mode_switch_title">切换网络制式</string>
-    <string name="np_mode_switch_summary">手动写入首选制式：内置 34 种，按 5G/4G/3G/2G 分组；不改自动降级的目标制式</string>
+    <string name="np_mode_switch_summary">手动写入首选制式：按 5G/4G/3G/2G 分组；重复项与四个运营商版 5G 自动已合并为「自动适配运营商」（按本机 SIM 卡解析）；不改自动降级的目标制式</string>
     <string name="np_mode_switch_dialog_title">选择网络制式</string>
     <string name="np_mode_switch_dialog_summary">当前：%1$s。点按即写入本机首选制式</string>
     <string name="np_mode_switch_none">没有可用的数据卡（subId 无效），无法写入</string>
     <string name="np_mode_switch_unknown">暂时读不到当前制式，仍可写入</string>
+    <string name="np_mode_auto_carrier">自动适配运营商</string>
+    <string name="np_mode_auto_carrier_named">自动适配运营商（%1$s）</string>
     <string name="np_mode_group_5g">5G（NR）组合</string>
     <string name="np_mode_group_4g">4G（LTE）组合</string>
     <string name="np_mode_group_3g">3G 组合</string>

@@ -26,6 +26,18 @@ object ControlManager {
     private const val TAG = "NetPilot"
     private const val SHIZUKU_PERMISSION_CODE = 4210
 
+    /**
+     * 「刚读到的制式」的短期记忆窗口（1.5.3 省电）。
+     *
+     * 为什么需要：读一次制式要过特权通道 —— 本机 root 通道的一次读就是 fork 一个
+     * `app_process`（实测 RSS ≈132 MB，最长十几秒），而降级引擎在「非降级态且本轮判定
+     * 需要降级」时会**每轮**先读一次「现在是不是已经等于降级目标」。这个值在几轮之内
+     * 不会变，于是把连续轮次压成一次读。任何一次成功写入（[setMode]）都会立刻用新值
+     * 刷新记忆，所以「本进程自己写过的」绝不会读到旧值；只有本进程之外（系统设置、
+     * 别的应用）改制式时才会在窗口内读到旧值，最坏后果是引擎把一次写入推迟到窗口过期。
+     */
+    private const val MODE_MEMO_MS = 5 * 60 * 1000L
+
     /** 单条通道的自述，给 UI 的「通道状态」列表用。 */
     data class ChannelNote(val label: String, val note: String)
 
@@ -49,6 +61,16 @@ object ControlManager {
     /** reset() 之后 RootShell 的 su 结论也需要重测。 */
     @Volatile
     private var rootCacheStale = true
+
+    /** [getMode] 的短期记忆（1.5.3），见 [MODE_MEMO_MS]。 */
+    @Volatile
+    private var modeMemoSubId = -1
+
+    @Volatile
+    private var modeMemoValue = -1
+
+    @Volatile
+    private var modeMemoAtMs = 0L
 
     /** 最近一次 [acquire] 的结果。 */
     val activeMethod: ControlMethod get() = cachedMethod
@@ -155,6 +177,10 @@ object ControlManager {
         lastRootStatus = null
         lastShizukuStatus = null
         rootCacheStale = true
+        // 1.5.3：通道换了，制式的短期记忆也必须一起作废。
+        modeMemoSubId = -1
+        modeMemoValue = -1
+        modeMemoAtMs = 0L
     }
 
     // ---------------- 门面 API（给 NetPilot / DataCardEngine / MonitorEngine 直接调） ----------------
@@ -178,12 +204,36 @@ object ControlManager {
         )
     }
 
-    /** 读当前制式（RIL 值），失败 -1。 */
-    suspend fun getMode(subId: Int): Int = acquire()?.getMode(subId) ?: -1
+    /**
+     * 读当前制式（RIL 值），失败 -1。
+     *
+     * 1.5.3：同一个 subId 在 [MODE_MEMO_MS] 内读过的值直接复用，避免连续轮次反复
+     * 付一次「fork app_process」的代价（见 [MODE_MEMO_MS] 的注释）。
+     */
+    suspend fun getMode(subId: Int): Int {
+        val now = System.currentTimeMillis()
+        if (modeMemoValue >= 0 && modeMemoSubId == subId && now - modeMemoAtMs < MODE_MEMO_MS) {
+            return modeMemoValue
+        }
+        val fresh = acquire()?.getMode(subId) ?: -1
+        if (fresh >= 0) {
+            modeMemoSubId = subId
+            modeMemoValue = fresh
+            modeMemoAtMs = now
+        }
+        return fresh
+    }
 
-    /** 写制式，失败 false。 */
-    suspend fun setMode(subId: Int, mode: NetworkMode): Boolean =
-        acquire()?.setMode(subId, mode) ?: false
+    /** 写制式，失败 false。写成功后立刻刷新 [getMode] 的记忆，避免紧接着又去回读一次。 */
+    suspend fun setMode(subId: Int, mode: NetworkMode): Boolean {
+        val ok = acquire()?.setMode(subId, mode) ?: false
+        if (ok) {
+            modeMemoSubId = subId
+            modeMemoValue = mode.value
+            modeMemoAtMs = System.currentTimeMillis()
+        }
+        return ok
+    }
 
     /**
      * 当前默认数据卡的 subId，失败 -1。

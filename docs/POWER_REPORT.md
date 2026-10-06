@@ -1603,3 +1603,130 @@ Receiver / Provider 由 AGP 默认规则保留。**构建后已核对**：上述
 体积与 dex 规模是硬测量，但「体感是否更流畅」必须由用户按 [`TESTING.md`](TESTING.md) §21.4 自测。
 若真机自测发现 R8 导致任何通道失效（Root 自检 / Shizuku 绑定），第一处置是把 `isMinifyEnabled` 改回 `false`
 重新打包；keep 规则与本次回滚脚本、改动清单都在本节与 §10.3 有据可查。
+
+## 11. 1.5.3 增补（后台耗电：息屏探测降频 + 制式读记忆 + 落盘脏检查；制式选择器合并）
+
+本轮用户要求（原文）：
+
+> 「耗电量太大，可以降低能耗吗？优化 切换网络制式 模块(功能页):增加项之间的间距，合并相同的切换模式（如自动5G和自动5g电信）并改为自动适配运营商。改1.5.3 2026100601，打包时记得r8」
+
+因此本轮三件事：**（A）后台耗电**、**（B）制式选择器可读性 + 合并 + 自动适配运营商**、**（C）版本号 1.5.3 / 2026100601 + release 开 R8**。
+铁律不变：先测量，再改；不改判定语义、不改默认值、不改用户可见行为（除用户明确要求的那两处界面改动）。
+
+### 11.1 先测量：真机基线（1.5.2 装机态）
+
+测量通道受限，先把能用的与不能用的写清楚 —— 这决定了本节数据的性质：
+
+| 通道 | 结论 |
+| --- | --- |
+| 设备 shell（KernelSU root） | 可用；`ps -A`、`/proc/<pid>/{stat,status,io}`、`dumpsys power/battery/cpuinfo/meminfo` 可读；守卫禁止设备侧管道 / 重定向 / 变量 / 嵌套命令，`dumpsys alarm/netstats/jobscheduler/batterystats` 一律 `[POLICY_BLOCKED]` |
+| 应用私有目录 | **读不到**（`/data/user/0/com.katiusu.netpilot` 即使 uid=0 / ksu 域也是 ENOENT）⇒ 应用内日志、监控开关、降级状态无法从设备侧读出 |
+| 屏幕读取（DSHA `/app/ui/dump`） | 返回 `[ERR] 你拒绝了这次屏幕读取` ⇒ 无法用界面操作 / 读数 |
+| profiler（gfxinfo / janky frames） | 本轮未采集 |
+
+**空闲态基线（监控未开启）**：`/proc/12633/stat` 采样 20 次 × 30 s（2026-10-06 02:38–02:54）：
+
+| 指标 | 值 |
+| --- | --- |
+| CPU | 02:41:41 → 02:53:57：utime 45→61、stime 52→86，合计 **50 ticks = 0.5 s / 12 min ≈ 0.07%** |
+| `cutime` / `cstime` | **全程恒为 0** ⇒ 空闲期没有任何特权子进程被 fork 并被回收 |
+| 线程数 | 26 → 27 |
+| RSS | 15 948 – 17 102 pages ≈ 62 – 67 MB |
+| 虚拟内存 | 15.4 GB（ART 预留） |
+| 进程起点 | starttime = 2 232 373 ticks ≈ 开机后 6.2 h |
+| 电池 | 55% → 52%（12 min，含测量本身的屏幕/宿主开销） |
+
+**同机旁证**：`dumpsys cpuinfo`（164 s 窗口）`0.1% 25127/com.katiusu.netpilot`；`dumpsys power` 的 `Wake Locks: size=8` 里**没有 netpilot**（只有 DSHA:web、bilibili fiid-sync、audioserver AudioMix×4、bluetooth_timer）；`mDozeAfterScreenOff=true`；`dumpsys meminfo` TOTAL PSS 14 114 KB / RSS 95 056 KB / Java Heap 3 888 KB。
+
+**结论（本轮改造的靶子）**：**空闲态已经几乎不耗电**（0.07% CPU、无 wakelock、无特权子进程）。开销全在「监控开启后的每一轮采样」与「前台 UI」上，所以本轮不再动空闲路径。
+
+**另发现一个长期占内存的残留进程**（不属于本轮改动，但必须记录）：`root 31350 1 … com.katiusu.netpilot:np_service`（PPID=1 = 孤儿），starttime 33 611 ticks（开机后 336 s 起来）、已存活 6+ h、11 线程、rss 13 980 pages ≈ **55 MB**、累计 utime 153 + stime 68 ticks ≈ **2.2 s CPU**。它是 Shizuku 用户服务的遗留实例：1.5.2 的孤儿清扫（C45）只在 **Shizuku 通道可用**时执行（`TemplateApp.kt:49` → `ControlManager.pruneOrphanedServices()` → `ShizukuController`），而本机主力通道是 root，所以它从开机留到现在。→ 处置：**本轮不改代码**（改清扫时机属于新行为，要单独设计并单独验证），只如实记录；用户可以重启手机或对应用「强制停止」清掉它。
+
+### 11.2 耗电在哪：逐路径核对（代码级，1.5.2 原文）
+
+| # | 开销 | 位置（1.5.2） | 触发频率 |
+| --- | --- | --- | --- |
+| E1 | **息屏时也做 HTTP 探测**：跳过探测的旧规则只在「信号非强」时生效，信号强的那一轮照样 ping（一次 HTTPS 要唤醒网络栈） | `AutoDowngradeEngine.kt:62-64`、`SignalReader.kt:222` | 每个采样周期（默认 60 s，自适应最短 30 s） |
+| E2 | **每轮 fork 一次 root 特权进程读制式**：非降级态下每轮判定先读「制式是否已等于降级目标」，相等才 bail（`:139`）；一次读 = `CLASSPATH=<apk> app_process … PrivilegedCli getmode <subId>`，**实测瞬时进程 RSS ≈132 MB**、`WriteCompat.kt:64` 自述「最长十几秒」 | `AutoDowngradeEngine.kt:138`、`:304-308`；`WriteCompat.kt:64` | 每个采样周期 |
+| E3 | **降级态每轮写一次 SharedPreferences**：冷却中（默认 120 s）与「仍满足降级条件」两条路径都会调 `persist(state)`，而它们**不改状态**；8 字段 JSON 每次序列化 + `apply()` | `AutoDowngradeEngine.kt:382-393`（调用点 `:200` / `:216` / `:238`） | 每个采样周期（降级期间） |
+| E3b | **纯 DEBUG 也触发整份日志落盘**：`log()` 任何等级都 `dirty = true`，DEBUG 与 WARN 共用 30 s 窗口；降级态每轮一条 DEBUG ⇒ 每 30 秒把最近 120 条 JSON `commit()` 一次 | `LogStore.kt:125-131`、`:158-173` | 每 30 s（后台持续有 DEBUG 时） |
+| E6 | **不可见时仍在逐帧重绘**：关于页往下滚到 `alpha = 0` 后，特效的 `withFrameNanos` 帧循环仍每帧 `invalidateDraw()`（重绘一份看不见的整屏 shader） | `BgEffectModifier.kt:161-179` | 打开关于页并滚到底期间，≥60 fps |
+
+**明确排除**（逐条核对后确认不是问题，本轮不改）：
+
+- 5 秒快采：`MainActivity.kt:448` 已经是 `liveSampling = isForeground && pagerState.currentPage == page`（1.5.2 已收口）。
+- 无 WakeLock：全仓没有 `PowerManager.WakeLock` 获取代码（`WAKE_LOCK` 权限在 manifest 声明了但没被使用）。
+- 日志落盘：已有 dirty 门控 + 30 s 节流 + 单线程写（`NetPilot-LogWriter`），空转不写盘。
+- 保活：`KeepAliveScheduler` 用的是 `setInexactRepeating` / `setAndAllowWhileIdle`，本来就不唤醒设备。
+- 关屏后 `mDozeAfterScreenOff=true`，而应用不持有 wakelock ⇒ 不进 doze 白名单也不影响。
+- 液态玻璃 / blur：只在页面可见时绘制，且 1.5.2 已按「是否前台」收口（`MainActivity.kt` 的 `isForeground`）。
+
+### 11.3 改动清单（C47 – C55）
+
+| 编号 | 文件 | 改动 | 为什么 |
+| --- | --- | --- | --- |
+| C47 | `ui/screen/features/FeaturesPage.kt` | 制式列表合并 + 每项 6 dp 间距 + 新增合成项「自动适配运营商」+ 抽出行组件 `ModePickerRow` | 见 §11.4 |
+| C48 | `res/values{,-en}/strings_np.xml` | 新增 `np_mode_auto_carrier` / `np_mode_auto_carrier_named`；改写 `np_mode_switch_summary` | 同上 |
+| C49 | `core/monitor/SignalReader.kt` | `read()` 新增 `forceSkipProbe: Boolean = false`；`skipProbe = allowProbeSkip && (forceSkipProbe \|\| !(rsrp != null && rsrp > strongRsrpThreshold))` | E1 的落地：把「这一轮必须跳」与「这一轮跳了也不改判定」两个不同含义拆开 |
+| C50 | `core/monitor/AutoDowngradeEngine.kt` | 新增 `BACKGROUND_PROBE_BACKOFF_MS = 5 * 60 * 1000L`、`lastProbeAtMs`；息屏后台轮次 5 分钟内不重复探测（只刷新真探时刻）；跳探日志文案改为「屏幕关闭，本轮暂停 HTTP 探测（降级判定不受影响）」 | E1：息屏时把探测压到最多 5 分钟一次 |
+| C51 | `core/priv/ControlManager.kt` | `getMode()` 增加 5 分钟「刚读到的值」记忆（`MODE_MEMO_MS` + `modeMemoSubId/modeMemoValue/modeMemoAtMs` 三个 `@Volatile`）；`setMode()` 成功后立刻用新值刷新记忆；`reset()` 作废记忆 | E2：连续轮次不再每轮 fork 一次 `app_process` |
+| C52 | `core/monitor/AutoDowngradeEngine.kt` | `persist()` 加脏检查（`lastPersistedJson`）；`readModeOrMinusOne()` 改走 `ControlManager.getMode()` | E3 + E2 |
+| C53 | `core/monitor/LogStore.kt` | 新增 `PERSIST_DEBUG_INTERVAL_MS = 300_000L` 与 `importantSincePersist`；`persist()` 按「上次落盘以来有没有 WARN/ERROR」在 30 s / 300 s 两个窗口间选；落盘后清零标记 | E3b |
+| C54 | `ui/component/effect/BgEffectModifier.kt` | `draw()` 里 `alpha <= 0f` 时 `animationJob?.cancel()`、重新可见且 `playing` 时 `startAnimation()` | E6，与上游 Miuix 示例 `d3058ec`「补齐上游动效背景暂停逻辑」对齐 |
+| C55 | `app/build.gradle.kts` | `versionCode = 2026100601`、`versionName = "1.5.3"` | 用户指定 |
+
+**「判定语义不变」的三条论证**（这三条是本轮的硬约束）：
+
+- **E1**：息屏跳探只在 `allowProbeSkip = true`（=「屏幕未交互 **且** 当前不在降级态」，`AutoDowngradeEngine.kt:62-64`）时生效；`FakeSignalDetector.judge` 逐分支核对：Wi-Fi 且 `rawNetworkType == 0` 直接返回；强信号分支在 `fakeFullBarOnNrOnly && !isOnNr()` 时 `nrOnlyBlocked = true`、**既不读 `pingMs` 也不读 SINR**；弱信号分支只看 `rsrp < weakRsrpThreshold`；兜底分支不做判定。⇒ 被跳过的轮次最多「晚一点发现假满格」，不会得出不同结论。
+- **E2**：记忆只在**本进程成功写入之后**用新值刷新（`setMode` 内），所以引擎自己刚写过的目标制式绝不会读到旧值；窗口内失效的唯一情形是**本进程之外**改了制式（系统设置、别的应用），此时最坏后果是引擎把一次写入推迟到窗口过期 —— 而它原本每个周期都会重试写入，推迟一个窗口不会漏掉这次写入。
+- **E3 / E3b**：状态字段真正变化时序列化结果必然不同（所以脏检查不会吞掉任何一次真变化）；日志页读的是内存环形缓冲 `LogStore.entries`，界面看到的内容与落盘窗口无关；WARN/ERROR 仍走 30 s 窗口、ERROR 仍 `force = true` 立即落盘。
+
+### 11.4 制式选择器：改了什么、为什么
+
+改动前（1.5.2，C40）：`ModePickerDialog` 直接遍历 `NetworkMode.entries`（34 项），按 `gen` 分 4 组，**项与项之间零间距**。问题是两类：
+
+1. **重复项**：0 与 3 都叫「3G/2G 自动」、10 与 22 都叫「4G/3G/2G 自动 (全制式)」（底层是同一组位掩码，回读会归一），并排两行一模一样的文字只会让人以为其中一个不同。
+2. **运营商专版 5G 自动**：26 联通 / 27 电信 / 32 移动 / 33 广电 四条标签都是「5G/4G/3G/2G 自动」加括号运营商，而「该选哪条」完全取决于插的哪张卡 —— 让用户自己挑本身就是错的设计，挑错反而更容易掉网。
+
+改动后：
+
+| 项 | 处置 |
+| --- | --- |
+| 26 / 27 / 32 / 33 | 合并为一条 **「自动适配运营商（中国移动）」**；点击那一刻用与自动降级恢复**同一个入口** `CarrierInfo.defaultModeForActiveSubscription(context, subId)` 按 SIM 的 MCC/MNC 查表解析出真正要写的值（移动→32、联通→26、电信→27、广电→33；识别不出→26） |
+| 0 / 3、10 / 22 | 按 `label` 去重，保留枚举里靠前的那条（`distinctBy { it.label }`） |
+| 行间距 | 每组内每项之间 6 dp（`Column(verticalArrangement = Arrangement.spacedBy(6.dp))`）；分组标题仍在组外，保持原来的 6 dp 上下留白 |
+| 当前值标记 | 「✓ 」前缀 + 主色配色照旧；合成项在 `cur in AUTO_CARRIER_MODES` 时显示为选中 |
+| 代码结构 | 列表行抽成 `private fun ModePickerRow(label, selected, onPick)`，普通项与合成项共用（合成项多一层「点按这一刻才解析」） |
+
+**为什么这是「不改降级判定」的**：`AUTO_CARRIER_MODES` 只用在**列表呈现**与**选中态**上；写入的值来自 `CarrierInfo`，与自动降级恢复（`AutoDowngradeEngine.restoreTarget`）走同一张 MCC/MNC 表，所以「手动切到自动适配运营商」与「降级后恢复」写的是同一个值。列表项数 34 → 29 + 1 个合成项。
+
+### 11.5 量化对照（1.5.2 → 1.5.3，全部为推算 / 设计值）
+
+| 项 | 1.5.2 | 1.5.3 | 依据 |
+| --- | --- | --- | --- |
+| 息屏 HTTP 探测频率 | 每周期 1 次（60 s，自适应最短 30 s） | 最多 5 分钟 1 次 | C49 / C50 |
+| 息屏探测次数（按 1 h 计） | ≈ 60 – 120 | ≤ 12 | 同上 |
+| 「制式是否已是降级目标」的特权 fork | 每轮 1 次（每次一个 ≈132 MB 的 `app_process`） | 5 分钟最多 1 次 | C51 |
+| 降级态 SharedPreferences 写入 | 每轮 1 次 | 仅状态真变化时 | C52 |
+| 纯 DEBUG 期的日志落盘 | 每 30 s | 每 300 s（**-90%**） | C53 |
+| 关于页滚到底后的帧循环 | 一直跑（≥60 fps） | 停止 | C54 |
+| 制式列表项数 | 34（+4 组标题） | 29 + 1 合成项（+4 组标题） | C47 |
+| APK（release，R8） | 4 152 623 B | 见 §11.6 | 实测 |
+
+**诚实说明**：本轮**没有**采到「监控开启」状态下的 CPU 对照 —— 应用私有目录读不到、界面读数被拒、无 profiler，而且 11.1 的采样期间监控处于**关闭**状态（线程名里没有 `NetPilot-LogWriter` 也没有 dispatcher worker）。上表的频率比是代码路径的确定结果（每个采样周期少 fork 一次、少写一次盘、少一次探测），**CPU / 电量收益必须由用户按 [`TESTING.md`](TESTING.md) §22 自测**；空闲态本身已经是 0.07% CPU，别指望这一版在「不开监控」时还有可观下降。
+
+### 11.6 产物与验收（1.5.3 / 2026100601）
+
+- 产物：`NetPilot-1.5.3-2026100601-release.apk`（**只出 release**；R8 配置与 1.5.2 完全一致：`isMinifyEnabled = true` + `proguard-android-optimize.txt` + `app/proguard-rules.pro` 的 5 条 keep）。
+
+| 文件 | 大小（字节） | MD5 | SHA-256 |
+| --- | --- | --- | --- |
+| `NetPilot-1.5.3-2026100601-release.apk` | 4 153 775 | `6ec4c5e1394aeac7cdf44d19cee4f0a8` | `f5eb0b3914791aa9547998c4940c7adf43db903400fa3253f6ad117698d69952` |
+
+- 编译校验（先跑）：`bash _build.sh :app:compileDebugKotlin` → **BUILD SUCCESSFUL in 53s**。
+  首次编译失败一次：合成项兜底写了 `NetworkMode.FALLBACK`，而它是 companion 里的 `private` ⇒ 改成字面量 `26` 并写明「这就是 `CarrierInfo` 自己文档里的兜底值」。
+- release 构建：`bash _build.sh :app:assembleRelease --no-configuration-cache` → **BUILD SUCCESSFUL in 10m 40s**，`Task :app:minifyReleaseWithR8` 再次执行；成品 dex 合计 **3 149 832 B、1 个**（1.5.2 为 3 148 116 B / 1 个 ⇒ **+1 716 B**，来自本轮新增的字符串与代码）。
+- 静态校验：`aapt2 dump badging` → `versionCode='2026100601' versionName='1.5.3'`、minSdk 34 / targetSdk 36 / compileSdk 37；APK **150 条目**、`AndroidManifest.xml`（16 620 B）与 `resources.arsc`（813 588 B）完好；5 条 keep 目标（`PrivilegedCli`、`ShizukuControllerService`、`IShizukuController` 与其 `$Stub` / `$Stub$Proxy`）全部在 dex 字符串池里，`MainActivity` / `MonitorService` / `BootReceiver` / `KeepAliveReceiver` / `NetworkModeTileService` / `ShikukuProvider` 也都在；`apksigner verify` 通过、证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与 1.3.0 以来同一把 key）；`zipalign -c 4` 通过。
+- 可直接覆盖安装 1.5.2（同一把 release key、versionCode 更高）；APK **只交付、不安装**。
+- 本次**未创建 GitHub Release**（按用户要求只提交并推送代码）。
+- 验收步骤： [`TESTING.md`](TESTING.md) §22.0 – §22.7。

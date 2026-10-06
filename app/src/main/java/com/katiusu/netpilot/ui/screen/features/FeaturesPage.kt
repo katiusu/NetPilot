@@ -2,6 +2,7 @@ package com.katiusu.netpilot.ui.screen.features
 
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.katiusu.netpilot.R
 import com.katiusu.netpilot.core.NetPilot
 import com.katiusu.netpilot.core.mode.NetworkMode
+import com.katiusu.netpilot.core.monitor.CarrierInfo
 import com.katiusu.netpilot.core.monitor.MonitorSettings
 import com.katiusu.netpilot.core.tasker.TaskerGate
 import com.katiusu.netpilot.prefs.OptionSpec
@@ -438,6 +440,54 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
     }
 
     val cur = current
+    // 1.5.3：合并列表里的重复项与「运营商专版 5G 自动」。
+    // 1) 26/27/32/33 四条都是「5G/4G/3G/2G 自动」，区别只在按哪家运营商组网；该选哪条
+    //    取决于插的哪张卡，让用户自己挑反而容易选错（选错更容易掉网），所以合并成一条
+    //    「自动适配运营商」—— 点按那一刻才按当前 SIM 的 MCC/MNC 解析出真正要写的值。
+    // 2) 0 与 3（都是「3G/2G 自动」）、10 与 22（都是「4G/3G/2G 自动 (全制式)」）底层是
+    //    同一组位掩码（回读都会归一），列表里并排两行一模一样的文字只会让人以为其中
+    //    一个不同，按 label 去重，保留枚举里靠前的那条。
+    val pickerGroups = remember {
+        NetworkMode.entries
+            .filter { it.value !in AUTO_CARRIER_MODES }
+            .groupBy { it.gen }
+            .map { (gen, modes) -> gen to modes.distinctBy { it.label } }
+            .sortedByDescending { it.first }
+    }
+    // 把当前 SIM 认出来的运营商写在合成项上，用户才知道「自动适配」会挑哪一条。
+    val carrierName = remember(subId) {
+        if (subId >= 0) {
+            runCatching { CarrierInfo.activeCarrierName(context, subId) }.getOrDefault("")
+        } else {
+            ""
+        }
+    }
+    val autoCarrierLabel = if (carrierName.isNotEmpty()) {
+        stringResource(R.string.np_mode_auto_carrier_named, carrierName)
+    } else {
+        stringResource(R.string.np_mode_auto_carrier)
+    }
+
+    // 点一行 → 写一次制式。抽成局部函数是因为 1.5.3 之后两类行共用它：普通制式项，
+    // 以及需要先在点按那一刻解析出真值的「自动适配运营商」。
+    fun writeMode(mode: NetworkMode) {
+        if (busy || subId < 0) return
+        busy = true
+        scope.launch {
+            val ok = runCatching { NetPilot.setMode(subId, mode) }.getOrDefault(false)
+            busy = false
+            if (ok) current = mode.value
+            Toast.makeText(
+                context,
+                context.getString(
+                    if (ok) R.string.np_mode_switch_applied else R.string.np_mode_switch_failed,
+                    mode.label,
+                ),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+
     val summaryText = when {
         subId < 0 -> stringResource(R.string.np_mode_switch_none)
         cur == null -> stringResource(R.string.np_mode_switch_unknown)
@@ -457,53 +507,78 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
                 .heightIn(max = 420.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            NetworkMode.entries
-                .groupBy { it.gen }
-                .toList()
-                .sortedByDescending { it.first }
-                .forEach { (gen, modes) ->
-                    MiuixText(
-                        text = stringResource(genTitleRes(gen)),
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        style = MiuixTheme.textStyles.footnote2,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
+            pickerGroups.forEach { (gen, modes) ->
+                MiuixText(
+                    text = stringResource(genTitleRes(gen)),
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    style = MiuixTheme.textStyles.footnote2,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+                // 1.5.3：项与项之间留 6dp。改动前所有行紧挨在一起，相邻两项之间没有任何
+                // 留白，点偏一格就会写错制式。
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (gen == 5) {
+                        ModePickerRow(
+                            label = autoCarrierLabel,
+                            selected = cur != null && cur in AUTO_CARRIER_MODES,
+                        ) {
+                            // 「自动适配运营商」要写的那条值只有点按这一刻才知道
+                            // （与自动降级恢复时用的是同一张 MCC/MNC 表、同一个入口）。
+                            // 兜底 26 就是 CarrierInfo 自己文档里写的兜底值（读不到 SIM 时它
+                            // 返回 26），这里只防它抛异常；NetworkMode 的 FALLBACK 是私有的。
+                            val target = runCatching {
+                                CarrierInfo.defaultModeForActiveSubscription(context, subId)
+                            }.getOrDefault(26)
+                            NetworkMode.fromValue(target)?.let { writeMode(it) }
+                        }
+                    }
                     modes.forEach { mode ->
-                        val selected = mode.value == cur
-                        TextButton(
-                            // 「勾」只标记当前值，给一个固定宽度前缀让未选中项也左对齐。
-                            text = (if (selected) "✓ " else "    ") + mode.label,
-                            onClick = {
-                                if (busy || subId < 0) return@TextButton
-                                busy = true
-                                scope.launch {
-                                    val ok = runCatching { NetPilot.setMode(subId, mode) }
-                                        .getOrDefault(false)
-                                    busy = false
-                                    if (ok) current = mode.value
-                                    Toast.makeText(
-                                        context,
-                                        context.getString(
-                                            if (ok) R.string.np_mode_switch_applied
-                                            else R.string.np_mode_switch_failed,
-                                            mode.label,
-                                        ),
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            },
-                            colors = if (selected) {
-                                ButtonDefaults.textButtonColorsPrimary()
-                            } else {
-                                ButtonDefaults.textButtonColors()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        ModePickerRow(label = mode.label, selected = mode.value == cur) {
+                            writeMode(mode)
+                        }
                     }
                 }
+            }
         }
     }
 }
+
+/**
+ * 制式列表里的一行（1.5.3 抽出）。
+ *
+ * 抽出来是因为列表里多了一类**合成项**：「自动适配运营商」要等到点按那一刻才按 SIM 卡
+ * 解析出真正的写入值，除此之外（勾选前缀、选中态配色、占满整行）与普通项完全一致。
+ */
+@Composable
+private fun ModePickerRow(
+    label: String,
+    selected: Boolean,
+    onPick: () -> Unit,
+) {
+    TextButton(
+        // 「勾」只标记当前值，给一个固定宽度前缀让未选中项也左对齐。
+        text = (if (selected) "✓ " else "    ") + label,
+        onClick = onPick,
+        colors = if (selected) {
+            ButtonDefaults.textButtonColorsPrimary()
+        } else {
+            ButtonDefaults.textButtonColors()
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+/**
+ * 被「自动适配运营商」合并掉的四条 5G 自动（1.5.3）。
+ *
+ * 26 联通 / 27 电信 / 32 移动 / 33 广电 —— 它们只在「按哪家运营商组网」上不同，而这取决于
+ * 插的哪张卡；列表里让用户自己挑本身就是错的设计，挑错反而更容易掉网。
+ * 判定「当前制式是否就是这一项」时也用它。
+ */
+private val AUTO_CARRIER_MODES = setOf(26, 27, 32, 33)
 
 /** 制式分组标题（按 [NetworkMode.gen] 分四档）。 */
 private fun genTitleRes(gen: Int): Int = when (gen) {
