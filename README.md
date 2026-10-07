@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.5.2**（`versionName = "1.5.2"`，`versionCode = 2026100600`） |
+| 版本 | **1.5.4**（`versionName = "1.5.4"`，`versionCode = 2026100700`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 36） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -186,6 +186,7 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 | 1.5.1 | 2026100505 | 权威存储三类「读不到」分开说明；日志结论带原因、两档日志模式；日志页倒序；导出日志文件。 |
 | 1.5.2 | 2026100600 | Shizuku 通道日志补全；日志页「正序 / 倒序」切换（默认正序）；界面内直接切换全部 34 种制式；修掉 Shizuku 孤儿用户服务进程清扫失效（每个约 40 MB）；日志导出改流式写；release 按 MiuixGuiExample 开启 R8（APK 33.3 MB → 4.15 MB）。 |
 | 1.5.3 | 2026100601 | 后台耗电：息屏 HTTP 探测降到最多 5 分钟一次；制式读带 5 分钟记忆（不再每个采样周期 fork 一次特权进程）；降级状态落盘与日志落盘加脏检查 / 分档窗口；功能页制式列表每项间距 6 dp、按标签去重同名项（0/3、10/22），并在 5G/4G/3G/2G 每组各加一行「自动适配运营商」（按本机 SIM 解析，4G/3G/2G 用逐级去掉更高代际的位掩码表，全部条目保留）；修掉 Shizuku 孤儿用户服务进程清扫永久失效（门控顺序 + 启动 4 次有界重试 + 回收数写进日志页）；不再把「页面离开组合导致的协程取消」误报成 binder 调用失败（日志页的 a80/b80 假 WARN）。 |
+| 1.5.4 | 2026100700 | 深睡眠：锁屏期间保活心跳与「尽快拉回」闹钟改用**不唤醒**类型（`ELAPSED_REALTIME` + `set`，亮屏瞬间自动切回唤醒型；本应用从不持有 wake lock）；制式写入新增**系统回读确认** —— 写完读回真值并按位掩码比对，写入被系统收下但没生效时日志与 Toast 如实提示（判定语义未改：modem 返回 false 仍不算失败）；Shizuku 孤儿用户服务清扫重试扩到 7 次（最远 60 分钟），并在**首次选用 Shizuku 之前**补清一次。 |
 
 > 逐版细节不再堆在 README 里：前后量化数据见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)，验收步骤见 [`docs/TESTING.md`](docs/TESTING.md)。
 > 许可：1.0.1 及更早的已分发副本（含 Releases 里的 1.0.1 APK）按 GPL-3.0 授权且不可撤回；自 1.1.0 起以 Apache-2.0 发布，方法、实测相似度与复现命令见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。

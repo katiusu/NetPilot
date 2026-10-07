@@ -58,6 +58,7 @@
     <string name="np_mode_group_2g">2G / CDMA combinations</string>
     <string name="np_mode_switch_applied">Switched to %1$s</string>
     <string name="np_mode_switch_failed">Failed to switch to %1$s; see the log page for the reason</string>
+    <string name="np_mode_switch_no_effect">Requested %1$s, but the system still reports the previous mode (not applied; see the log page)</string>
     <string name="np_section_monitor">Monitoring</string>
     <string name="np_section_datacard">SIM cards</string>
     <string name="np_section_tasker">Automation</string>

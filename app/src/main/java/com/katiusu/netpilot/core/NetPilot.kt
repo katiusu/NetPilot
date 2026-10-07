@@ -8,6 +8,7 @@ import com.katiusu.netpilot.core.datacard.SimReader
 import com.katiusu.netpilot.core.datacard.SimSlotInfo
 import com.katiusu.netpilot.core.keepalive.KeepAliveScheduler
 import com.katiusu.netpilot.core.mode.NetworkMode
+import com.katiusu.netpilot.core.mode.NetworkModeBitmaskMapper
 import com.katiusu.netpilot.core.monitor.AutoDowngradeEngine
 import com.katiusu.netpilot.core.monitor.CarrierInfo
 import com.katiusu.netpilot.core.monitor.DowngradeState
@@ -38,6 +39,21 @@ import com.katiusu.netpilot.prefs.PrefsStore
 object NetPilot {
 
     private const val TAG = "NetPilot"
+
+    /**
+     * 1.5.4：最近一次 [setMode] 是否被**回读**确认真的生效了。
+     *
+     * 为什么需要它：写入链路的口径是「三条策略里有一条成功调用就算成功」
+     * （见 `TelephonyReflection.setNetworkMode` 的 KDoc —— modem 返回 false 也照样算成功）。
+     * 在权限更严格的机型（用户实测 OriginOS）上就会出现「应用说已切换为仅 4G，系统里其实还是
+     * 5G 自动」。这个字段只用来**把界面提示与日志说诚实**，不参与任何判定：写入链路的返回值、
+     * 降级/恢复的语义完全不变（用户 2026-10 明确要求先别动判定）。
+     *
+     * 回读失败（-1）时按「确认不了就不吓人」处理，仍然算 true。
+     */
+    @Volatile
+    var lastModeWriteEffective: Boolean = true
+        private set
 
     // ---------------- 安装 ----------------
 
@@ -103,15 +119,52 @@ object NetPilot {
         // WriteDiag 把最近一条原因暂存起来、结论行取走 —— 不开详细开关也能看到「卡在哪一步、
         // 为什么」；取走后清空，避免下一次失败带上过期的原因。
         val why = com.katiusu.netpilot.core.priv.WriteDiag.consumeFailure()
-        LogStore.log(
-            TAG,
-            if (ok) "卡 $subId 制式已切换为 ${mode.label}"
-            else "卡 $subId 切换 ${mode.label} 失败：" +
-                why.ifBlank { "通道没有报出具体原因（可在设置页打开「写入详细诊断日志」后重试）" },
-            if (ok) com.katiusu.netpilot.core.monitor.LogLevel.INFO
-            else com.katiusu.netpilot.core.monitor.LogLevel.ERROR,
-        )
+        if (ok) {
+            // 1.5.4：写完再回读一次**真值**（绕过 5 分钟记忆、也不回写记忆，见
+            // ControlManager.getMode 的注释）。为什么非做不可：写入成功只代表「系统收下了这次
+            // 调用」，不代表 modem 接受了它 —— 用户实测另一台 OriginOS 设备上就出现「日志说已
+            // 切换为仅 4G，实际制式没变」。日志必须自己把这件事说清楚，而不是等用户去对比系统设置。
+            val actual = runCatching { ControlManager.getMode(subId, useMemo = false) }.getOrDefault(-1)
+            lastModeWriteEffective = modeWriteAccepted(mode.value, actual)
+            if (!lastModeWriteEffective) {
+                LogStore.warn(
+                    TAG,
+                    "卡 $subId 制式未真正生效：已请求 ${mode.label}（${mode.value}），" +
+                        "系统回读是 ${NetworkMode.labelOf(actual)}（$actual）。" +
+                        "写入被系统收下但未被接受 —— 权限更严格的机型（OriginOS 等）上常见，" +
+                        "可在设置页打开「写入详细诊断日志」查看逐策略过程",
+                )
+            } else {
+                LogStore.info(TAG, "卡 $subId 制式已切换为 ${mode.label}")
+            }
+        } else {
+            LogStore.error(
+                TAG,
+                "卡 $subId 切换 ${mode.label} 失败：" +
+                    why.ifBlank { "通道没有报出具体原因（可在设置页打开「写入详细诊断日志」后重试）" },
+            )
+        }
         return ok
+    }
+
+    /**
+     * 1.5.4：判断「刚写下的制式」与「系统回读到的制式」是不是同一件事。
+     *
+     * 为什么不直接比 RIL 数值：位掩码表**不是单射** —— 模式 3（GSM/UMTS 自动）与模式 0
+     * （WCDMA 优先）的可选制式完全一致，算出的位掩码也完全相同，系统回读时只能给出较小的那个
+     * （见 `NetworkMode.GSM_UMTS` 第 24-25 行的注释与 `NetworkModeBitmaskMapper.exactModes`）。
+     * 直接比数值会把「请求 3、回读 0」误判成没生效，连界面提示都会跟着说错。比位掩码则天然把
+     * 这类同义模式视为相等。
+     *
+     * 「确认不了就当生效」：回读失败（-1），或某个模式算不出掩码（表外模式）时返回 true ——
+     * 这条提示存在的意义是报出**确凿**的「写了但没生效」，而不是制造噪音。
+     */
+    private fun modeWriteAccepted(requested: Int, actual: Int): Boolean {
+        if (actual < 0 || actual == requested) return true
+        val mapper = NetworkModeBitmaskMapper.platform
+        val want = runCatching { mapper.toBitmask(requested) }.getOrNull() ?: return true
+        val got = runCatching { mapper.toBitmask(actual) }.getOrNull() ?: return true
+        return want == got
     }
 
     /** 按裸值切制式（广播 / Locale 插件传进来的都是数字）。 */

@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.5.2** (`versionCode 2026100600`) |
+| Version | **1.5.4** (`versionCode 2026100700`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -109,6 +109,7 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 | 1.5.1 | 2026100505 | Three distinct "cannot read" causes in the authoritative store separated; log conclusions carry their reason; brief/detailed log modes; newest-first log page; log export to file. |
 | 1.5.2 | 2026100600 | Shizuku-channel logs completed; log page gets an oldest/newest order toggle (oldest first by default); all 34 network modes switchable from the UI; fixed stale Shizuku user-service pruning (each orphan ~40 MB); log export now streams to disk; release build now enables R8 (APK 33.3 MB -> 4.15 MB). |
 | 1.5.3 | 2026100601 | Background power: screen-off HTTP probe throttled to once per 5 min; network-mode reads memoised for 5 min (no per-tick privileged fork); dirty checks / tiered windows for downgrade-state and log persistence; mode list: 6 dp between rows, same-label duplicates 0/3 and 10/22 collapsed, and one "Auto (match carrier)" row added to each of the 5G/4G/3G/2G groups (resolved from this SIM; 4G/3G/2G use a per-generation bitmask table, all entries kept); fixed stale Shizuku user-service pruning, which could never recover from a failed attempt at boot (gating order + 4 bounded retries + reclaim count logged); coroutine cancellation when a page leaves the composition is no longer reported as a binder-call failure (fake a80/b80 WARNs). |
+| 1.5.4 | 2026100700 | Deep sleep: while the screen is off the keep-alive heartbeat and the "pull back ASAP" alarm now use non-waking types (`ELAPSED_REALTIME` + `set`, switching back to wake-up types the moment the screen turns on; the app never held a wake lock anyway); network-mode writes now read the mode back from the system and compare bitmasks, so a write the system accepted but did not apply is reported honestly in the log page and the toast (judgement semantics unchanged - a modem "false" still counts as success); stale Shizuku user-service pruning now retries up to 7 times (out to 60 min) and also runs once before the first Shizuku bind. |
 
 > Per-version details are no longer duplicated here: measurements live in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) and acceptance steps in [`docs/TESTING.md`](docs/TESTING.md) (both Chinese).
 > Licence: copies distributed as 1.0.1 and earlier (including the 1.0.1 APK in Releases) remain GPL-3.0 and that grant cannot be revoked; from 1.1.0 onwards this project is released under Apache-2.0 — see [`docs/PROVENANCE.md`](docs/PROVENANCE.md).

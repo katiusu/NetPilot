@@ -129,6 +129,8 @@ object ControlManager {
                 "缺少 ApplicationContext（没有调用 ControlManager.init）"
             )
         } else {
+            // 1.5.4：在「我们还没绑定自己的用户服务」这一刻清一次孤儿（见下）。
+            pruneOrphansBeforeFirstShizukuBind()
             val shizukuStatus = shizuku.probe()
             lastShizukuStatus = shizukuStatus
             if (shizukuStatus is ChannelStatus.Available) {
@@ -209,14 +211,23 @@ object ControlManager {
      *
      * 1.5.3：同一个 subId 在 [MODE_MEMO_MS] 内读过的值直接复用，避免连续轮次反复
      * 付一次「fork app_process」的代价（见 [MODE_MEMO_MS] 的注释）。
+     *
+     * 1.5.4：[useMemo] = false 表示「要真值」—— 一定走一次特权回读，并且**不回写**记忆。
+     * 给「刚写完一次制式，想确认系统里到底变成什么」的场景用（[com.katiusu.netpilot.core.NetPilot.setMode]）。
+     *
+     * 为什么必须绕过记忆、而且不能回写：记忆里存的是**我们请求写入的值**，不是 modem 实际接受的
+     * 值（写入链路的口径见 `TelephonyReflection.setNetworkMode`）。这份记忆同时被
+     * `AutoDowngradeEngine` 当作「是不是已经写在降级档上」的防重复写闸门 —— 如果把「modem 其实
+     * 没接受」的真值写进去，引擎会在每一轮都重试写一次，那就是行为变更。用户 2026-10 明确要求
+     * 「先别动判定语义」，所以这里只读不写记忆。
      */
-    suspend fun getMode(subId: Int): Int {
+    suspend fun getMode(subId: Int, useMemo: Boolean = true): Int {
         val now = System.currentTimeMillis()
-        if (modeMemoValue >= 0 && modeMemoSubId == subId && now - modeMemoAtMs < MODE_MEMO_MS) {
+        if (useMemo && modeMemoValue >= 0 && modeMemoSubId == subId && now - modeMemoAtMs < MODE_MEMO_MS) {
             return modeMemoValue
         }
         val fresh = acquire()?.getMode(subId) ?: -1
-        if (fresh >= 0) {
+        if (useMemo && fresh >= 0) {
             modeMemoSubId = subId
             modeMemoValue = fresh
             modeMemoAtMs = now
@@ -308,6 +319,38 @@ object ControlManager {
         if (cachedChannel?.method == ControlMethod.SHIZUKU) return -1
         val ctx = contextOrNull() ?: return -1
         return runCatching { ShizukuController(ctx).pruneOrphanedServices() }.getOrDefault(-1)
+    }
+
+    /**
+     * 1.5.4：进程内最多清一次孤儿，而且必须在「我们还没绑定自己的用户服务」时做。
+     *
+     * 为什么非清不可：[TemplateApp] 的启动清扫只覆盖「应用启动那一刻 Shizuku 已经在线」这一种
+     * 时序。用户的实际用法是**先开应用、后开 Shizuku**：设备实测（2026-10-07）`shizuku_server`
+     * 的 pid 大于应用主进程，残留的 `:np_service`（PPID=1）因此一直清不掉。
+     *
+     * 为什么放在这里：走到 [acquire] 的 Shizuku 分支时 [cachedChannel] 必为空（有可用缓存就直接
+     * 返回了），所以此刻我们手里**没有**任何用户服务绑定 —— 在用户服务进程里杀 `:np_service`
+     * 不会误杀「正在用的那个」。这正是 [pruneOrphanedServices] 里那条「握着活的 Shizuku 通道
+     * 就跳过」的守卫要保护的场景；而那条守卫在用户长期使用 Shizuku 时永远为真，光靠它清不掉。
+     *
+     * 代价：进程内多绑一次临时用户服务（约百毫秒级，且只发生一次），换来的是孤儿不再累积。
+     * 失败一律静默 —— 它只是省内存，不承担任何功能。
+     *
+     * 标志的语义与 `ShizukuController` 的清扫标志保持一致：**只有真的执行成功（>= 0）才算做过**。
+     * 为什么不能「先置位再干活」：走到这个方法时 Shizuku 常常还没上线（用户是「先开应用、后开
+     * Shizuku」），那次尝试注定失败；若它把标志烧掉，本次进程就再也没有「手里没有任何用户服务
+     * 绑定」的时间窗了 —— 那正是 1.5.3 修掉的根因①，不能在这里重犯。
+     */
+    @Volatile
+    private var preBindPruneDone = false
+
+    private suspend fun pruneOrphansBeforeFirstShizukuBind() {
+        if (preBindPruneDone) return
+        val ctx = contextOrNull() ?: return
+        val pruned = runCatching { ShizukuController(ctx).pruneOrphanedServices() }.getOrDefault(-1)
+        if (pruned < 0) return // 没执行成（Shizuku 未上线 / 绑定失败）⇒ 不烧掉机会，下次 acquire 再试
+        preBindPruneDone = true
+        WriteDiag.always("首次选用 Shizuku 前已清掉 $pruned 个残留用户服务进程")
     }
 
     // ---------------- 内部 ----------------

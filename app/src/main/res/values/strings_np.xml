@@ -58,6 +58,8 @@
     <string name="np_mode_group_2g">2G / CDMA 组合</string>
     <string name="np_mode_switch_applied">已切换为 %1$s</string>
     <string name="np_mode_switch_failed">切换为 %1$s 失败，原因见日志页</string>
+    <!-- 1.5.4：写入被系统收下、但回读确认没生效（权限更严格的机型，如 OriginOS）。 -->
+    <string name="np_mode_switch_no_effect">已请求切换为 %1$s，但系统回读仍是原制式（未生效，详见日志页）</string>
     <string name="np_section_monitor">监控</string>
     <string name="np_section_datacard">数据卡</string>
     <string name="np_section_tasker">自动化接口</string>

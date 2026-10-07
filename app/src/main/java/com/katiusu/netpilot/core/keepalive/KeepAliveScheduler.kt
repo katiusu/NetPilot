@@ -18,6 +18,10 @@ import com.katiusu.netpilot.core.monitor.LogStore
  * 本类只负责「排/撤闹钟」，不判断总开关、不启动服务 —— 那些在
  * [KeepAliveReceiver] 与 [com.katiusu.netpilot.core.NetPilot.setServicesEnabled] 里，
  * 这样它保持成一个可以独立测试的纯调度器。
+ *
+ * 1.5.4：**锁屏期间两类闹钟都换成不唤醒类型**（`ELAPSED_REALTIME`）——见 [schedule] 与
+ * [scheduleRestartSoon] 里的注释。闹钟类型只能是「排的那一刻」决定的，所以屏幕亮/灭时由
+ * [ScreenStateGate] 重排一次。
  */
 object KeepAliveScheduler {
 
@@ -74,17 +78,34 @@ object KeepAliveScheduler {
             LogStore.warn(TAG, "取不到 AlarmManager，保活心跳未注册")
             return
         }
+        // 1.5.4：闹钟类型按屏幕状态选。
+        //  - 亮屏：ELAPSED_REALTIME_WAKEUP —— 按「开机以来的时间」计时并在触发时唤醒 CPU，
+        //    不受用户改系统时间影响（用 RTC 的话改时间会把闹钟弄乱）。
+        //  - 锁屏：ELAPSED_REALTIME（**不唤醒**）。
+        // 为什么非做不可：本应用会被用户（按应用内引导）加入「忽略电池优化」白名单，实测
+        // `/data/system/deviceidle.xml` 里就有 com.katiusu.netpilot ⇒ Doze 对它的闹钟不做延迟，
+        // 于是唤醒型心跳在息屏后照常把 CPU 从挂起里叫醒（每 15 分钟一次，≈96 次/天）。
+        // 用户 2026-10 的要求是「锁屏时才停止定时唤醒」：亮屏时保持原样，锁屏后换成不唤醒类型
+        // —— 设备因为别的原因醒着时它照常触发（服务被杀仍会被拉回），但绝不为了它唤醒 CPU。
+        // 亮屏那一刻由 [ScreenStateGate] 重排回唤醒类型，保活节奏因此完全不变。
+        val screenOn = ScreenStateGate.isScreenOn(app)
         runCatching {
             am.setInexactRepeating(
-                // ELAPSED_REALTIME_WAKEUP：按「开机以来的时间」计时并在触发时唤醒 CPU，
-                // 不受用户改系统时间影响（用 RTC 的话改时间会把闹钟弄乱）。
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                if (screenOn) AlarmManager.ELAPSED_REALTIME_WAKEUP else AlarmManager.ELAPSED_REALTIME,
                 SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS,
                 HEARTBEAT_INTERVAL_MS,
                 pending(app, REQUEST_HEARTBEAT, ACTION_HEARTBEAT),
             )
         }.onSuccess {
-            LogStore.info(TAG, "已注册保活心跳（每 ${HEARTBEAT_INTERVAL_MS / 60_000} 分钟）")
+            LogStore.info(
+                TAG,
+                if (screenOn) {
+                    "已注册保活心跳（每 ${HEARTBEAT_INTERVAL_MS / 60_000} 分钟，触发时唤醒 CPU）"
+                } else {
+                    "已注册保活心跳（每 ${HEARTBEAT_INTERVAL_MS / 60_000} 分钟；屏幕关闭，" +
+                        "已改用不唤醒闹钟，亮屏后自动切回）"
+                },
+            )
         }.onFailure {
             LogStore.error(TAG, "注册保活心跳失败：${it.message ?: it.javaClass.simpleName}")
         }
@@ -102,16 +123,30 @@ object KeepAliveScheduler {
         val am = app.getSystemService(AlarmManager::class.java) ?: return
         // 退避结果先算出来：无论下面排闹钟成功与否，失败历史都已经记下了。
         val delay = if (delayMs >= 0L) delayMs else nextBackoffDelay(app)
+        val screenOn = ScreenStateGate.isScreenOn(app)
         runCatching {
-            // setAndAllowWhileIdle：进 Doze 也会被放行（系统可能推迟到维护窗口），
-            // 且不需要精确闹钟权限 —— setExactAndAllowWhileIdle 才是要权限的那个。
-            am.setAndAllowWhileIdle(
-                AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + delay,
-                pending(app, REQUEST_RESTART, ACTION_RESTART),
-            )
+            if (screenOn) {
+                // setAndAllowWhileIdle：进 Doze 也会被放行（系统可能推迟到维护窗口），
+                // 且不需要精确闹钟权限 —— setExactAndAllowWhileIdle 才是要权限的那个。
+                am.setAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + delay,
+                    pending(app, REQUEST_RESTART, ACTION_RESTART),
+                )
+            } else {
+                // 1.5.4：锁屏期间的「拉回」同样不该把设备叫醒。改用不唤醒的一次性闹钟：
+                // 语义（过 delay 后把服务拉回来）不变，只是设备恰好醒着时才执行。
+                am.set(
+                    AlarmManager.ELAPSED_REALTIME,
+                    SystemClock.elapsedRealtime() + delay,
+                    pending(app, REQUEST_RESTART, ACTION_RESTART),
+                )
+            }
         }.onSuccess {
-            LogStore.debug(TAG, "已安排 ${delay / 1000} 秒后重启监控服务")
+            LogStore.debug(
+                TAG,
+                "已安排 ${delay / 1000} 秒后重启监控服务" + if (screenOn) "" else "（锁屏中，用不唤醒闹钟）",
+            )
         }.onFailure {
             LogStore.error(TAG, "安排重启闹钟失败：${it.message ?: it.javaClass.simpleName}")
         }

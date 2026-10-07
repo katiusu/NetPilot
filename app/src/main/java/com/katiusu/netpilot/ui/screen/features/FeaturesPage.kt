@@ -488,16 +488,17 @@ private fun ModePickerDialog(onDismiss: () -> Unit) {
         busy = true
         scope.launch {
             val ok = runCatching { NetPilot.setMode(subId, mode) }.getOrDefault(false)
+            // 1.5.4：写入成功 ≠ 生效（见 NetPilot.lastModeWriteEffective 的注释）。
+            // 这里只把提示说诚实，返回值与判定一律不变。
+            val effective = NetPilot.lastModeWriteEffective
             busy = false
             if (ok) current = mode.value
-            Toast.makeText(
-                context,
-                context.getString(
-                    if (ok) R.string.np_mode_switch_applied else R.string.np_mode_switch_failed,
-                    mode.label,
-                ),
-                Toast.LENGTH_SHORT,
-            ).show()
+            val text = when {
+                !ok -> context.getString(R.string.np_mode_switch_failed, mode.label)
+                !effective -> context.getString(R.string.np_mode_switch_no_effect, mode.label)
+                else -> context.getString(R.string.np_mode_switch_applied, mode.label)
+            }
+            Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
         }
     }
 

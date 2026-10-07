@@ -1291,3 +1291,78 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
   （证书 SHA-256 `34100875…ac4c`，与 1.3.0 以来同一把 key）；`zipalign -c 4` 通过；5 条 keep 目标都在 dex 字符串池里。
 - 覆盖安装即可（同 versionCode + 同签名）；`versionCode` 未变是因为用户明确要求「版本号不变」。
 - **本版仍未创建 GitHub Release**（等用户说「发布」）。
+
+## 24. 1.5.4（2026100700）：锁屏不唤醒 + 制式写入如实告知 + 孤儿清扫再补一手
+
+> 本版依据用户 m04743 / m04745「程序是否影响系统深度睡眠，若影响则改正。为什么出现图示情况，有问题就修。
+> 有问题问我。版本1.5.4 2026100700」与 m04838 的三条答复（另见 [`POWER_REPORT.md`](POWER_REPORT.md) §13）。
+> **不改判定语义**（modem 返回 false 仍不算失败）、**亮屏行为保持原样**。
+
+### 24.0 本版到底改了什么（一句话版）
+
+| 项 | 改前 | 改后 | 怎么验 |
+| --- | --- | --- | --- |
+| 锁屏时的定时唤醒 | 心跳与重启闹钟都是 `ELAPSED_REALTIME_WAKEUP`（锁屏也唤醒 CPU） | 锁屏用不唤醒类型，亮屏自动切回 | §24.1 |
+| 制式写入的结论 | 系统「收下」就写 INFO「已切换为 X」 | 回读真值并比对；不一致时 WARN + Toast 提示 | §24.2 |
+| 孤儿 `:np_service` | 4 次重试（到 5 分钟） | 7 次重试（到 60 分钟）+ 首次选用 Shizuku 前再清一次 | §24.3 |
+
+### 24.1 锁屏不唤醒（本版重点）
+
+1. 装上 1.5.4，打开应用让服务跑起来（首页能看到实时信号）。
+2. 用你能查看系统闹钟的方式（例如 `adb shell dumpsys alarm`，找 `com.katiusu.netpilot` 的条目）：
+   - **亮屏时**：心跳条目的类型应是 `ELAPSED_REALTIME_WAKEUP`（与旧版一致）；
+   - **锁屏后再看同一条**：类型应变成 `ELAPSED_REALTIME`（**不带 `_WAKEUP`**）—— 这就是本版的核心改法；
+   - **解锁亮屏后再看**：自动切回 `ELAPSED_REALTIME_WAKEUP`。
+3. 日志页（简要模式即可）应能在屏幕状态切换后看到类似「保活闹钟: 屏幕已关闭，心跳改用不唤醒闹钟，亮屏后自动切回」
+   的一行（`ScreenStateGate` 触发重排）。
+4. 省电对照（可选）：锁屏放一夜，早上看系统电池统计里 NetPilot 的「唤醒次数 / 保持唤醒」应不再随 15 分钟周期出现；
+   应用本身**从不持有 wake lock**（`dumpsys power` 的 `Wake Locks` 里不会出现 NetPilot）。
+5. **边界（如实说明，属预期不是 bug）**：锁屏期间若进程被系统清理，要等下一次亮屏才会被重新拉起，而不是 15 分钟内自动拉回 ——
+   这是用户明确选择的策略（「在锁屏时才停止定时唤醒」）。亮屏状态下的保活行为**完全不变**：
+   从最近任务划掉后约 10 秒自动回来（含失败退避）。
+6. 不回归：总开关关掉后仍然一条闹钟都不排（`KeepAliveScheduler.cancel` 未动）；`KeepAliveReceiver` 的三步闸门未动。
+
+### 24.2 制式写入的「系统回读确认」
+
+1. 打开功能页 →「策略」→「切换网络制式」，随便点一个**当前不是**的制式，然后看日志页：
+   - **正常机型**：仍是一行 INFO「NetPilot: 卡 N 制式已切换为 X」（与旧版相同）；
+   - **写入被系统收下但没生效的机型**（用户那台 OriginOS 属于这一类）：应出现
+     `NetPilot: 卡 N 制式未真正生效：已请求 X（v），系统回读是 Y（a）。写入被系统收下但未被接受 —— …`，
+     同时 Toast 是「已请求切换，系统未确认生效（详见日志页）」而不是「已切换为 X」。
+2. **同义模式不误报**（本版特意修的判据）：点「3G/2G 自动」这一行（枚举值 3）时**不应**出现「未真正生效」——
+   它与值 0 的位掩码完全相同、系统回读只会给出 0，属正常归一等价。
+3. 打开设置页的「写入详细诊断日志」，重复第 1 步：应能看到三条策略（`setAllowedNetworkTypesForReason` /
+   `setAllowedNetworkTypes` / `setPreferredNetworkType`）各自的调用与拒绝原文，便于定位到底卡在哪一步。
+4. 不回归（重要）：**modem 返回 false 仍不算失败**；`NetPilot.setMode` 的返回值、自动降级/恢复的判定、
+   `ControlManager` 的 5 分钟读记忆全部不变（回读用的是新增参数 `useMemo = false`，且不回写记忆）。
+
+### 24.3 孤儿 `:np_service` 清扫（第二手）
+
+1. 装新版后先看现状：`ps -A | grep np_service`（记下个数与 pid）。
+2. 打开一次应用，**等 1 分钟**再看同一条命令。期望：旧孤儿消失（0 个，或只剩「当前正在用的那一个」）。
+3. 日志页简要模式应出现下列之一（本版新增的可见证据）：
+   - 「写入诊断: shizuku 启动清扫：回收 N 个残留用户服务进程」（1.5.3 起）；
+   - 「写入诊断: shizuku 首次选用 Shizuku 前已清掉 N 个残留用户服务进程」（本版新增）。
+4. Shizuku 没起来时：本版有 **7 次**机会（立刻 / 30 秒 / 2 分钟 / 5 分钟 / 15 分钟 / 30 分钟 / 60 分钟），期间会自动重试。
+5. 防误杀：正常用 Shizuku 通道读写制式期间，不应出现「写入后通道不可用」；握有活的 Shizuku 通道时本版**跳过**清扫。
+6. 边界（如实说明）：Shizuku 公共 API 不提供用户服务 pid 列表，无法只杀「确实没用的那个」。
+
+### 24.4 不变量核对（本版一行未改）
+
+- 判定参数默认值：`monitorIntervalSec = 60`、`cooldownSec = 120`、`recoveryCount = 2`、`rsrpThreshold = -85`、
+  `weakRsrp = -110`、`downgradeMode = 9`、`lockLteMode = 0`、`fakeFullBarOnNrOnly = true`、`adaptiveInterval = true`。
+- 保活判定的触发与投递逻辑：`KeepAliveReceiver.ensureMonitorRunning` 的三步闸门、退避（10 秒起、上限 15 分钟）、
+  「服务站稳 2 分钟」判据。
+- 特权通道选择顺序（Root → Shizuku → settings 兜底）与「已选用特权通道」日志。
+- 制式列表呈现（§23.1 的四行合成项与去重规则）未动。
+
+### 24.5 本版产物与校验（2026100700）
+
+- 交付包 `NetPilot-1.5.4-2026100700-release.apk`：**4 170 771 B**，MD5 `493ca05d49a7b4f93bd451ba9a2f3ce3`，
+  SHA-256 `622cf8cf70ae00adcf7b5ea0484bbf0fa41d5384d7eb195ff7fa4308021eaa6d`。
+- `aapt2 dump badging`：`versionCode='2026100700' versionName='1.5.4'`、minSdk 34 / targetSdk 36 / compileSdk 37。
+- 150 条目（`AndroidManifest.xml` 16 620 B、`resources.arsc` 814 200 B），1 个 dex 共 3 154 340 B。
+- keep 目标 4 个（`PrivilegedCli` / `ShizukuControllerService` / `IShizukuController$Stub` / `…$Stub$Proxy`）全在 dex；
+  `apksigner verify` 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`；`zipalign -c 4` 通过。
+- 构建：`BUILD SUCCESSFUL in 13m 40s`（`Task :app:minifyReleaseWithR8` 已执行）。
+  容器内**一次只跑一个 release 构建**、R8 阶段日志长时间不增长属正常 —— 依据见 `docs/POWER_REPORT.md` §13.6 的构建备注。

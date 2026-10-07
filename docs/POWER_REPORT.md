@@ -1880,3 +1880,197 @@ T2 只改清扫时机与返回值，不进任何降级判定路径；T3 只改�
 - 安装说明：versionCode 与上一版相同（用户要求不改版本号），签名相同 ⇒ 覆盖安装是允许的
   （Android 只要求签名一致，`adb install -r` 即可覆盖）。**APK 只交付、不安装。**
 - 验收步骤： [`TESTING.md`](TESTING.md) §23.0 – §23.6。
+
+## 13. 1.5.4（2026100700）：锁屏不再定时唤醒 + 制式写入加系统回读确认 + 孤儿用户服务再补一手
+
+> 用户原始要求（m04743 / m04745 各一次，原文）：「程序是否影响系统深度睡眠，若影响则改正。为什么出现图示情况，有问题就修。
+> 有问题问我。版本1.5.4 2026100700」；追问后的答复（m04838，原文）：① 「这个是在另一台设备出现的问题originos，
+> 本设备没有。可能是他们系统权限更严格。这是手动切换」；② 选「现在看不到，先别改判定」；③ 「在锁屏时才停止定时唤醒」。
+> 因此本版三条边界：**不改任何判定语义**（modem 返回 false 仍不算失败）、**亮屏行为保持原样**、**版本号 1.5.4 / 2026100700**。
+
+### 13.0 本版到底改了什么（一句话版）
+
+| 项 | 改前 | 改后 | 编号 |
+| --- | --- | --- | --- |
+| 锁屏时的定时唤醒 | 15 分钟 `setInexactRepeating(ELAPSED_REALTIME_WAKEUP, …)` 心跳 + 「尽快拉回」`setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP, …)` —— 夜里锁屏也会把 CPU 唤醒 | 锁屏改用**不唤醒**类型（`ELAPSED_REALTIME` + `set`），亮屏自动切回唤醒型；新增 `ScreenStateGate` 监听屏幕开/关 | C62–C64 |
+| 制式写入的结论 | 只要系统「收下」这次调用就写 INFO「卡 N 制式已切换为 X」 | 写完**回读真值**并按位掩码比对；不一致时记 WARN「未真正生效」，界面 Toast 也如实提示 | C66–C70 |
+| 孤儿 `:np_service` | 1.5.3 的 4 次重试在 root 主力机上仍可能清不到（Shizuku 那时没起来） | 重试扩到 7 次（最远 60 分钟）+ **首次选用 Shizuku 之前**再清一次 | C65 / C67 |
+
+### 13.1 深睡眠：本机实测结论与本次改法
+
+**问题**：程序是否影响系统深度睡眠？（用户要求「若影响则改正」）
+
+**先测量（改动前的实测证据，本机 Android 14 / 小米）**：
+
+1. **不持有任何 wake lock**。`dumpsys power` 的 `Wake Locks: size=2`，两条都属于 DSHA 自身
+   （`'DSHA:web'` / `'DSHA:runtime-task'`，uid=10162 pkg=com.dsh.client）；全仓 `grep -rn "newWakeLock|acquireWakeLock|PARTIAL_WAKE_LOCK"` **零命中**
+   （`WAKE_LOCK` 权限在 Manifest 里声明了但从未使用）。⇒ NetPilot 不靠 wake lock 维持任何东西。
+2. **不注册任何网络 / 传感器回调**，因此没有「事件回调把 CPU 拉起来」这条路径；前台服务的探测循环靠 `delay()`，
+   只在服务存活期间自然进行。
+3. **真正削减深睡的是两条闹钟**（都在 `core/keepalive/KeepAliveScheduler.kt`）：
+   - 15 分钟周期心跳 `setInexactRepeating(AlarmManager.ELAPSED_REALTIME_WAKEUP, …)`（`HEARTBEAT_INTERVAL_MS`）；
+   - 「刚被清理，尽快拉回」的一次性 `setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, …)`（`scheduleRestartSoon`）。
+   `…_WAKEUP` 类型在触发时**会把 CPU 唤醒**，这是本应用唯一会主动唤醒 CPU 的东西。
+4. **间接放大**：应用会引导用户把自己加进「忽略电池优化」白名单（`core/PermissionGuide.kt` 的
+   `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`，`MainActivity.kt:286` 弹出确认页），而本机 `/data/system/deviceidle.xml`
+   里确实有 `com.katiusu.netpilot` ⇒ **Doze 不会推迟它的闹钟**，上面两条闹钟因此按点触发、按点唤醒。
+   这一项是用户主动开启的（保活功能需要），不是偷偷做的；本版改完之后，即便仍在白名单里，锁屏期间也不再有唤醒型闹钟。
+
+**改法（C62–C64）**：
+
+- 新增 `core/keepalive/ScreenStateGate.kt`（`object ScreenStateGate`，`TAG = "屏幕状态"`）：
+  - `fun isScreenOn(context: Context): Boolean` —— 读 `PowerManager.isInteractive`，取不到时**按 true 返回**（保守：宁可维持旧行为）；
+  - `fun install(context: Context)` —— 幂等注册 `ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF` 的**动态**接收器
+    （`Context.RECEIVER_NOT_EXPORTED`，Android 14 上屏幕广播必须动态注册），收到屏幕变化时只要 `ServicesGate.enabled`
+    就调用 `KeepAliveScheduler.schedule()` 重排；注册失败只记 WARN，不影响其它功能。
+- `KeepAliveScheduler.schedule()`：按屏幕状态选闹钟类型 —— 亮屏仍 `ELAPSED_REALTIME_WAKEUP`（与旧版**逐字节一致**），
+  锁屏改 `ELAPSED_REALTIME`（**不唤醒 CPU**，只在该设备因别的理由已经醒着时才会被投递）；日志分两种文案
+  （「已注册保活心跳（每 15 分钟）」/「屏幕已关闭，心跳改用不唤醒闹钟，亮屏后自动切回」）。
+- `KeepAliveScheduler.scheduleRestartSoon()`：亮屏仍走原 `setAndAllowWhileIdle(ELAPSED_REALTIME_WAKEUP, …)`；
+  锁屏改 `AlarmManager.set(ELAPSED_REALTIME, …)`。指数退避逻辑一行未改。
+- `TemplateApp.onCreate` 里 `ScreenStateGate.install(this)`（在 `pruneShizukuOrphans()` 之前）。
+
+**效果与诚实边界**：
+
+- 锁屏期间 NetPilot **不再有周期性唤醒 CPU 的闹钟**，只剩一条一次性重启闹钟且同样是不唤醒类型 ⇒ 不再参与
+  「把手机从深睡里叫醒」。
+- 代价（用户已明确选择）：锁屏期间若进程被系统清理，要等下一次亮屏（`ACTION_SCREEN_ON`）才会被重新排闹钟并拉起，
+  而不是 15 分钟内自动拉回。
+- 亮屏状态下行为完全不变：心跳 15 分钟、从最近任务划掉后约 10 秒拉回（含退避策略）。
+- 探测循环、降级/恢复判定、`KeepAliveReceiver` 的三步闸门（总开关 → `monitorWanted` → `MonitorEngine.running`）一行未改。
+
+### 13.2 制式写入：加「系统回读确认」，但不改判定
+
+**现象（用户截图，另一台设备）**：日志先写 `策略1 setAllowedNetworkTypesForReason -> Hit(value=true)`、
+`策略1 …(subId=1, REASON_USER, 842751) 已调用，modem 返回 true`、`由 ITelephony 策略完成切换：subId=1 mode=27`，
+紧接着一行 INFO `卡 1 制式已切换为 仅 4G (LTE)`；但系统里制式并没有变，约 1 秒内还出现 11 ↔ 27 来回写。
+
+**判定链的既有语义（本版不动）**：`core/priv/TelephonyReflection.kt:401-510` 的 `setNetworkMode` 依次尝试
+`setAllowedNetworkTypesForReason`（策略1）→ `setAllowedNetworkTypes`（策略2）→ `setPreferredNetworkType`（策略3），
+**任一条被系统返回 `Hit` 就算成功**，modem 的布尔值只记日志、不参与判定（`:460-467`）；三条全被拒才返回 false
+（`:497-503` 带逐策略拒绝原文）。用户已明确「现在看不到（modem 返回值），先别改判定」⇒ **这条语义保持原样**。
+
+**本版做法（C66–C70，全部是「呈现与诊断」层的改动）**：
+
+1. `ControlManager.getMode(subId: Int, useMemo: Boolean = true)` 新增参数：`useMemo = false` 时**一定走特权回读**，
+   且**不回写** `modeMemo*`。为什么不回写：引擎的防重复写闸门读的就是这份记忆，若按真值回写，一旦某台机器
+   写不进制式，引擎会变成每个采样周期都重试写入 = **行为变更**，用户没要求。
+2. `NetPilot.setMode(subId, mode)` 在写入成功后回读一次真值，用新增私有函数
+   `modeWriteAccepted(requested: Int, actual: Int): Boolean` 判断是否真的生效：
+   - 一致 ⇒ 仍打原来的 INFO「卡 N 制式已切换为 X」（成功后日志**与旧版一致**）；
+   - 不一致 ⇒ 打 WARN「卡 N 制式未真正生效：已请求 X（v），系统回读是 Y（a）。写入被系统收下但未被接受 ——
+     权限更严格的机型（OriginOS 等）上常见，可在设置页打开「写入详细诊断日志」查看逐策略过程」。
+3. `NetPilot.lastModeWriteEffective`（`@Volatile`，默认 `true`）把这次的结论带给界面；
+   `FeaturesPage.writeMode` 的 Toast 分三支：失败 → `np_mode_switch_failed`；成功但回读不一致 →
+   新增字符串 `np_mode_switch_no_effect`（「已请求切换，系统未确认生效（详见日志页）」）；正常 → `np_mode_switch_applied`。
+4. **返回值语义完全未改**：`NetPilot.setMode` 仍返回「系统收下了这次调用」的 ok，调用方（引擎、Tasker、磁贴）看到的东西不变。
+
+#### 13.2.1 为什么必须按「位掩码」比对（本轮踩到的真坑）
+
+位掩码表**不是单射**：`core/mode/NetworkMode.kt:21` `WCDMA_PREF(0, "3G/2G 自动", 3)` 与
+`:24-25` `GSM_UMTS(3, "3G/2G 自动", 3)`（注释原文：「可选制式与 `[WCDMA_PREF]` 一致，位掩码因此重合，回读时会被归一到 0」）
+的可选制式完全相同、`toBitmask` 结果也完全相同；`NetworkModeBitmaskMapper.exactModes`（位掩码 → **最小** mode，
+注释写着「mode 3 repeats mode 0 exactly」）在回读时只能给出 0。而 0 / 3 两行**都在可选列表里**（§23.1 的去重规则只合并
+同名重复行、不打乱枚举），用户完全可能点到「3G/2G 自动」这两个同义项中的任一个。
+
+若按 RIL 数值直接比对，「请求 3、回读 0」会被误判成「没生效」，把日志 WARN 和界面 Toast 一起说错 —— 这是本轮
+构建前复核时发现的，因此把判据改为 `toBitmask(requested) == toBitmask(actual)`：位掩码相等即视为同一件事，同义模式
+（0/3、10/22 之类）天然相等。**「确认不了就当生效」**：回读失败（-1）或任一模式算不出掩码（表外模式）时返回 true ——
+这条提示的存在意义是报出**确凿**的「写了但没生效」，不该制造噪音。
+
+#### 13.2.2 为什么回读能反映真实情况
+
+`core/priv/TelephonyReflection.kt:351-375` 的 `getCurrentNetworkMode(subId, caller)` 读的是
+`ITelephony.getAllowedNetworkTypesForReason(subId, REASON_USER)`（Android 11+ 的**运行时权威值**）→ `bitmaskMapper.toNetworkMode(mask)`，
+失败才退到 `getPreferredNetworkType`，两条都没有时返回 `UNAVAILABLE`(-1)。它**不读 `settings` 遗留字段** ——
+反例对照：`RootController.kt:77-84` 在 CLI 不可用时退到 `settingsGetMode(subId)`，而 settings 兜底写入只改
+`preferred_network_mode` / `preferred_network_mode1`（源码注释自己写明「settings 是遗留兼容字段」），**写完回读必然一致，
+发现不了「制式没变」**。本版回读走的是前者，所以那台 OriginOS 上的读取是真值。
+
+#### 13.2.3 关于那台 OriginOS 设备的诚实说明
+
+本版**没有**为它新增写入通路（用户明确「先别改判定」）。它现在能获得的改善只有三件：
+(a) 日志页会明确写出「写入被系统收下但系统回读不一致」，而不是只印一句「卡 1 制式已切换为 仅 4G (LTE)」；
+(b) 界面 Toast 直接提示「已请求切换，系统未确认生效」；
+(c) 打开设置页的「写入详细诊断日志」后能看到三条策略各自的拒绝原文。
+若那台机器三条策略都不可用，下一步只能做**机型适配**（厂商 API、或 settings 兜底 + 明确告知），需要真机日志才能定位 ——
+本轮不猜、也不改判定。
+
+### 13.3 孤儿 `:np_service` 的第二手：首次选用 Shizuku 之前清扫 + 重试窗口拉长
+
+1.5.3 修的是「CAS 抢在两道门控之前 ⇒ 开机那次注定失败的尝试把唯一机会烧掉」。但还有一个残留场景：
+**本机主力通道是 root**，`ControlManager.acquire()` 走 Root 分支，永远不会走到 Shizuku 分支，所以只要启动那 4 次尝试
+（0 / 30 s / 2 min / 5 min）里 Shizuku 恰好都没起来，这个孤儿就一直留着。本版补两手（C65 / C67）：
+
+1. `TemplateApp.pruneShizukuOrphans()` 的有界重试从 4 次扩到 **7 次**：0 / 30 s / 2 min / 5 min / 15 min / 30 min / 60 min，
+   仍以「清扫真的执行成功」（返回 `>= 0`）为停止条件、仍是守护线程（不拖慢 `Application.onCreate`）。
+2. `ControlManager.acquire()` 的 Shizuku 分支里，**在 `shizuku.probe()` 之前**插入 `pruneOrphansBeforeFirstShizukuBind()`
+   （`@Volatile preBindPruneDone` 保证每个进程只做**成功**一次 —— 与 1.5.3 的清扫标志同一原则：Shizuku 还没上线的那次失败尝试不会把唯一机会烧掉）：这是唯一「本进程还没有任何活着的用户服务」的时间窗，
+   清扫不会误杀正在用的那个；真的清到进程时用 `WriteDiag.always`（简要模式也可见）记一行
+   「首次选用 Shizuku 前已清掉 N 个残留用户服务进程」。
+3. 防误杀保持不变：若缓存里已经握着一条活的 Shizuku 通道，`ControlManager.pruneOrphanedServices()` 仍直接返回 -1 跳过本次清扫。
+
+**改动前实测（本机，两次观测）**：`root 5500 1 … com.katiusu.netpilot:np_service`（PPID=1）、
+`root 8800 1 … com.katiusu.netpilot:np_service`（PPID=1，RSS 60 812 KB ≈ 59 MB）；同一时刻
+`shizuku_server` 是 `root 15400 1 …`（PPID=1），**pid 高于应用主进程**（`u0_a216 28810`）⇒ 先开应用、后起 Shizuku，
+正好落在上面说的「启动那几次尝试时 Shizuku 还没起来」窗口里。
+
+**诚实边界**（与 §12.3 相同）：Shizuku 公共 API 不提供用户服务 pid / 进程列表，无法只杀「确实没用的那个」；
+本方案仍是「在用户服务进程里清掉所有同类（跳过自己）」，靠上面的时间窗 + 防误杀条件把风险压到最低。
+
+### 13.4 改动清单（本轮 C62–C70）
+
+| 编号 | 文件 | 改动 |
+| --- | --- | --- |
+| C62 | `core/keepalive/ScreenStateGate.kt`（新增） | `isScreenOn` / `install`：动态注册 `SCREEN_ON` / `SCREEN_OFF`，屏幕变化时重排保活闹钟 |
+| C63 | `core/keepalive/KeepAliveScheduler.kt` | `schedule()` 按屏幕状态选 `ELAPSED_REALTIME_WAKEUP` / `ELAPSED_REALTIME`，日志分两种文案 |
+| C64 | `core/keepalive/KeepAliveScheduler.kt` | `scheduleRestartSoon()` 锁屏改 `set(ELAPSED_REALTIME, …)`（亮屏仍 `setAndAllowWhileIdle(WAKEUP, …)`） |
+| C65 | `TemplateApp.kt` | `ScreenStateGate.install(this)`；启动清扫重试 4 次 → **7 次**（0/30 s/2 min/5 min/15 min/30 min/60 min） |
+| C66 | `core/priv/ControlManager.kt` | `getMode(subId, useMemo = true)`：`useMemo = false` 走特权回读且**不回写**记忆 |
+| C67 | `core/priv/ControlManager.kt` | 新增首次选用 Shizuku 前的清扫（`pruneOrphansBeforeFirstShizukuBind` + `preBindPruneDone`） |
+| C68 | `core/NetPilot.kt` | 写入成功后回读真值 + `modeWriteAccepted`（位掩码比对）+ `lastModeWriteEffective` |
+| C69 | `ui/screen/features/FeaturesPage.kt` | 切换 Toast 三分支（失败 / 未确认生效 / 已切换） |
+| C70 | `values/strings_np.xml`、`values-en/strings_np.xml`、`app/build.gradle.kts` | 新增 `np_mode_switch_no_effect`；版本号 → 1.5.4 / 2026100700 |
+
+### 13.5 判定语义不变的论证
+
+- **写入判定**：`TelephonyReflection.setNetworkMode` 的「任一策略 `Hit` 即成功」、`ControlManager.setMode` 的返回值、
+  `modeMemo*` 的写入时机（仍按**请求值**刷新）—— 三处一行未改。新增的回读只影响日志与 Toast。
+- **降级 / 恢复**：`AutoDowngradeEngine` 状态机、`DowngradeState`、`carrierDefault()`、`MonitorSettings` 全部默认值
+  （`monitorIntervalSec=60`、`cooldownSec=120`、`recoveryCount=2`、`rsrpThreshold=-85`、`weakRsrp=-110`、
+  `downgradeMode=9`、`lockLteMode=0`、`fakeFullBarOnNrOnly=true`、`adaptiveInterval=true` …）未动。
+- **保活判定**：`KeepAliveReceiver.ensureMonitorRunning` 的三步闸门、退避算法（10 s → 20 s → 40 s … 上限 15 分钟）、
+  服务「站稳 2 分钟」判据未动；本版只换闹钟**类型**（是否唤醒 CPU），触发与投递逻辑不变。
+- **纯新增**：`ScreenStateGate` 是新文件；`getMode` 的 `useMemo` 是带默认值的**新增参数**（旧调用点行为不变）；
+  `lastModeWriteEffective` 是新字段。回滚方式：删除 `ScreenStateGate.kt` 并撤掉三处引用即可回到 1.5.3 行为。
+
+### 13.6 本版产物与校验（2026100700）
+
+**构建**：`bash _build.sh :app:assembleRelease --no-configuration-cache` → `BUILD SUCCESSFUL in 13m 40s`
+（46 actionable tasks：6 executed / 40 up-to-date，`Task :app:minifyReleaseWithR8` 已执行）。
+产物 `app/build/outputs/apk/release/app-release.apk` 复制为交付名 `NetPilot-1.5.4-2026100700-release.apk`：
+
+| 项 | 值 |
+| --- | --- |
+| 大小 | 4 170 771 B |
+| MD5 | `493ca05d49a7b4f93bd451ba9a2f3ce3` |
+| SHA-256 | `622cf8cf70ae00adcf7b5ea0484bbf0fa41d5384d7eb195ff7fa4308021eaa6d` |
+| versionCode / versionName | `2026100700` / `1.5.4` |
+| minSdk / targetSdk / compileSdk | 34 / 36 / 37（`platformBuildVersionCode=37`） |
+| APK 条目 | 150（`AndroidManifest.xml` 16 620 B、`resources.arsc` 814 200 B） |
+| dex | 1 个 `classes.dex`，3 154 340 B（1.5.3 为 3 151 324 B，**+3 016 B**） |
+| keep 目标 | `PrivilegedCli`、`ShizukuControllerService`、`IShizukuController$Stub`、`IShizukuController$Stub$Proxy` 均在 dex |
+| 签名证书 SHA-256 | `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与历史版本同一证书） |
+| 对齐 | `zipalign -c 4` 通过（另用独立脚本按 local header 复核：45 个未压缩条目 0 个错位） |
+
+**构建过程备注（可复现性，本轮踩过的坑）**：
+- 本容器（PRoot）里**一次只能跑一个 release 构建**。两个 Gradle 守护进程并发会抢 `journal-1`，
+  报 `Could not create service of type FileAccessTimeJournal … java.io.IOException: Operation not permitted`
+  （日志里能看到 `Starting a Gradle Daemon, 2 busy Daemons could not be reused`）。构建前先
+  `pgrep -f "[G]radleDaemon"` 确认清空、必要时 `rm -rf /root/.gradle/caches/journal-1`。
+- R8 阶段（`minifyReleaseWithR8`）**十几分钟不输出新日志是正常的**（`--console=plain` 只在任务开始时打一行）。
+  判断「在跑」还是「卡死」看守护进程 `/proc/<pid>/stat` 的 utime+stime 增量：实测 12 秒墙钟涨 1409 ticks
+  ≈ 14 秒 CPU、RSS 934 → 1047 MB。
+- `_build.sh` 不要用 `| tail` 接（脚本自己会警告），否则退出码被吞。
+- 构建工具：`zipalign` / `apksigner` 用 `/opt/android-sdk/build-tools/35.0.2/`（34.0.0 与 35.0.0 下的
+  `zipalign` 在本容器报 `bad machine`，是宿主架构不匹配的二进制）；`aapt2` 走 shim `/root/aapt2-shim/aapt2`。

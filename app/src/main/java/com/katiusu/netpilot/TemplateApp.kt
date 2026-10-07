@@ -8,6 +8,7 @@ import com.katiusu.netpilot.prefs.OptionRegistry
 import com.katiusu.netpilot.prefs.PrefsStore
 import com.katiusu.netpilot.ui.screen.features.featureSpecs
 import com.katiusu.netpilot.core.NetPilot
+import com.katiusu.netpilot.core.keepalive.ScreenStateGate
 import com.katiusu.netpilot.core.priv.ControlManager
 import com.katiusu.netpilot.core.tasker.TaskerGate
 import kotlinx.coroutines.runBlocking
@@ -31,6 +32,9 @@ class TemplateApp : Application() {
         // ConfigState 的回调会触发 sync，那时再接线。接收器与编辑界面里仍各留一次
         // TaskerBridge.init 补调（进程可能刚被广播冷启动，那时 Application 还没跑完）。
         TaskerGate.install(this)
+        // 1.5.4：屏幕亮/灭的观察者。锁屏后要把保活心跳换成「不唤醒」闹钟，而闹钟类型只能在
+        // 排闹钟那一刻决定 ⇒ 必须在屏幕状态变化时重排。这里注册一次，进程活着就一直有效。
+        ScreenStateGate.install(this)
         pruneShizukuOrphans()
     }
 
@@ -51,12 +55,21 @@ class TemplateApp : Application() {
      * 用户后来正常用起 Shizuku 也清不掉上次遗留的孤儿（实测本机有一个从开机留到现在、
      * 约 59 MB 的 `:np_service`）。
      *
-     * 4 次尝试：立刻 / 30 秒 / 2 分钟 / 5 分钟；任何一次**真的执行成功**（返回 >= 0）就停，
-     * Shizuku 一直没起来时每次只是一次很便宜的探测，期间进程本来也要活着。
+     * 7 次尝试：立刻 / 30 秒 / 2 分钟 / 5 分钟 / 15 分钟 / 30 分钟 / 60 分钟；任何一次
+     * **真的执行成功**（返回 >= 0）就停，Shizuku 一直没起来时每次只是一次很便宜的探测，
+     * 期间进程本来也要活着。
+     *
+     * 1.5.4：窗口从 5 分钟放宽到约 1 小时。设备实测（2026-10-07）：用户先开应用、后开 Shizuku
+     * 时 `shizuku_server` 的 pid 大于应用主进程 —— 等它上线时 5 分钟的窗口早就过了，遗留的
+     * `:np_service`（PPID=1，约 60 MB）就一直留着。Shizuku 不在线时每次尝试只是一次很便宜的
+     * 探测（门控顺序见 `ShizukuController.pruneOrphanedServices`），放宽窗口几乎没有代价；
+     * `ControlManager.acquire()` 里另有一条「首次真正绑定用户服务前再清一次」的兜底。
      */
     private fun pruneShizukuOrphans() {
         Thread {
-            val delaysMs = longArrayOf(0L, 30_000L, 120_000L, 300_000L)
+            val delaysMs = longArrayOf(
+                0L, 30_000L, 120_000L, 300_000L, 900_000L, 1_800_000L, 3_600_000L,
+            )
             var attempt = 0
             var done = false
             while (!done && attempt < delaysMs.size) {
