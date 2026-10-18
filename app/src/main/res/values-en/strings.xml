@@ -205,4 +205,9 @@
     <string name="licenses_section_androidx">AndroidX</string>
     <string name="licenses_section_tools">Privileged Tools</string>
     <string name="licenses_section_refs">Referenced Projects</string>
+    <!-- 1.6.0 update dialog -->
+    <string name="update_version_current">Current version</string>
+    <string name="update_version_latest">Latest version</string>
+    <string name="update_notes_title">What\'s new</string>
+    <string name="update_ok">OK</string>
 </resources>

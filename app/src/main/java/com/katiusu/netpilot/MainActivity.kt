@@ -67,6 +67,7 @@ import com.katiusu.netpilot.ui.util.shouldExpandNavigationRail
 import com.katiusu.netpilot.ui.util.shouldShowSplitPane
 import com.katiusu.netpilot.bridge.XposedServiceManager
 import kotlinx.coroutines.job
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
@@ -97,6 +98,25 @@ import top.yukonga.miuix.kmp.utils.springAnimateToPage
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        /** 从其它页面（快速操作）跳进来时指定的初始页。 */
+        const val EXTRA_PAGE = "com.katiusu.netpilot.EXTRA_PAGE"
+
+        const val PAGE_HOME = 0
+        const val PAGE_FEATURES = 1
+        const val PAGE_MONITOR = 2
+        const val PAGE_LOG = 3
+        const val PAGE_SETTINGS = 4
+    }
+
+    /**
+     * 外部请求的页（-1 = 不指定）。
+     *
+     * 为什么用状态而不是直接读 intent：本 Activity 是 singleTop，从快速操作页再跳回来时
+     * 走的是 onNewIntent，只有把新请求写进状态，已经组合好的 MainScreen 才会跟着跳页。
+     */
+    private var requestedPage by mutableIntStateOf(-1)
+
     /**
      * 应用是否处于前台（onResume 之后、onPause 之前）。
      *
@@ -125,9 +145,17 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val page = intent.getIntExtra(EXTRA_PAGE, -1)
+        if (page >= 0) requestedPage = page
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        requestedPage = intent?.getIntExtra(EXTRA_PAGE, -1) ?: -1
         window.isNavigationBarContrastEnforced = false
 
         val savedSettings = AppSettings.load(this)
@@ -245,6 +273,7 @@ class MainActivity : ComponentActivity() {
                     isFloatingNavbar = isFloatingNavbar,
                     isLiquidGlass = isLiquidGlass,
                     isBlurEnabled = isBlurEnabled,
+                    requestedPage = requestedPage,
                     onThemeModeChange = { themeMode = it; persistState() },
                     onFloatingNavbarChange = { isFloatingNavbar = it; persistState() },
                     onLiquidGlassChange = { isLiquidGlass = it; persistState() },
@@ -328,14 +357,17 @@ private fun MainScreen(
     isFloatingNavbar: Boolean,
     isLiquidGlass: Boolean,
     isBlurEnabled: Boolean,
+    /** 外部请求跳转到的页（-1 = 不指定），见 MainActivity.EXTRA_PAGE。 */
+    requestedPage: Int = -1,
     onThemeModeChange: (ColorSchemeMode) -> Unit,
     onFloatingNavbarChange: (Boolean) -> Unit,
     onLiquidGlassChange: (Boolean) -> Unit,
     onBlurEnabledChange: (Boolean) -> Unit,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val pagerState = rememberPagerState(pageCount = { 5 })
-    var selectedIndex by remember { mutableIntStateOf(0) }
+    val startPage = requestedPage.coerceIn(0, 4)
+    val pagerState = rememberPagerState(initialPage = startPage, pageCount = { 5 })
+    var selectedIndex by remember { mutableIntStateOf(startPage) }
     var isNavigating by remember { mutableStateOf(false) }
     var navJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var homeRefreshKey by remember { mutableIntStateOf(0) }
@@ -398,6 +430,17 @@ private fun MainScreen(
                     }
                 }
             }
+        }
+    }
+
+    // 从快速操作页跳进来（或本 Activity 已在栈里走 onNewIntent）时同步翻页。
+    // 用 scrollToPage 而不是 springAnimate：这是「外部指定」而不是用户手势翻页，不需要动画。
+    LaunchedEffect(requestedPage) {
+        val target = requestedPage
+        if (target in 0..4 && pagerState.currentPage != target) {
+            pagerState.scrollToPage(target)
+            selectedIndex = target
+            homeRefreshKey++
         }
     }
 

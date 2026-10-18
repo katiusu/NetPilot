@@ -205,4 +205,9 @@
     <string name="licenses_section_androidx">AndroidX</string>
     <string name="licenses_section_tools">特权通道与工具</string>
     <string name="licenses_section_refs">参考项目</string>
+    <!-- 1.6.0 更新弹窗 -->
+    <string name="update_version_current">当前版本</string>
+    <string name="update_version_latest">最新版本</string>
+    <string name="update_notes_title">更新内容</string>
+    <string name="update_ok">知道了</string>
 </resources>

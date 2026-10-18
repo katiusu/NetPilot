@@ -2074,3 +2074,81 @@ T2 只改清扫时机与返回值，不进任何降级判定路径；T3 只改�
 - `_build.sh` 不要用 `| tail` 接（脚本自己会警告），否则退出码被吞。
 - 构建工具：`zipalign` / `apksigner` 用 `/opt/android-sdk/build-tools/35.0.2/`（34.0.0 与 35.0.0 下的
   `zipalign` 在本容器报 `bad machine`，是宿主架构不匹配的二进制）；`aapt2` 走 shim `/root/aapt2-shim/aapt2`。
+
+## 14. 1.6.0（2026101800）：界面重构 + 双卡「次卡」设置
+
+本版重写主页、关于页、日志页与更新提示弹窗，并新增双卡场景下的次卡设置。制式判定逻辑未改动。
+
+### 14.1 主页与快速操作（`ui/screen/home/HomePage.kt`、`ui/screen/quick/QuickActionsActivity.kt`）
+
+主页按参照工程 HyperIsland 3.2.1（MIT，© 2026 1812z）`OverviewPage` 的信息层级重排。顶栏仍用本工程的
+`Scaffold + BlurredBar + TopAppBar`，五个页面共用同一个模糊源。
+
+- 三张卡：监控状态（附版本号，点按进监控页）、制式、延迟。宽度 ≥ 600dp 横排，否则大卡在左、两小卡在右列。
+- 特权通道不可用、读不到制式时，卡片下方多一张告警卡，点按进快速操作页。
+- 信息行：系统版本、应用版本、特权通道、设备型号。
+- 两组入口：快速操作、数据卡与规则、运行日志（带箭头）；GitHub 仓库、更新日志、问题反馈（外链图标）。
+
+原主页的「自动降级」开关与三排操作按钮移入二级页 `QuickActionsActivity`：制式预设、立即检测、
+锁定 LTE、自动降级、特权通道（重新探测 / 申请 Shizuku 权限）、三个页面入口。
+二级页跳主页面用 `MainActivity.EXTRA_PAGE` 配合 `onNewIntent` 与 `rememberPagerState(initialPage = …)`，
+直接落到目标页签。
+
+### 14.2 关于页（`ui/screen/about/AboutPage.kt`）
+
+分两节：项目（项目主页、更新日志、问题反馈、检查更新）与第三方许可证（许可证、依赖清单）。
+参考项目的 MIT 署名放在 `docs/NOTICE.md`，README 的「来源与许可」表同步列出。
+新增 `GITHUB_RELEASES_URL`、`GITHUB_ISSUES_URL`。
+
+### 14.3 双卡「次卡」设置（`ui/screen/settings/SettingsPage.kt`、`core/datacard/InactiveSimLte.kt`）
+
+设置页新增 `np_section_subsim` 一节：
+
+- 「上网卡编号自动检测」默认开；关掉后出现手动卡号选择（列出 `SimReader.sims()` 读到的卡）。
+  手动模式下 `NetPilot.defaultDataSubId()` 直接返回指定卡号，不再询问系统。
+- 「非活跃数据卡自动 4G」默认关。开启后 `InactiveSimLte.guard` 挂在 `NetPilotEvents.onSample`，
+  每轮采样检查非上网卡：已是 `LTE_ONLY` 或当前制式读不到时不写，其余情况写入 `LTE_ONLY`，
+  同一张卡 5 分钟内最多写一次。系统在重启、换卡、手动改制式后会改回原值，因此按轮纠正。
+
+### 14.4 日志页（`ui/screen/log/LogPage.kt`）
+
+按参照工程 HyperAutofillFix（MIT，© 2026 远方缘分的天空）的 `LogsPage` 重写，原有的正序/倒序、
+复制、分享、SAF 导出、清空、单条复制都保留。
+
+- 顶部搜索框同时匹配 tag 与正文。
+- 五档等级标签栏：全部、调试、信息、警告、错误。
+- 「日志档位」单独一张卡：简要 / 详细，简要模式附一行说明。
+- 右上角「更多」用 Miuix `WindowIconDropdownMenu`，菜单项为 `DropdownEntry` / `DropdownItem`：
+  正序、倒序（带勾选）、复制、分享、导出文件、清空。
+  用 Window 变体而非 Overlay：Overlay 变体把弹层挂到根 Scaffold，而本页 Scaffold 位于
+  `HorizontalPager` 的一页之内，实机上点按没有反应；自绘 `Popup` 同样不显示。
+- 行格式 `BasicComponent`：等级标题、`时间 · tag` 副标题、等级色圆点、等宽字体正文；整行点按复制该条。
+- 三种空态：无日志、筛选为空、搜索为空。
+- 列表不再自动跳到最新，切排序或换筛选时视口保持不动。
+
+### 14.5 更新提示（`ui/component/UpdateDialog.kt`）
+
+- `UpdateDialog`：当前版本与最新版本两行，更新内容区最高 240dp 可滚动，底部取消 / 查看。
+- `NoticeDialog`：用于「已是最新版本」「检查更新失败」这类单按钮提示，替代原来的 Toast。
+
+### 14.6 产物与校验
+
+| 项 | 值 |
+| --- | --- |
+| 文件 | `NetPilot-1.6.0-2026101800-release.apk` |
+| 大小 | 4 249 143 B |
+| MD5 | `47ec6ba9de963014eeacb937e93a7fd7` |
+| SHA-256 | `5e5fb86d5bf0e4f94ea9ec15328774e6368d8d0b42f8a13e5c5fffbd096d4434` |
+| versionCode / versionName | 2026101800 / 1.6.0 |
+| minSdk / targetSdk / compileSdk | 34 / 36 / 37 |
+| APK 条目 | 150（`AndroidManifest.xml` 16 912 B、`resources.arsc` 843 380 B） |
+| dex | 1 个 `classes.dex`，3 209 888 B |
+| keep 目标 | `PrivilegedCli`、`ShizukuControllerService`、`IShizukuController$Stub`、`…$Stub$Proxy` 均在 |
+| 签名证书 SHA-256 | `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`（与历史版本同一证书） |
+| 对齐 | `zipalign -c 4` 通过，45 个未压缩条目 0 处错位 |
+
+构建命令 `bash _build.sh :app:assembleRelease --no-configuration-cache`，R8 全量运行约 34 分钟。
+构建过程中遇到两个问题：英文资源里的 `What's new` 未转义单引号，`mergeReleaseResources` 报
+`Invalid unicode escape sequence in string`（Android 资源中单引号需写 `\'`）；手动结束 Gradle 守护进程后
+`journal-1` 会残留，下一次构建十几秒内失败于 `FileAccessTimeJournal … Operation not permitted`，
+删掉 `/root/.gradle/caches/journal-1` 即可。

@@ -1366,3 +1366,62 @@ su -c 'content query --uri content://telephony/siminfo --projection sub_id:allow
   `apksigner verify` 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`；`zipalign -c 4` 通过。
 - 构建：`BUILD SUCCESSFUL in 13m 40s`（`Task :app:minifyReleaseWithR8` 已执行）。
   容器内**一次只跑一个 release 构建**、R8 阶段日志长时间不增长属正常 —— 依据见 `docs/POWER_REPORT.md` §13.6 的构建备注。
+
+## 25. 1.6.0（2026101800）：界面重构 + 双卡「次卡」设置
+
+### 25.1 界面重写（纯 UI，无判定逻辑改动）
+
+- 主页：三张卡（监控状态 / 制式 / 延迟）、600dp 断点布局、告警卡、信息行、两组入口行。
+  「自动降级」开关与操作按钮已移入二级页。
+- 二级页 `QuickActionsActivity`：制式预设 3 个按钮、立即检测、锁定 LTE、自动降级开关、
+  特权通道（重新探测 / 申请 Shizuku 权限）、监控详情 / 运行日志 / 数据卡与规则入口。
+- 关于页两节：项目、第三方许可证（含依赖清单）。
+- 更新弹窗：版本对比 + 更新内容滚动 + 取消 / 查看；`NoticeDialog` 用于「已是最新 / 检查失败」。
+
+### 25.2 次卡设置（新增逻辑，重点验证）
+
+- 两个开关与手动卡号选择在设置页 `np_section_subsim`；「自动检测」关掉后才出现手动卡号。
+- `NetPilot.defaultDataSubId()`：自动检测关且手动卡号 > 0 时返回手动卡号，不再询问系统。
+- `InactiveSimLte.guard` 的边界（都能在日志页验证）：
+  1. `KEY_SUBSIM_AUTO_LTE` 关 ⇒ 直接返回，不读 SIM、不写。
+  2. 单卡（`sims.size < 2`）⇒ 直接返回。
+  3. 拿不到上网卡编号（自动检测开但系统返回 -1，或手动模式未指定）⇒ 记 DEBUG 后跳过，不写。
+  4. 次卡当前制式已是 `LTE_ONLY` ⇒ 不写（常态）。
+  5. 次卡当前制式读不到（-1）⇒ 记 DEBUG 跳过，不盲写。
+  6. 已写过 ⇒ 同一张卡 5 分钟内不再尝试（`WRITE_INTERVAL_MS`）。
+  7. 写成功记 INFO（含原制式）；写失败记 WARN 并说明 5 分钟后重试。
+- 判定参数默认值未变：`downgradeMode = 9`、`lockLteMode = 0`、`monitorIntervalSec = 60` 等。
+
+### 25.3 日志页（功能面）
+
+- 搜索同时匹配 tag 与正文；清空搜索后恢复全部。
+- 五档等级筛选；日志档位（简要 / 详细）单独一张卡。
+- 右上角「更多」下拉：正序 / 倒序互斥勾选、复制、分享、导出文件、清空（清空有二次确认）。
+  列表头部没有排序与动作按钮，也没有 tag 快捷筛选那一排；「共 N 条」行已删。
+- **切排序 / 换筛选不跳位置**：在列表中部停住，切正序↔倒序、切等级档，视口应留在原地。
+- 三种空态：无日志 / 筛选为空 / 搜索为空。
+- 原有能力保持：复制全部、分享、SAF 导出（`NetPilot-log-yyyyMMdd-HHmmss.txt`，4 MB 上限）、
+  单条点按复制、清空确认弹窗。
+
+### 25.4 编译期注意点
+
+改界面时容易踩到的四处（均已修）：
+
+1. Miuix 0.9.4 没有 `MiuixIcons.Basic.ArrowRight`，用 `MiuixIcons.ChevronForward`；
+   图标是逐个 import 的扩展属性（`top.yukonga.miuix.kmp.icon.extended.*`）。
+2. 工程未开 `buildConfig`，不能用 `BuildConfig.VERSION_NAME`，版本号走 `PackageManager.getPackageInfo`。
+3. `SearchBar` 的 `expanded`、`onExpandedChange`、`content` 都是必填参数（`inputField` 之外）。
+4. `ConfigState` 在 `com.katiusu.netpilot.prefs`，不在 `core.monitor`。
+
+`bash _build.sh :app:compileDebugKotlin` 可在一分钟内验证 Kotlin 编译。
+
+### 25.5 产物与校验
+
+- `NetPilot-1.6.0-2026101800-release.apk`：4 249 143 B，MD5 `47ec6ba9de963014eeacb937e93a7fd7`，
+  SHA-256 `5e5fb86d5bf0e4f94ea9ec15328774e6368d8d0b42f8a13e5c5fffbd096d4434`。
+- `aapt2 dump badging`：`versionCode='2026101800' versionName='1.6.0'`，minSdk 34 / targetSdk 36 / compileSdk 37。
+- 150 条目（`AndroidManifest.xml` 16 912 B、`resources.arsc` 843 380 B），1 个 dex 共 3 209 888 B。
+- keep 目标 4 个全在 dex；`apksigner verify` 证书 SHA-256 `34100875b45d7c4dc9928030b3329b5490869a236155f9ce08b1dc70c7434c4c`；
+  `zipalign -c 4` 通过（独立复核 45 个未压缩条目 0 处错位）。
+- 构建 `BUILD SUCCESSFUL in 34m 12s`（R8 全量）。资源单引号未转义会让 `mergeReleaseResources` 失败，
+  `compileDebugKotlin` 查不出来，改文案后要跑一次 release 构建。

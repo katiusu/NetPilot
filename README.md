@@ -33,7 +33,7 @@ NetPilot 把这个判断和切换自动化：
 | | |
 |---|---|
 | 包名 | `com.katiusu.netpilot` |
-| 版本 | **1.5.4**（`versionName = "1.5.4"`，`versionCode = 2026100700`） |
+| 版本 | **1.6.0**（`versionName = "1.6.0"`，`versionCode = 2026101800`） |
 | 系统要求 | Android 14+（minSdk 34 / targetSdk 36） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | 语言 | 简体中文 / English |
@@ -187,6 +187,7 @@ Ping 走 **HTTP 首字节时间**，默认目标是**必应的 `http://www.bing.
 | 1.5.2 | 2026100600 | Shizuku 通道日志补全；日志页「正序 / 倒序」切换（默认正序）；界面内直接切换全部 34 种制式；修掉 Shizuku 孤儿用户服务进程清扫失效（每个约 40 MB）；日志导出改流式写；release 按 MiuixGuiExample 开启 R8（APK 33.3 MB → 4.15 MB）。 |
 | 1.5.3 | 2026100601 | 后台耗电：息屏 HTTP 探测降到最多 5 分钟一次；制式读带 5 分钟记忆（不再每个采样周期 fork 一次特权进程）；降级状态落盘与日志落盘加脏检查 / 分档窗口；功能页制式列表每项间距 6 dp、按标签去重同名项（0/3、10/22），并在 5G/4G/3G/2G 每组各加一行「自动适配运营商」（按本机 SIM 解析，4G/3G/2G 用逐级去掉更高代际的位掩码表，全部条目保留）；修掉 Shizuku 孤儿用户服务进程清扫永久失效（门控顺序 + 启动 4 次有界重试 + 回收数写进日志页）；不再把「页面离开组合导致的协程取消」误报成 binder 调用失败（日志页的 a80/b80 假 WARN）。 |
 | 1.5.4 | 2026100700 | 深睡眠：锁屏期间保活心跳与「尽快拉回」闹钟改用**不唤醒**类型（`ELAPSED_REALTIME` + `set`，亮屏瞬间自动切回唤醒型；本应用从不持有 wake lock）；制式写入新增**系统回读确认** —— 写完读回真值并按位掩码比对，写入被系统收下但没生效时日志与 Toast 如实提示（判定语义未改：modem 返回 false 仍不算失败）；Shizuku 孤儿用户服务清扫重试扩到 7 次（最远 60 分钟），并在**首次选用 Shizuku 之前**补清一次。 |
+| 1.6.0 | 2026101800 | 界面重构：主页改为「监控状态 + 制式 / 延迟 + 信息行 + 两组入口」，快速操作移入二级页；关于页分「项目」「第三方许可证」两节；日志页重写（tag / 正文搜索、五档等级标签栏、日志档位独立卡、等宽正文、三种空态、右上角「更多」下拉含排序 / 复制 / 分享 / 导出 / 清空，切排序与筛选不再跳动视口）；更新弹窗改为版本对比 + 可滚动内容 + 单按钮提示。新增双卡「次卡」设置：上网卡编号自动检测（关时可手动指定卡号）与「非活跃数据卡自动 4G」守护（每轮采样纠正、每卡 5 分钟最多写一次、只写非上网卡）。 |
 
 > 逐版细节不再堆在 README 里：前后量化数据见 [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md)，验收步骤见 [`docs/TESTING.md`](docs/TESTING.md)。
 > 许可：1.0.1 及更早的已分发副本（含 Releases 里的 1.0.1 APK）按 GPL-3.0 授权且不可撤回；自 1.1.0 起以 Apache-2.0 发布，方法、实测相似度与复现命令见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。
@@ -295,7 +296,8 @@ app/src/main/java/com/katiusu/netpilot/
 
 ## 来源与许可
 
-本项目以 **Apache-2.0** 发布（见 [`LICENSE`](LICENSE)）。逐文件的借鉴明细见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。
+本项目以 **Apache-2.0** 发布（见 [`LICENSE`](LICENSE)）。逐文件的借鉴明细见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)，
+第三方工程的版权与 MIT 许可文本见 [`docs/NOTICE.md`](docs/NOTICE.md)。
 
 | 来源 | 许可证 | 借鉴内容 |
 |---|---|---|
@@ -303,6 +305,8 @@ app/src/main/java/com/katiusu/netpilot/
 | [TrafficSIM](https://github.com/L-aros/TrafficSIM) | MIT | Wi-Fi SSID/BSSID 规则的字段设计、优先级/冷却/回切语义 |
 | [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch) | GPL-3.0（**仅作行为参考**） | 隐藏 API 目标清单与调用形状的参考；对应文件已 clean-room 重写，实测相似度见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)。**1.0.1 及更早版本移植过其中代码，那些版本以 GPL-3.0 分发且授权不可撤回** |
 | [Miuix](https://github.com/YuKongA/Miuix) | Apache-2.0 | UI 组件库 |
+| HyperIsland 3.2.1（© 2026 1812z） | MIT | 主页状态卡/统计卡的信息层级、`SettingsAction` 行结构与内边距、子页骨架 |
+| [HyperOS-Autofill-Fix](https://github.com/katiusu/HyperOS-Autofill-Fix) | MIT | 日志页布局（搜索栏 + 等级标签栏 + 等高行） |
 | Miuix 示例工程（MiuixGui） | — | 项目骨架、偏好组件、模糊导航栏；检查更新模组（`core/update/UpdateChecker.kt` 与 `ui/component/UpdateDialog.kt` 是同一作者工程里同形实现的移植，**非第三方代码**） |
 
 > **许可变更**：1.0.1 及更早的版本移植过 GPL-3.0 的 NetworkSwitch 代码，因此那些版本以 GPL-3.0 授权（不可撤回，含 Releases 里的 1.0.1 APK）。相关文件已 clean-room 重写——方法、实测数字与复现命令见 [`docs/PROVENANCE.md`](docs/PROVENANCE.md)——自本次提交起本项目以 **Apache-2.0** 发布。

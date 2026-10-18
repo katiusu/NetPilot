@@ -65,7 +65,9 @@ import com.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import com.katiusu.netpilot.ui.util.rememberBlurState
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
@@ -413,10 +415,13 @@ private fun AboutContent(
                         .fillParentMaxHeight()
                         .padding(bottom = scrollPadding.calculateBottomPadding()),
                 ) {
+                    // 1.6.0 按参考工程（HyperIsland 3.2.1, MIT）的关于页结构改成分节：
+                    // 项目 / 许可证与依赖 / 参考与致谢。分节的直接好处是「仓库、更新日志、问题反馈」
+                    // 与「许可证、依赖清单」不再挤在两张没标题的卡里，用户不必猜哪张卡是干什么的。
+                    SmallTitle(text = stringResource(R.string.np_about_section_project))
                     Card(
                         modifier = Modifier
                             .padding(horizontal = 12.dp)
-                            .padding(top = 12.dp)
                             .then(aboutCardBackground),
                         colors = aboutCardColors,
                     ) {
@@ -425,8 +430,18 @@ private fun AboutContent(
                             summary = stringResource(R.string.ab_github_repo_summary),
                             onClick = { openExternalUrl(ctx, GITHUB_REPO_URL) },
                         )
-                        // 自动更新模组的手动入口：仓库地址取自「我们的库」（GitHub katiusu/NetPilot 的
-                        // releases/latest），不是示例里的占位仓库。
+                        ArrowPreference(
+                            title = stringResource(R.string.np_home_link_changelog),
+                            summary = stringResource(R.string.np_about_releases_summary),
+                            onClick = { openExternalUrl(ctx, GITHUB_RELEASES_URL) },
+                        )
+                        ArrowPreference(
+                            title = stringResource(R.string.np_home_link_issues),
+                            summary = stringResource(R.string.np_about_issues_summary),
+                            onClick = { openExternalUrl(ctx, GITHUB_ISSUES_URL) },
+                        )
+                        // 自动更新模组的手动入口：仓库地址取自 GitHub katiusu/NetPilot 的
+                        // releases/latest，不是示例里的占位仓库。
                         ArrowPreference(
                             title = stringResource(R.string.check_update),
                             summary = if (isCheckingUpdate) {
@@ -437,10 +452,11 @@ private fun AboutContent(
                             onClick = { checkUpdate() },
                         )
                     }
+
+                    SmallTitle(text = stringResource(R.string.licenses_header))
                     Card(
                         modifier = Modifier
                             .padding(horizontal = 12.dp)
-                            .padding(top = 24.dp)
                             .then(aboutCardBackground),
                         colors = aboutCardColors,
                     ) {
@@ -455,6 +471,7 @@ private fun AboutContent(
                             onClick = openLicensePage,
                         )
                     }
+
                     MiuixText(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -473,6 +490,8 @@ private fun AboutContent(
 
 /** 仓库地址；与 [R.string.ab_github_repo_summary] 展示的字符串保持一致。 */
 private const val GITHUB_REPO_URL = "https://github.com/katiusu/NetPilot"
+private const val GITHUB_RELEASES_URL = "https://github.com/katiusu/NetPilot/releases"
+private const val GITHUB_ISSUES_URL = "https://github.com/katiusu/NetPilot/issues"
 
 /** Apache-2.0 协议原文。 */
 private const val LICENSE_URL = "https://www.apache.org/licenses/LICENSE-2.0.txt"
@@ -498,3 +517,4 @@ private fun openExternalUrl(context: Context, url: String) {
         }
     }
 }
+

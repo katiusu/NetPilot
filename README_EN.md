@@ -28,7 +28,7 @@ It is also a general dual-SIM network manager: manual mode switching, two Quick 
 | | |
 |---|---|
 | Package | `com.katiusu.netpilot` |
-| Version | **1.5.4** (`versionCode 2026100700`) |
+| Version | **1.6.0** (`versionCode 2026101800`) |
 | Requires | Android 14+ (minSdk 34 / targetSdk 36) |
 | UI | Jetpack Compose + [Miuix](https://github.com/YuKongA/Miuix) 0.9.4 |
 | Languages | Simplified Chinese / English |
@@ -110,6 +110,7 @@ Broadcast commands `com.katiusu.netpilot.action.*` and events `com.katiusu.netpi
 | 1.5.2 | 2026100600 | Shizuku-channel logs completed; log page gets an oldest/newest order toggle (oldest first by default); all 34 network modes switchable from the UI; fixed stale Shizuku user-service pruning (each orphan ~40 MB); log export now streams to disk; release build now enables R8 (APK 33.3 MB -> 4.15 MB). |
 | 1.5.3 | 2026100601 | Background power: screen-off HTTP probe throttled to once per 5 min; network-mode reads memoised for 5 min (no per-tick privileged fork); dirty checks / tiered windows for downgrade-state and log persistence; mode list: 6 dp between rows, same-label duplicates 0/3 and 10/22 collapsed, and one "Auto (match carrier)" row added to each of the 5G/4G/3G/2G groups (resolved from this SIM; 4G/3G/2G use a per-generation bitmask table, all entries kept); fixed stale Shizuku user-service pruning, which could never recover from a failed attempt at boot (gating order + 4 bounded retries + reclaim count logged); coroutine cancellation when a page leaves the composition is no longer reported as a binder-call failure (fake a80/b80 WARNs). |
 | 1.5.4 | 2026100700 | Deep sleep: while the screen is off the keep-alive heartbeat and the "pull back ASAP" alarm now use non-waking types (`ELAPSED_REALTIME` + `set`, switching back to wake-up types the moment the screen turns on; the app never held a wake lock anyway); network-mode writes now read the mode back from the system and compare bitmasks, so a write the system accepted but did not apply is reported honestly in the log page and the toast (judgement semantics unchanged - a modem "false" still counts as success); stale Shizuku user-service pruning now retries up to 7 times (out to 60 min) and also runs once before the first Shizuku bind. |
+| 1.6.0 | 2026101800 | UI rebuild: the home page is now a status card plus mode / latency stats, info rows and two link groups, with quick actions moved to a secondary page; the about page has project and license sections; the log page is rewritten (tag / body search, five level tabs, a separate mode card, monospace body, three empty states, an overflow menu for sort / copy / share / export / clear, and no viewport jump when changing sort or filter); the update prompt is now a version comparison sheet with scrollable notes plus a single-button notice dialog. New dual-SIM secondary card settings: automatic data-SIM detection (with a manual picker when off) and an always-on guard that keeps the inactive data card on 4G (checked every sample, at most one write per card per 5 minutes, never touches the active card). |
 
 > Per-version details are no longer duplicated here: measurements live in [`docs/POWER_REPORT.md`](docs/POWER_REPORT.md) and acceptance steps in [`docs/TESTING.md`](docs/TESTING.md) (both Chinese).
 > Licence: copies distributed as 1.0.1 and earlier (including the 1.0.1 APK in Releases) remain GPL-3.0 and that grant cannot be revoked; from 1.1.0 onwards this project is released under Apache-2.0 — see [`docs/PROVENANCE.md`](docs/PROVENANCE.md).
@@ -150,6 +151,7 @@ Still unverified: whether `app_process` really runs under HyperOS; the Shizuku U
 
 ## License
 
-[Apache-2.0](LICENSE). Provenance per file: [`docs/PROVENANCE.md`](docs/PROVENANCE.md).
+[Apache-2.0](LICENSE). Provenance per file: [`docs/PROVENANCE.md`](docs/PROVENANCE.md);
+third-party notices (MIT reference projects): [`docs/NOTICE.md`](docs/NOTICE.md).
 
 **License change.** Releases up to 1.0.1 shipped code ported from [NetworkSwitch](https://github.com/aunchagaonkar/NetworkSwitch) (GPL-3.0): `core/priv/TelephonyReflection.kt` was near-verbatim (0.761 token similarity, 98.2% of upstream tokens inside shared ≥12-token runs), which is why those versions were GPL-3.0. That file has since been re-implemented from scratch (clean-room; method, measurements and reproduction in [PROVENANCE](docs/PROVENANCE.md)), so the project is Apache-2.0 from this commit on. Copies already distributed under GPL-3.0 — including the 1.0.1 APK in Releases — remain GPL-3.0; that grant cannot be withdrawn. Everything else is MIT/Apache-2.0-derived or original.

@@ -151,6 +151,7 @@
     <string name="log_action_copy">Copy</string>
     <string name="log_action_share">Share</string>
     <string name="log_action_export">Export to file</string>
+    <string name="log_action_more">More</string>
     <string name="log_clear_dialog_title">Clear all logs?</string>
     <string name="log_clear_dialog_summary">This cannot be undone. If monitoring is still running, new logs will keep coming in afterwards.</string>
     <string name="log_toast_copied">Copied %1$d log entries to the clipboard</string>

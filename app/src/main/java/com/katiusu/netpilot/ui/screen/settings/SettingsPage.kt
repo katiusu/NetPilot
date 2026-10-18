@@ -1,5 +1,16 @@
 package com.katiusu.netpilot.ui.screen.settings
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.mutableIntStateOf
+import com.katiusu.netpilot.core.datacard.SimReader
+import com.katiusu.netpilot.core.monitor.MonitorSettings
+import com.katiusu.netpilot.prefs.ConfigState
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.TextButton
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -302,6 +313,135 @@ fun SettingsPageView(
                                             )
                                         )
                                     }
+                                )
+                            }
+                        }
+
+                        // ---------- 次卡（非上网卡） ----------
+                        // 为什么单独一节：这一节管的是「哪张卡是上网卡」与「另一张卡怎么处理」，
+                        // 是双卡专属设置；和上面导入导出这类通用数据操作不是一类东西。
+                        var subsimAutoDetect by remember {
+                            mutableStateOf(
+                                ConfigState.bool(
+                                    MonitorSettings.KEY_SUBSIM_AUTO_DETECT,
+                                    MonitorSettings.DEFAULT_SUBSIM_AUTO_DETECT,
+                                )
+                            )
+                        }
+                        var subsimAutoLte by remember {
+                            mutableStateOf(
+                                ConfigState.bool(
+                                    MonitorSettings.KEY_SUBSIM_AUTO_LTE,
+                                    MonitorSettings.DEFAULT_SUBSIM_AUTO_LTE,
+                                )
+                            )
+                        }
+                        var manualSubId by remember {
+                            mutableIntStateOf(
+                                ConfigState.int(
+                                    MonitorSettings.KEY_SUBSIM_MANUAL_SUB_ID,
+                                    MonitorSettings.DEFAULT_SUBSIM_MANUAL_SUB_ID,
+                                )
+                            )
+                        }
+                        // SIM 列表随「自动检测」变化重读：关掉自动检测时用户需要一个可选的卡号清单。
+                        val sims = remember(subsimAutoDetect) { SimReader.sims(context) }
+                        SmallTitle(text = stringResource(R.string.np_section_subsim))
+                        Card(
+                            modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)
+                        ) {
+                            Column {
+                                SwitchPreference(
+                                    title = stringResource(R.string.np_subsim_auto_detect_title),
+                                    summary = stringResource(
+                                        if (subsimAutoDetect) {
+                                            R.string.np_subsim_auto_detect_on
+                                        } else {
+                                            R.string.np_subsim_auto_detect_off
+                                        }
+                                    ),
+                                    checked = subsimAutoDetect,
+                                    onCheckedChange = { on ->
+                                        subsimAutoDetect = on
+                                        ConfigState.set(
+                                            MonitorSettings.KEY_SUBSIM_AUTO_DETECT,
+                                            on,
+                                        )
+                                    }
+                                )
+                                // 手动指定只在自动检测关闭时出现：开着的时候让用户选卡号是自相矛盾的。
+                                if (!subsimAutoDetect) {
+                                    MiuixText(
+                                        text = stringResource(R.string.np_subsim_manual_title),
+                                        color = MiuixTheme.colorScheme.onSurface,
+                                        style = MiuixTheme.textStyles.body2,
+                                        modifier = Modifier.padding(
+                                            horizontal = 28.dp,
+                                            vertical = 6.dp,
+                                        ),
+                                    )
+                                    if (sims.isEmpty()) {
+                                        MiuixText(
+                                            text = stringResource(R.string.np_subsim_manual_none),
+                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                            style = MiuixTheme.textStyles.footnote2,
+                                            modifier = Modifier.padding(
+                                                horizontal = 28.dp,
+                                                vertical = 4.dp,
+                                            ),
+                                        )
+                                    } else {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState())
+                                                .padding(horizontal = 20.dp, vertical = 2.dp),
+                                        ) {
+                                            sims.forEach { sim ->
+                                                TextButton(
+                                                    text = stringResource(
+                                                        R.string.np_subsim_manual_entry,
+                                                        sim.slotIndex + 1,
+                                                        sim.title,
+                                                    ),
+                                                    onClick = {
+                                                        manualSubId = sim.subId
+                                                        ConfigState.set(
+                                                            MonitorSettings.KEY_SUBSIM_MANUAL_SUB_ID,
+                                                            sim.subId,
+                                                        )
+                                                    },
+                                                    colors = if (manualSubId == sim.subId) {
+                                                        ButtonDefaults.textButtonColorsPrimary()
+                                                    } else {
+                                                        ButtonDefaults.textButtonColors()
+                                                    },
+                                                )
+                                                Spacer(Modifier.width(8.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                                SwitchPreference(
+                                    title = stringResource(R.string.np_subsim_auto_lte_title),
+                                    summary = stringResource(
+                                        if (subsimAutoLte) {
+                                            R.string.np_subsim_auto_lte_on
+                                        } else {
+                                            R.string.np_subsim_auto_lte_off
+                                        }
+                                    ),
+                                    checked = subsimAutoLte,
+                                    onCheckedChange = { on ->
+                                        subsimAutoLte = on
+                                        ConfigState.set(MonitorSettings.KEY_SUBSIM_AUTO_LTE, on)
+                                    }
+                                )
+                                MiuixText(
+                                    text = stringResource(R.string.np_subsim_hint),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 6.dp),
                                 )
                             }
                         }

@@ -1,5 +1,15 @@
 package com.katiusu.netpilot.ui.screen.log
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontFamily
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.SearchBar
+import top.yukonga.miuix.kmp.basic.TabRow
+import top.yukonga.miuix.kmp.basic.InputField
+import top.yukonga.miuix.kmp.basic.Icon
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -56,9 +66,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.menu.WindowIconDropdownMenu
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
-import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -66,6 +78,7 @@ import top.yukonga.miuix.kmp.basic.Text as MiuixText
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.More
 import top.yukonga.miuix.kmp.icon.extended.Sort
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
@@ -91,8 +104,15 @@ private const val MAX_FILE_CHARS = 4_000_000
 
 /** 日志等级筛选档位。 */
 private enum class LogFilter(val labelRes: Int) {
+    /** 不筛等级。 */
     ALL(R.string.log_filter_all),
+
+    DEBUG_ONLY(R.string.log_filter_debug),
+    INFO_ONLY(R.string.log_filter_info),
+
+    /** 警告及以上（含错误）。 */
     WARN_UP(R.string.log_filter_warn),
+
     ERROR_ONLY(R.string.log_filter_error),
 }
 
@@ -139,6 +159,11 @@ fun LogPageView(
 
     var filter by remember { mutableStateOf(LogFilter.ALL) }
 
+    // 1.6.0 新增：关键字搜索 + 输入框展开态。
+    // 为什么放在「筛选」之外单独存：搜索是「看哪几条」，筛选是「看哪一档」，两者是可叠加的独立维度。
+    var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
+
     // 1.5.2：默认正序（旧→新）—— 与 LogStore 的追加顺序一致；倒序留给排查场景。
     var order by remember { mutableStateOf(LogOrder.ASC) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -148,8 +173,16 @@ fun LogPageView(
     // 键不变就不会重算，新日志永远进不了列表。直接每次重组重算，400 条的上限完全扛得住。
     val filtered = when (filter) {
         LogFilter.ALL -> allEntries.toList()
+        LogFilter.DEBUG_ONLY -> allEntries.filter { it.level == LogLevel.DEBUG }
+        LogFilter.INFO_ONLY -> allEntries.filter { it.level == LogLevel.INFO }
         LogFilter.WARN_UP -> allEntries.filter { it.level >= LogLevel.WARN }
         LogFilter.ERROR_ONLY -> allEntries.filter { it.level == LogLevel.ERROR }
+    }.let { list ->
+        // 关键字同时搜 tag 与正文：报障时手里往往只有「某个包名」或「某句报错」，两处都得能搜到。
+        val q = query.trim()
+        if (q.isEmpty()) list else list.filter {
+            it.tag.contains(q, ignoreCase = true) || it.message.contains(q, ignoreCase = true)
+        }
     }
     // 底层 LogStore.entries 始终是追加式的旧→新；这里只按显示顺序翻一次，
     // 所以过滤、导出、落盘的语义都没有动。
@@ -158,13 +191,9 @@ fun LogPageView(
         LogOrder.DESC -> filtered.asReversed()
     }
 
-    // 有新日志就停在最新端。列表结构是「1 个头部 item + N 个日志 item」：
-    // 正序时最新的在最后（第 entries.size 号），倒序时最新的在最前（第 1 号）。
-    LaunchedEffect(entries.size, order) {
-        if (entries.isNotEmpty()) {
-            listState.animateScrollToItem(if (order == LogOrder.ASC) entries.size else 1)
-        }
-    }
+    // 1.6.0：不再自动跳最新。原来这里按 (entries.size, order) 滚到最新端 —— 于是
+    // 「点一下倒序」「换个筛选档」也会把位置甩到最新一条，而那时用户往往正在往回翻
+    // 某段历史日志。现在列表位置只由用户自己的滚动决定。
 
     fun toast(text: String) {
         Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
@@ -313,6 +342,48 @@ fun LogPageView(
         }
     }
 
+    // 右上角「更多」菜单（1.6.0 调整）：直接用 Miuix 的下拉菜单，结构照参照工程
+    // HyperIsland 3.2.1（MIT）的 AppsPage —— 排序做成两个互斥勾选项，其余是动作项。
+    // 为什么用 **Window** 变体：Overlay 变体把弹层挂到「根 Scaffold」的 overlay 上，而本页的
+    // Scaffold 处在一个 HorizontalPager 页里，实测点了没反应；Window 变体是独立窗口，
+    // 不依赖页面层级（参照工程是单 Scaffold 应用，所以它用 Overlay 没问题）。
+    val menuEntries = listOf(
+        DropdownEntry(
+            items = listOf(
+                DropdownItem(
+                    text = stringResource(R.string.log_order_asc),
+                    selected = order == LogOrder.ASC,
+                    onClick = { order = LogOrder.ASC },
+                ),
+                DropdownItem(
+                    text = stringResource(R.string.log_order_desc),
+                    selected = order == LogOrder.DESC,
+                    onClick = { order = LogOrder.DESC },
+                ),
+            ),
+        ),
+        DropdownEntry(
+            items = listOf(
+                DropdownItem(
+                    text = stringResource(R.string.log_action_copy),
+                    onClick = { copyAll() },
+                ),
+                DropdownItem(
+                    text = stringResource(R.string.log_action_share),
+                    onClick = { shareAll() },
+                ),
+                DropdownItem(
+                    text = stringResource(R.string.log_action_export),
+                    onClick = { exportAll() },
+                ),
+                DropdownItem(
+                    text = stringResource(R.string.log_action_clear),
+                    onClick = { showClearDialog = true },
+                ),
+            ),
+        ),
+    )
+
     Scaffold(
         topBar = {
             BlurredBar(hazeState, blurActive, scrollBehavior) {
@@ -320,6 +391,17 @@ fun LogPageView(
                     title = stringResource(R.string.log_page_title),
                     color = barColor,
                     scrollBehavior = scrollBehavior,
+                    actions = {
+                        WindowIconDropdownMenu(
+                            entries = menuEntries,
+                            collapseOnSelection = true,
+                        ) {
+                            Icon(
+                                imageVector = MiuixIcons.More,
+                                contentDescription = stringResource(R.string.log_action_more),
+                            )
+                        }
+                    },
                 )
             }
         },
@@ -340,136 +422,65 @@ fun LogPageView(
                     bottom = innerPadding.calculateBottomPadding() + extraBottomPadding,
                 ),
             ) {
-                // ---------- 头部：条数 + 当前档位 + 筛选 + 复制/分享/导出/清空 ----------
+                // ---------- 头部：搜索 + 等级筛选 + 汇总 ----------
+                // 排序 / 复制 / 分享 / 导出 / 清空都在右上角「更多」菜单里（1.6.0 调整）。
                 item {
                     Column(modifier = Modifier.padding(bottom = 8.dp)) {
-                        MiuixText(
-                            text = stringResource(R.string.log_count, allEntries.size),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.footnote2,
-                            modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp),
-                        )
-                        // 当前档位必须写出来：拿到一份只记结论的日志时，先要看的就是它是不是简要模式
-                        // （那决定了「没有逐步过程」是设计如此，还是日志真丢了）。
-                        MiuixText(
-                            text = stringResource(R.string.log_mode_line, stringResource(modeLabelRes())),
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                            style = MiuixTheme.textStyles.footnote2,
-                            modifier = Modifier.padding(horizontal = 28.dp),
-                        )
-                        if (WriteDiag.mode != WriteDiag.Mode.DETAILED) {
-                            MiuixText(
-                                text = stringResource(R.string.log_mode_brief_hint),
-                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                style = MiuixTheme.textStyles.footnote2,
-                                modifier = Modifier
-                                    .padding(horizontal = 28.dp)
-                                    .padding(top = 2.dp, bottom = 6.dp),
+                        // 搜索框放在最上面（照参照工程 HyperAutofillFix, MIT 的日志页）：
+                        // 排查时第一件事通常是搜某个 tag 或某句报错，而不是先挑筛选档位。
+                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+                            SearchBar(
+                                inputField = {
+                                    InputField(
+                                        query = query,
+                                        onQueryChange = { query = it },
+                                        onSearch = { searchExpanded = false },
+                                        expanded = searchExpanded,
+                                        onExpandedChange = { searchExpanded = it },
+                                        label = stringResource(R.string.log_search_hint),
+                                    )
+                                },
+                                // 这三个参数在 Miuix 0.9.4 里都是必填/半必填：
+                                // 输入框的展开态由页面持有（不是组件内部状态），content 是展开后的建议区。
+                                expanded = searchExpanded,
+                                onExpandedChange = { searchExpanded = it },
+                                content = {},
                             )
                         }
+                        // 卡一：等级筛选 + 汇总。档位是互斥单选，用真正的 TabRow 表达。
                         Card(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                             Column {
-                                // 显示顺序切换：图标用 Miuix 图标库里的 Sort，文字显示当前档位，点按即切换。
-                                // 单独占一行、不跟筛选挤在横向滚动里 —— 它是「怎么看」，不是「看什么」。
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    IconButton(
-                                        onClick = {
-                                            order = if (order == LogOrder.ASC) {
-                                                LogOrder.DESC
-                                            } else {
-                                                LogOrder.ASC
-                                            }
-                                        },
-                                    ) {
-                                        Icon(
-                                            imageVector = MiuixIcons.Sort,
-                                            contentDescription = stringResource(
-                                                R.string.log_order_line,
-                                                stringResource(order.labelRes),
-                                            ),
-                                        )
-                                    }
-                                    Spacer(Modifier.width(8.dp))
+                                TabRow(
+                                    tabs = LogFilter.entries.map { stringResource(it.labelRes) },
+                                    selectedTabIndex = LogFilter.entries.indexOf(filter),
+                                    onTabSelected = { index -> filter = LogFilter.entries[index] },
+                                )
+                            }
+                        }
+                        // 卡二：日志档位（简要/详细）。**独立卡片**而不是并进筛选卡 ——
+                        // 它说明的是「这份日志是什么口径」，不是一个可点的筛选档位；
+                        // 挤在同一张卡里会被当成第四个标签。
+                        Card(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                                MiuixText(
+                                    text = stringResource(
+                                        R.string.log_mode_line,
+                                        stringResource(modeLabelRes()),
+                                    ),
+                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                    style = MiuixTheme.textStyles.footnote2,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                )
+                                if (WriteDiag.mode != WriteDiag.Mode.DETAILED) {
                                     MiuixText(
-                                        text = stringResource(
-                                            R.string.log_order_line,
-                                            stringResource(order.labelRes),
-                                        ),
+                                        text = stringResource(R.string.log_mode_brief_hint),
                                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                                         style = MiuixTheme.textStyles.footnote2,
-                                    )
-                                }
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                )
-                                // 三档横排：窄屏放不下，所以这一行可以横向滚动。
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState())
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                ) {
-                                    // Miuix 没有 chip 组件，用 TextButton 组表达「选中」：
-                                    // 选中的那档换成 primary 配色。
-                                    LogFilter.entries.forEach { item ->
-                                        TextButton(
-                                            text = stringResource(item.labelRes),
-                                            onClick = { filter = item },
-                                            colors = if (filter == item) {
-                                                ButtonDefaults.textButtonColorsPrimary()
-                                            } else {
-                                                ButtonDefaults.textButtonColors()
-                                            },
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                }
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                )
-                                // 复制 / 分享 / 导出文件
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                ) {
-                                    TextButton(
-                                        text = stringResource(R.string.log_action_copy),
-                                        onClick = { copyAll() },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    TextButton(
-                                        text = stringResource(R.string.log_action_share),
-                                        onClick = { shareAll() },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    TextButton(
-                                        text = stringResource(R.string.log_action_export),
-                                        onClick = { exportAll() },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 12.dp),
-                                )
-                                // 清空单独一行：它是破坏性操作，不该和上面三个挤在同一行的同一层级里避免误触
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                ) {
-                                    TextButton(
-                                        text = stringResource(R.string.log_action_clear),
-                                        onClick = { showClearDialog = true },
-                                        modifier = Modifier.weight(1f),
-                                        colors = ButtonDefaults.textButtonColorsPrimary(),
+                                        modifier = Modifier.padding(
+                                            start = 16.dp,
+                                            end = 16.dp,
+                                            top = 4.dp,
+                                        ),
                                     )
                                 }
                             }
@@ -482,10 +493,10 @@ fun LogPageView(
                     item {
                         MiuixText(
                             text = stringResource(
-                                if (allEntries.isEmpty()) {
-                                    R.string.log_empty
-                                } else {
-                                    R.string.log_empty_filtered
+                                when {
+                                    allEntries.isEmpty() -> R.string.log_empty
+                                    query.isNotBlank() -> R.string.log_search_empty
+                                    else -> R.string.log_empty_filtered
                                 }
                             ),
                             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
@@ -538,47 +549,42 @@ fun LogPageView(
 }
 
 /**
- * 一条日志：第一行是时间 / 等级 / tag，第二行是正文（自动换行，不截断）。
+ * 一条日志。
+ *
+ * 布局照参照工程（HyperAutofillFix, MIT）的日志页：左侧圆点表等级、标题是等级名、
+ * 摘要行「时间 · tag」、正文用等宽字体放在行底。等宽不是审美 —— 诊断日志里全是
+ * `subId=1 mode=27 -> 842751` 这种数字，等宽列对齐后才扫得动。
  *
  * 整行可点：点一下只复制这一条 —— 报问题的人通常要的是「出问题那一行」，不是全部 200 条。
  */
 @Composable
 private fun LogRow(entry: LogEntry, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            MiuixText(
-                text = entry.timeText(),
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.footnote2,
+    BasicComponent(
+        title = entry.level.name,
+        // tag 可能很长（包名），由 BasicComponent 的 summary 自己截断；时间放在最前面，
+        // 因为它才是排查时用来对齐「什么时候发生」的锚点。
+        summary = entry.timeText() + " · " + entry.tag,
+        startAction = {
+            Box(
+                modifier = Modifier
+                    .padding(end = 12.dp)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(levelColor(entry.level)),
             )
-            Spacer(Modifier.width(8.dp))
+        },
+        bottomAction = {
             MiuixText(
-                text = entry.level.name,
-                color = levelColor(entry.level),
-                style = MiuixTheme.textStyles.footnote2,
+                text = entry.message,
+                color = MiuixTheme.colorScheme.onSurface,
+                style = MiuixTheme.textStyles.body2,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(top = 4.dp),
             )
-            Spacer(Modifier.width(8.dp))
-            // tag 可能很长（包名），占满剩余宽度并省略，别把时间挤出去。
-            MiuixText(
-                text = entry.tag,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                style = MiuixTheme.textStyles.footnote2,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        MiuixText(
-            text = entry.message,
-            color = MiuixTheme.colorScheme.onSurface,
-            style = MiuixTheme.textStyles.body2,
-        )
-    }
+        },
+        insideMargin = PaddingValues(horizontal = 18.dp, vertical = 10.dp),
+        onClick = onClick,
+    )
 }
 
 /** 等级配色；WARN 见 [WarnColor] 的说明。 */

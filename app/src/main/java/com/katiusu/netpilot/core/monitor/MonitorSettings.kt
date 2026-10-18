@@ -57,6 +57,39 @@ object MonitorSettings {
     const val KEY_ADAPTIVE_STEP = "np_fake5g_adaptive_step"
 
     /**
+     * 次卡（非主数据卡）设置（1.6.0 新增）。
+     *
+     * 为什么单独一组键而不是塞进 datacard 的 SharedPreferences：
+     * 这两个开关影响的是「**全局选哪张卡**」与「**非活跃卡怎么处理**」，
+     * 和单卡策略（DataCardStore 里按 subId 存的那份）不是同一层概念 ——
+     * 前者是全局缺省，后者是每张卡各自的规则，混在一起会出现「全局关了但单卡还写着」的矛盾。
+     */
+    const val KEY_SUBSIM_AUTO_DETECT = "np_subsim_auto_detect"
+
+    /** 「上网卡编号自动检测」关闭时人工指定的上网卡 subId（0 = 未指定）。 */
+    const val KEY_SUBSIM_MANUAL_SUB_ID = "np_subsim_manual_sub_id"
+
+    /** 是否自动把非活跃数据卡设为仅 4G。 */
+    const val KEY_SUBSIM_AUTO_LTE = "np_subsim_auto_lte"
+
+    /**
+     * 「上网卡编号自动检测」默认开：绝大多数用户只有一张上网卡，交给系统判断最省事。
+     * 关掉它才需要读 [KEY_SUBSIM_MANUAL_SUB_ID]。
+     */
+    const val DEFAULT_SUBSIM_AUTO_DETECT = true
+
+    /**
+     * 「非活跃数据卡自动 4G」默认关。
+     *
+     * 它会**主动改写另一张卡的制式**，属于会改变用户可见状态的自动化；
+     * 按本工程一贯的默认值原则（见 [DEFAULT_ENABLED] 的注释），这种要主动写写入的开关默认关，
+     * 让用户明确打开后再执行。
+     */
+    const val DEFAULT_SUBSIM_AUTO_LTE = false
+
+    const val DEFAULT_SUBSIM_MANUAL_SUB_ID = 0
+
+    /**
      * 网络质量降级的默认开关状态：**默认开启**。
      *
      * 这是本应用的核心功能，装完即生效比「先去功能页找一个开关打开」更符合预期。

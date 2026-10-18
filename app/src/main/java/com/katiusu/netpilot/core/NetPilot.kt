@@ -1,5 +1,7 @@
 package com.katiusu.netpilot.core
 
+import com.katiusu.netpilot.core.datacard.InactiveSimLte
+import com.katiusu.netpilot.prefs.ConfigState
 import android.content.Context
 import com.katiusu.netpilot.core.datacard.DataCardEngine
 import com.katiusu.netpilot.core.datacard.DataCardStore
@@ -20,7 +22,6 @@ import com.katiusu.netpilot.core.monitor.MonitorSettings
 import com.katiusu.netpilot.core.monitor.SignalSnapshot
 import com.katiusu.netpilot.core.priv.ControlManager
 import com.katiusu.netpilot.core.priv.WriteDiag
-import com.katiusu.netpilot.prefs.ConfigState
 import com.katiusu.netpilot.prefs.PrefsStore
 
 /**
@@ -73,7 +74,17 @@ object NetPilot {
         LogStore.init(app)
         // 详细诊断开关同样要在启动时读进内存，否则第一次打点会被当成「关」。
         WriteDiag.attach(app)
-        NetPilotEvents.onSample = { ctx, snap -> DataCardEngine.onSample(ctx, snap) }
+        NetPilotEvents.onSample = { ctx, snap ->
+            val cardMessage = DataCardEngine.onSample(ctx, snap)
+            // 1.6.0：次卡 4G 守护挂在每轮采样之后（内部按卡节流，不会变成写风暴）。
+            // 放在 onSample 而不是独立的定时器：它需要的输入（哪张卡是上网卡、各卡当前制式）
+            // 每轮采样本来就要读，再加一个定时器只会多一份唤醒。
+            runCatching { InactiveSimLte.guard(ctx) }
+                .onFailure {
+                    LogStore.warn("次卡 4G", "守护异常：${it.message ?: it.javaClass.simpleName}")
+                }
+            cardMessage
+        }
         // 反向门控：网络质量降级的执行者在 monitor 侧，但「当前默认数据卡开没开这条
         // 策略」在 datacard 侧。这里把判定注入 hub，engine 只问结果，不 import datacard，
         // 两个包因此不会成环。关掉策略后已有降级仍会走正常恢复路径，不会被永久锁在 4G。
@@ -305,7 +316,22 @@ object NetPilot {
 
     fun sims(context: Context): List<SimSlotInfo> = SimReader.sims(context)
 
-    suspend fun defaultDataSubId(): Int = ControlManager.getDefaultDataSubId()
+    suspend fun defaultDataSubId(): Int {
+        // 1.6.0：次卡设置里「上网卡编号自动检测」关掉时，一律使用用户指定的卡号 ——
+        // 否则界面上写着「次卡 = 卡 2」，写制式却发到系统默认卡，用户永远对不上账。
+        if (!ConfigState.bool(
+                MonitorSettings.KEY_SUBSIM_AUTO_DETECT,
+                MonitorSettings.DEFAULT_SUBSIM_AUTO_DETECT,
+            )
+        ) {
+            val manual = ConfigState.int(
+                MonitorSettings.KEY_SUBSIM_MANUAL_SUB_ID,
+                MonitorSettings.DEFAULT_SUBSIM_MANUAL_SUB_ID,
+            )
+            if (manual > 0) return manual
+        }
+        return ControlManager.getDefaultDataSubId()
+    }
 
     suspend fun setDefaultDataSubId(context: Context, subId: Int): Boolean {
         if (subId < 0) return false
