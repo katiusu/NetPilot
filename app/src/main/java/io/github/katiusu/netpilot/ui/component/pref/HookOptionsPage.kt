@@ -33,9 +33,10 @@ import io.github.katiusu.netpilot.prefs.OptionRegistry
 import io.github.katiusu.netpilot.prefs.OptionSpec
 import io.github.katiusu.netpilot.prefs.OptionType
 import io.github.katiusu.netpilot.ui.util.BlurredBar
-import io.github.katiusu.netpilot.ui.util.blurSource
+import io.github.katiusu.netpilot.ui.util.PageBackdrop
+import io.github.katiusu.netpilot.ui.util.uniformBlurBackdrop
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
-import io.github.katiusu.netpilot.ui.util.rememberBlurState
+import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import io.github.katiusu.netpilot.ui.component.AppTopAppBar
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
@@ -99,8 +100,8 @@ fun HookOptionsPage(
 ) {
     val context = LocalContext.current
     val scrollBehavior = MiuixScrollBehavior()
-    val hazeState = rememberBlurState()
-    val blurActive = isBlurEnabled && hazeState != null
+    val backdrop = rememberBlurBackdrop()
+    val blurActive = isBlurEnabled && backdrop != null
     val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     val listState = rememberLazyListState()
@@ -150,7 +151,7 @@ fun HookOptionsPage(
 
     Scaffold(
         topBar = {
-            BlurredBar(hazeState, blurActive, scrollBehavior) {
+            BlurredBar(backdrop = if (isBlurEnabled) backdrop else null, blurEnabled = isBlurEnabled) {
                 AppTopAppBar(
                     title = title,
                     color = barColor,
@@ -173,7 +174,7 @@ fun HookOptionsPage(
         contentWindowInsets = WindowInsets.systemBars.add(WindowInsets.displayCutout).only(WindowInsetsSides.Horizontal),
     ) { innerPadding ->
         Box(
-            modifier = Modifier.blurSource(if (isBlurEnabled) hazeState else null)
+            modifier = Modifier.uniformBlurBackdrop(if (isBlurEnabled) backdrop else null)
         ) {
             LazyColumn(
                 state = listState,

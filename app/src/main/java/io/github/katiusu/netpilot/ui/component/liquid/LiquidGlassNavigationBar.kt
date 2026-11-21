@@ -1,5 +1,9 @@
+// Copyright 2026, compose-miuix-ui contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package io.github.katiusu.netpilot.ui.component.liquid
 
+// Adapted from Kyant0/AndroidLiquidGlass — https://github.com/Kyant0/AndroidLiquidGlass (Apache 2.0).
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
@@ -122,15 +126,26 @@ private val iosIndicatorSpecular: EdgeStroke = EdgeStroke(
         color = Color.White,
         intensity = 0.4f,
     ),
+    // The gravity-rotated lights sweep horizontally, so follow each light's own XY direction.
     peak = EdgePeak.Axial,
 )
 
+// Mirrors the edge-stroke shader's LIGHT_REF — keep in sync.
 private const val LIGHT_REF_X = 0.5f
 private const val LIGHT_REF_Y = 0.7f
 private const val GRAVITY_DIR_THRESHOLD_SQ = 0.01f // |g_xy| > 0.1, ≈ 6° tilt
 
+// 3° quantization step for the gravity direction: finer changes are imperceptible.
 private const val GRAVITY_ANGLE_STEP_RAD = (3.0 * PI / 180.0).toFloat()
 
+/**
+ * In-screen-plane gravity direction angle (radians, quantized to 3° steps).
+ *
+ * Returned as [State] so the read can be deferred to the draw phase: the sensor writes tilt
+ * state unthrottled (~50Hz), and a composition-time read would recompose the whole caller
+ * scope on every tick. The derivedStateOf equality check then drops draw invalidations to
+ * quantization-step crossings.
+ */
 @Composable
 private fun rememberQuantizedGravityAngle(): State<Float> {
     val tiltState = rememberDeviceTilt()
@@ -143,12 +158,21 @@ private fun rememberQuantizedGravityAngle(): State<Float> {
             if (gMagSq > GRAVITY_DIR_THRESHOLD_SQ) {
                 (atan2(gy, gx) / GRAVITY_ANGLE_STEP_RAD).roundToInt() * GRAVITY_ANGLE_STEP_RAD
             } else {
+                // Near-flat: the in-plane gravity direction is unstable, pin to (0, -1).
                 (-PI / 2).toFloat()
             }
         }
     }
 }
 
+/**
+ * [base] with its two lights rotated to the gravity angle plus [extraDegrees]: the primary
+ * leads and the secondary sits 180° opposite, reproducing the removed `dualPeak` two-peak
+ * sweep under [EdgePeak.Axial]. Both keep their own `z`, colour and intensity.
+ *
+ * Read `.value` only at draw time (see [rememberQuantizedGravityAngle]); the rotated copy is
+ * cached, re-allocating only when the angle crosses a quantization step.
+ */
 @Composable
 private fun rememberGravityRotatedStroke(
     base: EdgeStroke,
@@ -285,6 +309,7 @@ internal fun IosLiquidGlassNavigationBar(
         dampedDrag.animateToValue(index.toFloat())
     }
 
+    // Keyed on dampedDrag: the position lambda captures it; a stale capture would freeze the press spot.
     val interactiveHighlight = remember(animationScope, isLtr, dampedDrag) {
         InteractiveHighlight(
             animationScope = animationScope,
@@ -301,6 +326,7 @@ internal fun IosLiquidGlassNavigationBar(
         )
     }
 
+    // Read .value only inside draw-phase lambdas, never in composition.
     val baseStroke = rememberGravityRotatedStroke(iosIndicatorSpecular, extraDegrees = -45f)
     val pillStroke = rememberGravityRotatedStroke(iosIndicatorSpecular, extraDegrees = 90f)
 
@@ -361,6 +387,7 @@ internal fun IosLiquidGlassNavigationBar(
                     Icon(
                         modifier = Modifier.size(22.dp),
                         imageVector = icons[index],
+                        // Decorative: the adjacent label names the item; avoids TalkBack double-read.
                         contentDescription = null,
                     )
                 }
@@ -397,6 +424,7 @@ internal fun IosLiquidGlassNavigationBar(
                             shadow = Shadow(
                                 radius = 10.dp,
                                 color = Color.Black,
+                                // Lighter in light theme to avoid a visible gray fringe.
                                 alpha = if (isDark) 0.2f else 0.1f,
                             ),
                         )
@@ -406,6 +434,7 @@ internal fun IosLiquidGlassNavigationBar(
                                     backdrop = backdrop,
                                     shape = { pillShape },
                                     effects = {
+                                        // 24dp lens refraction + 16dp press-scale reach, raised before blur() reads it.
                                         padding = maxOf(padding, 40.dp.toPx())
                                         vibrancy()
                                         blur(
@@ -417,6 +446,8 @@ internal fun IosLiquidGlassNavigationBar(
                                             refractionAmount = 24.dp.toPx(),
                                         )
                                     },
+                                    // Drawn at draw time, like the highlight it replaces: the
+                                    // stroke is a snapshot State read inside the draw phase.
                                     onDrawFront = {
                                         drawEdgeStroke(
                                             shape = pillShape,

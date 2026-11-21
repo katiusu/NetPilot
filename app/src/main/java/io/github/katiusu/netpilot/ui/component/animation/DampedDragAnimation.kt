@@ -1,5 +1,9 @@
+// Copyright 2026, compose-miuix-ui contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package io.github.katiusu.netpilot.ui.component.animation
 
+// Adapted from Kyant0/AndroidLiquidGlass — https://github.com/Kyant0/AndroidLiquidGlass (Apache 2.0).
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
@@ -39,6 +43,7 @@ internal class DampedDragAnimation(
     val canDrag: (Offset) -> Boolean = { true },
     val onDragStarted: DampedDragAnimation.(position: Offset) -> Unit,
     val onDragStopped: DampedDragAnimation.() -> Unit,
+    val onDragCancelled: DampedDragAnimation.() -> Unit = onDragStopped,
     val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
 ) {
 
@@ -83,7 +88,7 @@ internal class DampedDragAnimation(
                 release()
             },
             onDragCancel = {
-                onDragStopped()
+                onDragCancelled()
                 release()
             },
         ) { change, dragAmount ->

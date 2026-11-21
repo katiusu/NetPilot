@@ -60,9 +60,10 @@ import io.github.katiusu.netpilot.core.monitor.LogLevel
 import io.github.katiusu.netpilot.core.monitor.LogStore
 import io.github.katiusu.netpilot.core.priv.WriteDiag
 import io.github.katiusu.netpilot.ui.util.BlurredBar
-import io.github.katiusu.netpilot.ui.util.blurSource
+import io.github.katiusu.netpilot.ui.util.PageBackdrop
+import io.github.katiusu.netpilot.ui.util.uniformBlurBackdrop
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
-import io.github.katiusu.netpilot.ui.util.rememberBlurState
+import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -115,8 +116,8 @@ fun LogPageView(
     val context = LocalContext.current
     val scrollBehavior = MiuixScrollBehavior()
 
-    val hazeState = rememberBlurState()
-    val blurActive = isBlurEnabled && hazeState != null
+    val backdrop = rememberBlurBackdrop()
+    val blurActive = isBlurEnabled && backdrop != null
     val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     val allEntries = LogStore.entries
@@ -310,7 +311,7 @@ fun LogPageView(
 
     Scaffold(
         topBar = {
-            BlurredBar(hazeState, blurActive, scrollBehavior) {
+            BlurredBar(backdrop = if (isBlurEnabled) backdrop else null, blurEnabled = isBlurEnabled) {
                 AppTopAppBar(
                     title = stringResource(R.string.log_page_title),
                     color = barColor,
@@ -332,7 +333,7 @@ fun LogPageView(
         contentWindowInsets = WindowInsets.systemBars.add(WindowInsets.displayCutout)
             .only(WindowInsetsSides.Horizontal),
     ) { innerPadding ->
-        Box(modifier = Modifier.blurSource(if (isBlurEnabled) hazeState else null)) {
+        PageBackdrop(backdrop = if (isBlurEnabled) backdrop else null) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier

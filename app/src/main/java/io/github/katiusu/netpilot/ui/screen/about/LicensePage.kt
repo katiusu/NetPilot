@@ -32,9 +32,10 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import io.github.katiusu.netpilot.R
 import io.github.katiusu.netpilot.ui.util.BlurredBar
-import io.github.katiusu.netpilot.ui.util.blurSource
+import io.github.katiusu.netpilot.ui.util.PageBackdrop
+import io.github.katiusu.netpilot.ui.util.uniformBlurBackdrop
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
-import io.github.katiusu.netpilot.ui.util.rememberBlurState
+import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import io.github.katiusu.netpilot.ui.component.AppTopAppBar
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -180,13 +181,13 @@ fun LicensePageContent(
     isBlurEnabled: Boolean = true,
 ) {
     val topAppBarScrollBehavior = MiuixScrollBehavior()
-    val hazeState = rememberBlurState()
-    val blurActive = isBlurEnabled && hazeState != null
+    val backdrop = rememberBlurBackdrop()
+    val blurActive = isBlurEnabled && backdrop != null
     val barColor = if (blurActive) Color.Transparent else colorScheme.surface
 
     Scaffold(
         topBar = {
-            BlurredBar(hazeState, blurActive, topAppBarScrollBehavior) {
+            BlurredBar(backdrop = if (isBlurEnabled) backdrop else null, blurEnabled = isBlurEnabled) {
                 AppTopAppBar(
                     title = stringResource(R.string.third_party_licenses_title),
                     color = barColor,
@@ -222,7 +223,7 @@ fun LicensePageContent(
         )
 
         Box(
-            modifier = Modifier.blurSource(if (isBlurEnabled) hazeState else null)
+            modifier = Modifier.uniformBlurBackdrop(if (isBlurEnabled) backdrop else null)
         ) {
             LazyColumn(
                 state = lazyListState,

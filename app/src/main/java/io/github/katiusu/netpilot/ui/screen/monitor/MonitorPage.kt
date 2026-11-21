@@ -38,9 +38,10 @@ import io.github.katiusu.netpilot.core.monitor.MonitorEngine
 import io.github.katiusu.netpilot.core.monitor.MonitorPhase
 import io.github.katiusu.netpilot.core.monitor.SinrUnavailableReason
 import io.github.katiusu.netpilot.ui.util.BlurredBar
-import io.github.katiusu.netpilot.ui.util.blurSource
+import io.github.katiusu.netpilot.ui.util.PageBackdrop
+import io.github.katiusu.netpilot.ui.util.uniformBlurBackdrop
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
-import io.github.katiusu.netpilot.ui.util.rememberBlurState
+import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -80,8 +81,8 @@ fun MonitorPageView(
     val scope = rememberCoroutineScope()
     val scrollBehavior = MiuixScrollBehavior()
 
-    val hazeState = rememberBlurState()
-    val blurActive = isBlurEnabled && hazeState != null
+    val backdrop = rememberBlurBackdrop()
+    val blurActive = isBlurEnabled && backdrop != null
     val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
 
     val running by MonitorEngine.running.collectAsState()
@@ -213,7 +214,7 @@ fun MonitorPageView(
 
     Scaffold(
         topBar = {
-            BlurredBar(hazeState, blurActive, scrollBehavior) {
+            BlurredBar(backdrop = if (isBlurEnabled) backdrop else null, blurEnabled = isBlurEnabled) {
                 AppTopAppBar(
                     title = stringResource(R.string.monitor_page_title),
                     color = barColor,
@@ -224,7 +225,7 @@ fun MonitorPageView(
         contentWindowInsets = WindowInsets.systemBars.add(WindowInsets.displayCutout)
             .only(WindowInsetsSides.Horizontal),
     ) { innerPadding ->
-        Box(modifier = Modifier.blurSource(if (isBlurEnabled) hazeState else null)) {
+        PageBackdrop(backdrop = if (isBlurEnabled) backdrop else null) {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()

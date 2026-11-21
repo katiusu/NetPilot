@@ -1,3 +1,6 @@
+// Copyright 2026, compose-miuix-ui contributors
+// SPDX-License-Identifier: Apache-2.0
+
 package io.github.katiusu.netpilot.ui.component.effect
 
 internal object BgEffectConfig {
@@ -13,6 +16,7 @@ internal object BgEffectConfig {
         val pointOffset: Float,
     )
 
+    // OS2 Data
 
     private val OS2_PHONE_LIGHT_COLORS = floatArrayOf(
         0.57f, 0.76f, 0.98f, 1.0f, 0.98f, 0.85f, 0.68f, 1.0f, 0.98f, 0.75f, 0.93f, 1.0f, 0.73f, 0.70f, 0.98f, 1.0f,
@@ -70,6 +74,7 @@ internal object BgEffectConfig {
         pointOffset = 0.1f,
     )
 
+    // OS3 Data
 
     private val OS3_PHONE_LIGHT = Config(
         points = floatArrayOf(0.8f, 0.2f, 1.0f, 0.8f, 0.9f, 1.0f, 0.2f, 0.9f, 1.0f, 0.2f, 0.2f, 1.0f),
