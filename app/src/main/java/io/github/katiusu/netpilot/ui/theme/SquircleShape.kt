@@ -40,7 +40,7 @@ class SquircleShape(
         if (cubics.isEmpty()) return Outline.Generic(path)
         path.moveTo(cubics[0].anchor0X, cubics[0].anchor0Y)
         cubics.forEach { c ->
-            path.cubicTo(c.point1X, c.point1Y, c.point2X, c.point2Y, c.anchor1X, c.anchor1Y)
+            path.cubicTo(c.control0X, c.control0Y, c.control1X, c.control1Y, c.anchor1X, c.anchor1Y)
         }
         path.close()
         return Outline.Generic(path)
