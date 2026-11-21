@@ -10,16 +10,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.text.fromHtml
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import io.github.katiusu.netpilot.R
-import io.github.katiusu.netpilot.UpdateChecker
-import org.commonmark.parser.Parser
-import org.commonmark.renderer.html.HtmlRenderer
+import io.github.katiusu.netpilot.core.update.UpdateChecker
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -84,30 +77,15 @@ internal fun CurrentChangelogDialog(version: String, notes: String, onDismissReq
     }
 }
 
-private val markdownParser = Parser.builder().build()
-private val markdownRenderer = HtmlRenderer.builder().escapeHtml(true).sanitizeUrls(true).build()
-
 @Composable
 private fun UpdateMarkdown(markdown: String) {
-    val linkColor = MiuixTheme.colorScheme.primary
-    val text = remember(markdown, linkColor) {
-        val html = markdownRenderer.render(markdownParser.parse(markdown))
-            .replace("<code>", "<tt>")
-            .replace("</code>", "</tt>")
-        AnnotatedString.fromHtml(
-            html,
-            linkStyles = TextLinkStyles(
-                style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
-            ),
-        )
-    }
     BasicText(
-        text = text,
+        text = markdown,
         style = MiuixTheme.textStyles.body2.copy(color = MiuixTheme.colorScheme.onSurfaceVariantSummary),
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = 240.dp)
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 12.dp),
+            .padding(top = 8.dp, bottom = 8.dp),
     )
 }
