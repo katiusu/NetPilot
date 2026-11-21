@@ -47,7 +47,7 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Text as MiuixText
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.SwitchPreference
-import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 class DataCardActivity : BaseSubPageActivity() {
@@ -302,7 +302,9 @@ private fun SimPolicyCard(
             checked = policy.enabled,
             onCheckedChange = onEnabledChange,
         )
-        WindowDropdownPreference(
+        GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
             items = SimPolicyMode.entries.map { it.label },
             selectedIndex = policy.mode.ordinal,
             title = stringResource(R.string.np_dc_policy_title, sim.slotIndex + 1),

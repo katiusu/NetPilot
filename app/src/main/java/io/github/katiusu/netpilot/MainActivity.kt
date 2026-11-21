@@ -280,6 +280,16 @@ class MainActivity : ComponentActivity() {
             }
 
             AppTheme(themeMode = themeMode) {
+                // 与模板一致：全应用只在这里放一个「只负责弹层」的外层 Scaffold
+                // （无顶栏/底栏、不消费 insets），它同时包住 pager、悬浮底栏与宽屏侧栏，
+                // 因此它的 popupHost 在绘制顺序上位于这些导航 chrome 之上。
+                // 弹层统一用 renderInRootScaffold = true 注册到这里，就天然「永远盖在
+                // 底栏/侧栏上面」，既不会被底栏遮挡，也不需要额外的避让垫高。
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = Color.Transparent,
+                    contentWindowInsets = WindowInsets(0),
+                ) {
                 MainScreen(
                     // 前台状态只能由 Activity 传进来：MainScreen 是文件里的顶层函数，
                     // 看不到 MainActivity 的实例成员，读不到 isForeground。
@@ -294,7 +304,7 @@ class MainActivity : ComponentActivity() {
                     onLiquidGlassChange = { isLiquidGlass = it; persistState() },
                     onBlurEnabledChange = { isBlurEnabled = it; persistState() },
                 )
-
+                }
             }
 
             // 权限引导：只在需要时出现。权限齐全（startupPrompt == NONE）时不弹任何对话框。
@@ -568,7 +578,6 @@ private fun MainScreen(
         }
     } else {
         Scaffold(
-            popupHost = { },
             bottomBar = {
                 BottomNavigationBar(
                     mode = navBarMode,

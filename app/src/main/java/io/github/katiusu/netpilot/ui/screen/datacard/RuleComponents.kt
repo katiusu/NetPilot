@@ -29,7 +29,7 @@ import top.yukonga.miuix.kmp.basic.Text as MiuixText
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.SwitchPreference
-import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
 
@@ -109,7 +109,9 @@ internal fun RuleEditorDialog(
             SmallTitle(text = stringResource(R.string.dc_editor_group_action))
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    WindowDropdownPreference(
+                    GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                         items = targetOptions,
                         selectedIndex = targetIndex,
                         title = stringResource(R.string.np_dc_rule_target),

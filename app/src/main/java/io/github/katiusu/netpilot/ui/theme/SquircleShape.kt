@@ -25,6 +25,9 @@ class SquircleShape(
         val path = Path()
         if (size.minDimension <= 0f) return Outline.Generic(path)
         val r = with(density) { radius.toPx() }.coerceAtMost(size.minDimension / 2f)
+        // 只用三参数重载：库内部给 perVertexRounding 传 null。
+        // 自己传 emptyList() 会命中 "perVertexRounding list should be either null
+        // or the same size as the number of vertices" 的校验并直接崩溃。
         val polygon = RoundedPolygon(
             floatArrayOf(
                 0f, 0f,
@@ -33,8 +36,6 @@ class SquircleShape(
                 0f, size.height,
             ),
             CornerRounding(r, smoothing.coerceIn(0f, 1f)),
-            emptyList(),
-            0.05f,
         )
         val cubics = polygon.cubics
         if (cubics.isEmpty()) return Outline.Generic(path)

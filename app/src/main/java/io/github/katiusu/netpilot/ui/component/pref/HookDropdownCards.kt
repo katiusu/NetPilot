@@ -8,7 +8,7 @@ import io.github.katiusu.netpilot.prefs.ConfigState
 import io.github.katiusu.netpilot.prefs.OptionSpec
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
-import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 
 @Composable
 fun HookDropdownCard(
@@ -19,7 +19,9 @@ fun HookDropdownCard(
     val value = ConfigState.string(spec.key, spec.defaultString)
     val items = spec.entryResIds.map { stringResource(it) }
     val selectedIndex = spec.entryValues.indexOf(value).takeIf { it >= 0 } ?: 0
-    WindowDropdownPreference(
+    GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
         items = items,
         selectedIndex = selectedIndex,
         title = stringResource(spec.titleRes),

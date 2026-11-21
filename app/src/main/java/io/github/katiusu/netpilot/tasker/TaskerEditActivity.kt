@@ -34,6 +34,7 @@ import io.github.katiusu.netpilot.core.tasker.TaskerActionSpec
 import io.github.katiusu.netpilot.core.tasker.TaskerBridge
 import io.github.katiusu.netpilot.core.tasker.TaskerContract
 import io.github.katiusu.netpilot.ui.component.SubPageScaffold
+import io.github.katiusu.netpilot.ui.util.LocalPreferenceBackdrop
 import io.github.katiusu.netpilot.ui.theme.AppTheme
 import io.github.katiusu.netpilot.ui.util.applyWindowBackground
 import top.yukonga.miuix.kmp.basic.Button
@@ -43,7 +44,7 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.SwitchPreference
-import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.basic.Text as MiuixText
 
@@ -233,7 +234,9 @@ private fun TaskerEditScreen(
         // ---- 类型 ----
         SmallTitle(text = stringResource(R.string.tasker_section_type))
         Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
-            WindowDropdownPreference(
+            GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                 items = listOf(
                     stringResource(R.string.tasker_type_action),
                     stringResource(R.string.tasker_type_condition),
@@ -254,7 +257,9 @@ private fun TaskerEditScreen(
             // ---- 条件 ----
             SmallTitle(text = stringResource(R.string.tasker_section_condition))
             Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
-                WindowDropdownPreference(
+                GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                     items = TaskerContract.CONDITION_OPTIONS.map { it.second },
                     selectedIndex = conditionIndex,
                     title = stringResource(R.string.tasker_condition_title),
@@ -271,7 +276,9 @@ private fun TaskerEditScreen(
             // ---- 动作 ----
             SmallTitle(text = stringResource(R.string.tasker_section_action))
             Card(modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
-                WindowDropdownPreference(
+                GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                     items = specs.map { it.title },
                     selectedIndex = actionIndex,
                     title = stringResource(R.string.tasker_action_title),
@@ -291,7 +298,9 @@ private fun TaskerEditScreen(
                 Column {
                     if (spec.action in ACTIONS_NEEDING_SUB_ID) {
                         if (simItems.isNotEmpty()) {
-                            WindowDropdownPreference(
+                            GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                                 items = simItems,
                                 selectedIndex = simIndex,
                                 title = stringResource(R.string.tasker_param_sub_id_title),
@@ -323,7 +332,9 @@ private fun TaskerEditScreen(
 
                     when (spec.action) {
                         TaskerContract.ACTION_SET_NETWORK_MODE -> {
-                            WindowDropdownPreference(
+                            GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                                 items = TaskerContract.MODE_OPTIONS.map {
                                     "${TaskerContract.modeLabel(it)}（裸值 $it）"
                                 },
@@ -337,7 +348,9 @@ private fun TaskerEditScreen(
                         }
 
                         TaskerContract.ACTION_SET_PRESET -> {
-                            WindowDropdownPreference(
+                            GlassDropdownPreference(
+            backdrop = LocalPreferenceBackdrop.current,
+            renderInRootScaffold = true,
                                 items = TaskerContract.PRESET_OPTIONS.map {
                                     "${it.second}（${it.first}）"
                                 },
