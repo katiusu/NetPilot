@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.katiusu.netpilot.core.NetPilot
 import io.github.katiusu.netpilot.core.PermissionGuide
+import io.github.katiusu.netpilot.core.monitor.MonitorSettings
 import io.github.katiusu.netpilot.core.update.UpdateChecker
 import io.github.katiusu.netpilot.ui.component.FirstLaunchGuideDialog
 import io.github.katiusu.netpilot.ui.component.UpdateDialog
@@ -133,6 +134,16 @@ class MainActivity : ComponentActivity() {
     private var requestedPage by mutableIntStateOf(-1)
 
     /**
+     * 跳页请求的票号，每收到一次带 [EXTRA_PAGE] 的 intent 就自增。
+     *
+     * 为什么不能只靠 [requestedPage] 当重组键：目标页与当前值相同时 State 结构相等，
+     * 写入不会触发重组，LaunchedEffect(requestedPage) 也就不会重跑——磁贴/快捷操作
+     * 连点同一页时从第二次开始就静默失败。票号每来一次请求都变，等于把「一次请求」
+     * 与「一次状态变化」解耦。
+     */
+    private var requestedPageTicket by mutableIntStateOf(0)
+
+    /**
      * 应用是否处于前台（onResume 之后、onPause 之前）。
      *
      * 为什么需要这个状态：监控页的 5 秒快速采样跑在 `LaunchedEffect` 里，而 Compose 在
@@ -163,14 +174,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        val page = intent.getIntExtra(EXTRA_PAGE, -1)
-        if (page >= 0) requestedPage = page
+        applyRequestedPage(intent)
+    }
+
+    /**
+     * 把 intent 里的 [EXTRA_PAGE] 写进跳页状态。
+     *
+     * onCreate 与 onNewIntent 读的是同一个 EXTRA，收敛在一处免得两边的判断走样；
+     * 负值表示「本次不指定页」，此时不写状态也不动票号，否则会把上一次的请求
+     * 当成新请求再执行一遍。
+     */
+    private fun applyRequestedPage(intent: Intent?) {
+        val page = intent?.getIntExtra(EXTRA_PAGE, -1) ?: -1
+        if (page < 0) return
+        requestedPage = page
+        requestedPageTicket++
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        requestedPage = intent?.getIntExtra(EXTRA_PAGE, -1) ?: -1
+        applyRequestedPage(intent)
         window.isNavigationBarContrastEnforced = false
 
         val savedSettings = AppSettings.load(this)
@@ -255,8 +279,11 @@ class MainActivity : ComponentActivity() {
             // 拒掉（36 只会更严），Activity 起来时不受这条限制。
             LaunchedEffect(Unit) {
                 val appContext = this@MainActivity.applicationContext
+                // 用户按过通知栏「停止」就不对账：那是运行时意图而不是配置，
+                // 冷启动时把它撤销掉，等于「停止」按钮只在本次进程内有效。
                 if (NetPilot.autoDowngradeEnabled() &&
                     NetPilot.servicesEnabled(appContext) &&
+                    !MonitorSettings.userStopped(appContext) &&
                     !NetPilot.monitorRunning()
                 ) {
                     NetPilot.setMonitorOnly(appContext, true)
@@ -299,6 +326,7 @@ class MainActivity : ComponentActivity() {
                     isLiquidGlass = isLiquidGlass,
                     isBlurEnabled = isBlurEnabled,
                     requestedPage = requestedPage,
+                    requestedPageTicket = requestedPageTicket,
                     onThemeModeChange = { themeMode = it; persistState() },
                     onFloatingNavbarChange = { isFloatingNavbar = it; persistState() },
                     onLiquidGlassChange = { isLiquidGlass = it; persistState() },
@@ -384,6 +412,8 @@ private fun MainScreen(
     isBlurEnabled: Boolean,
     /** 外部请求跳转到的页（-1 = 不指定），见 MainActivity.EXTRA_PAGE。 */
     requestedPage: Int = -1,
+    /** 跳页请求的票号：同页重复请求靠它才能再触发一次翻页，见 MainActivity.requestedPageTicket。 */
+    requestedPageTicket: Int = 0,
     onThemeModeChange: (ColorSchemeMode) -> Unit,
     onFloatingNavbarChange: (Boolean) -> Unit,
     onLiquidGlassChange: (Boolean) -> Unit,
@@ -462,7 +492,9 @@ private fun MainScreen(
 
     // 从快速操作页跳进来（或本 Activity 已在栈里走 onNewIntent）时同步翻页。
     // 用 scrollToPage 而不是 springAnimate：这是「外部指定」而不是用户手势翻页，不需要动画。
-    LaunchedEffect(requestedPage) {
+    // 重组键用票号而不是目标页：连点同一页时 requestedPage 结构相等不会触发重组，
+    // 只有票号变了，这次请求才会被真正执行一遍。
+    LaunchedEffect(requestedPageTicket) {
         val target = requestedPage
         if (target in 0..4 && pagerState.currentPage != target) {
             pagerState.scrollToPage(target)

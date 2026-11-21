@@ -41,13 +41,14 @@ private val TileModeCycle: List<NetworkMode> = listOf(
  *
  * 线程模型：TileService 没有现成的生命周期协程作用域，`onClick()` 里既不能
  * `runBlocking`（会卡住 QS 面板的 binder 线程），也不该裸起线程。这里自建
- * `CoroutineScope(SupervisorJob() + Dispatchers.Default)`：`NetPilot` 的挂起函数
- * 内部自己会切到 IO，不需要我们占主线程；只有 Toast 需要 Looper，单独用
- * `withContext(Dispatchers.Main)` 兜一下。
+ * `CoroutineScope(SupervisorJob() + Dispatchers.IO)`：`render()` 与 `cycle()` 里跑的
+ * 是跨 binder 读 subId、特权 shell 读写制式这类阻塞调用，而 Default 是 CPU 池
+ * （大小等于核数），阻塞在里面会连带把别的 CPU 任务一起排队。只有 Toast 需要
+ * Looper，单独用 `withContext(Dispatchers.Main)` 兜一下。
  */
 class NetworkModeTileService : TileService() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** 同一时刻只允许一个「渲染」或「切换」在跑，新任务进来就取消旧任务。 */
     private var pending: Job? = null

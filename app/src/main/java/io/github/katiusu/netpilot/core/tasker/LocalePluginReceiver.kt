@@ -15,6 +15,20 @@ import kotlinx.coroutines.launch
 private const val TAG_LOCALE = "Locale插件"
 
 /**
+ * 允许触发插件动作的来源包名。
+ *
+ * 为什么这里不用口令（见 [TaskerContract.EXTRA_TOKEN]）：插件配置的 Bundle 是 **Tasker 自己**
+ * 存下来再回放的，插件没有机会往里塞一个只有本应用知道的值，口令方案覆盖不到这条路。
+ * 能用的身份信息只有系统填写的发送方包名，所以这里改成来源白名单。
+ *
+ * 为什么额外放行 `com.android.shell`：docs/TASKER.md 5.3 用 adb 模拟插件广播来排错，那条路
+ * 的身份是 shell（uid 2000）。包名由系统填写、普通 App 冒充不了，而能开 adb 的人本来就能直接
+ * `am broadcast` 或 `su`，放行它不扩大实际攻击面。
+ */
+private val TRUSTED_FIRE_PACKAGES: Set<String> =
+    TaskerContract.RESULT_TARGET_PACKAGES.toSet() + "com.android.shell"
+
+/**
  * Locale 插件协议的常量（Tasker 的「插件」动作就是兼容 Locale 这套约定）。
  *
  * 这些字符串是第三方协议硬编码的，不能改；集中放这里是为了让接收器与编辑界面
@@ -65,6 +79,9 @@ object LocalePluginContract {
  *    goAsync；判断不了时回 [LocalePluginContract.RESULT_CONDITION_UNSATISFIED]。
  *
  * Bundle 里只放 String / Int / Boolean（见 [TaskerEditActivity]），跨进程最稳。
+ *
+ * 鉴权：口令（[TaskerContract.EXTRA_TOKEN]）挡不住这条路 —— Bundle 由 Tasker 回放，插件塞不进自己的
+ * 秘密。这里改用**来源白名单**（[TRUSTED_FIRE_PACKAGES]），只认 Tasker 与 adb shell 两个包名。
  */
 class LocaleFireReceiver : BroadcastReceiver() {
 
@@ -74,11 +91,56 @@ class LocaleFireReceiver : BroadcastReceiver() {
             LogStore.warn(TAG_LOCALE, "收到没有 action 的广播，已忽略")
             return
         }
+        // 来源白名单：这个 receiver 是 exported 的，而它的 Bundle 里没有、也不可能有口令，
+        // 只剩「谁发的」这一条判据。getSentFromPackage 由系统填写、不可伪造。
+        val fromPackage = runCatching { sentFromPackage }.getOrNull()
+        val fromUid = runCatching { sentFromUid }.getOrDefault(-1)
+        if (!isTrustedSource(action, fromPackage, fromUid)) {
+            rejectUntrusted(action)
+            return
+        }
+
         val bundle = LocalePluginContract.readBundle(intent)
         when (action) {
             LocalePluginContract.ACTION_FIRE_SETTING -> handleFire(context, bundle)
             LocalePluginContract.ACTION_QUERY_CONDITION -> handleQuery(bundle)
             else -> LogStore.warn(TAG_LOCALE, "不支持的 action：$action")
+        }
+    }
+
+    /**
+     * 来源是否可信。
+     *
+     * 包名为 null 时**放行并记 WARN**：getSentFromPackage 在少数 ROM / 极早期的广播路径上会返回
+     * null，一律拒绝会让正常用户的插件静默失效，而这个 receiver 只执行「Tasker 已经保存好的配置」，
+     * 本身不引入新的权限面。真正要挡的是「任意 App 带着自己包名乱发」，那种请求包名一定非空。
+     */
+    private fun isTrustedSource(action: String, fromPackage: String?, fromUid: Int): Boolean {
+        if (fromPackage == null) {
+            LogStore.warn(
+                TAG_LOCALE,
+                "无法确定 $action 的发送方（uid=" + fromUid + "），按兼容处理放行",
+            )
+            return true
+        }
+        if (fromPackage in TRUSTED_FIRE_PACKAGES) return true
+        LogStore.warn(
+            TAG_LOCALE,
+            "拒绝来自 " + fromPackage + "（uid=" + fromUid + "）的 $action：只接受 Tasker 或 adb shell",
+        )
+        return false
+    }
+
+    /** 拒绝时按 Locale 协议回「没做事」：动作回 CANCELED，条件回不满足。 */
+    private fun rejectUntrusted(action: String) {
+        runCatching {
+            setResultCode(
+                if (action == LocalePluginContract.ACTION_QUERY_CONDITION) {
+                    LocalePluginContract.RESULT_CONDITION_UNSATISFIED
+                } else {
+                    Activity.RESULT_CANCELED
+                }
+            )
         }
     }
 

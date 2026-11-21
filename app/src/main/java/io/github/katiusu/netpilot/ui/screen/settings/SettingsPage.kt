@@ -44,6 +44,8 @@ import io.github.katiusu.netpilot.core.monitor.MonitorSettings
 import io.github.katiusu.netpilot.core.priv.SystemCompatInfo
 import io.github.katiusu.netpilot.core.priv.WriteDiag
 import io.github.katiusu.netpilot.core.priv.WriteVerification
+import io.github.katiusu.netpilot.core.radio.BasebandDetector
+import io.github.katiusu.netpilot.core.radio.BasebandProfile
 import io.github.katiusu.netpilot.prefs.ConfigBackup
 import io.github.katiusu.netpilot.prefs.ConfigState
 import io.github.katiusu.netpilot.ui.component.AppArrowPreference
@@ -93,6 +95,17 @@ fun SettingsPageView(
         compatProbing = true
         compatProbe = runCatching { SystemCompatInfo.probe(context) }.getOrNull()
         compatProbing = false
+    }
+
+    // 基带一行：先显示缓存（上次成功探测的结论），再在后台重新探一次覆盖它。
+    // 探测是纯只读属性读 + stat + getService，最坏 3 秒，放 LaunchedEffect 里不挡首帧；
+    // 没有缓存时按「无结论」显示，绝不假装探测成功。
+    var basebandLine by remember {
+        mutableStateOf(BasebandDetector.cached()?.summaryLine() ?: BasebandProfile.UNKNOWN_SUMMARY)
+    }
+    LaunchedEffect(Unit) {
+        basebandLine = runCatching { BasebandDetector.detect(context).summaryLine() }
+            .getOrDefault(BasebandDetector.cached()?.summaryLine() ?: BasebandProfile.UNKNOWN_SUMMARY)
     }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -475,6 +488,12 @@ fun SettingsPageView(
                     CompatInfoRow(
                         title = stringResource(R.string.ka_compat_vendor),
                         summary = compat.vendor.ifBlank { unknownText },
+                    )
+                    // 基带一行：文案在 core.radio 里拼好（含「无结论」的降级说法），
+                    // 这里只显示。标题用字面量是因为 strings.xml 不在本次允许改动的范围内。
+                    CompatInfoRow(
+                        title = "基带",
+                        summary = basebandLine,
                     )
                     CompatInfoRow(
                         title = stringResource(R.string.ka_compat_brand),

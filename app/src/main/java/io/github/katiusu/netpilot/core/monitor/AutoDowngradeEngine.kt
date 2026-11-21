@@ -241,6 +241,23 @@ class AutoDowngradeEngine(private val context: Context) {
             val recovered = current.recoveryCount + 1
             current = current.copy(recoveryCount = recovered)
             if (recovered >= thresholds.recoveryCount) {
+                if (current.restoreAttempts >= MAX_RESTORE_ATTEMPTS) {
+                    // 连续失败到上限：保留降级态与 savedMode，只是不再每轮都去撞一次特权通道。
+                    // 文案必须写进 lastEvent：界面读的就是它，只打日志的话用户看到「已降级」，
+                    // 不知道写回已经停了、需要手动恢复。
+                    val stoppedText = "写回已停止重试（连续 ${current.restoreAttempts} 次失败，制式仍停在 " +
+                        "${modeLabel(current.appliedMode)}），请手动恢复或重启监控"
+                    if (current.lastEvent != stoppedText) {
+                        val noted = current.copy(
+                            lastEvent = stoppedText,
+                            lastEventAtMs = System.currentTimeMillis(),
+                        )
+                        LogStore.log(TAG, stoppedText, LogLevel.WARN)
+                        persist(noted)
+                        _state.value = noted
+                    }
+                    return
+                }
                 restore(subId, current, thresholds)
                 return
             }
@@ -261,12 +278,11 @@ class AutoDowngradeEngine(private val context: Context) {
     private suspend fun restore(subId: Int, current: DowngradeState, thresholds: DowngradeThresholds) {
         val target = restoreTarget(subId, current, thresholds)
         val ok = writeMode(subId, target, thresholds)
-        LogStore.log(
-            TAG,
-            if (ok) "恢复条件满足，已写回制式 $target（${modeLabel(target)}）"
-            else "恢复条件满足但写回制式失败",
-            if (ok) LogLevel.INFO else LogLevel.ERROR,
-        )
+        // 失败那条统一由 [finish] 记（它还要处理重试计数），这里只留成功的一行，
+        // 免得同一次写回在日志里出现两条措辞不同的记录。
+        if (ok) {
+            LogStore.log(TAG, "恢复条件满足，已写回制式 $target（${modeLabel(target)}）", LogLevel.INFO)
+        }
         finish(current, ok, "已恢复正常制式")
     }
 
@@ -278,15 +294,50 @@ class AutoDowngradeEngine(private val context: Context) {
     ) {
         val target = restoreTarget(subId, current, thresholds)
         val ok = writeMode(subId, target, thresholds)
-        LogStore.log(
-            TAG,
-            if (ok) "$reason：已写回制式 $target（${modeLabel(target)}）" else "$reason：写回制式失败",
-            if (ok) LogLevel.WARN else LogLevel.ERROR,
-        )
+        // 失败文案与重试计数都由 [finish] 负责，这里只记成功的一行（回退本身是 WARN 级事件）。
+        if (ok) {
+            LogStore.log(TAG, "$reason：已写回制式 $target（${modeLabel(target)}）", LogLevel.WARN)
+        }
         finish(current, ok, reason)
     }
 
+    /**
+     * 收尾一次降级流程。
+     *
+     * 写回失败与成功必须走两条完全不同的路径：成功才清态，失败只记一次账。
+     * 原来失败也照清不误，`savedMode`（降级前制式）跟着被抹成 -1，此后
+     * [restoreTarget] 只能退回运营商默认值，用户原本手动锁的制式就永久丢了。
+     */
     private fun finish(current: DowngradeState, ok: Boolean, event: String) {
+        if (!ok) {
+            // 保留 active 与 recoveryCount（已到阈值的计数不动），下一轮 tick 一进入
+            // 「冷却结束且网络正常」就会立刻重试，等于把重试挂在正常的采样节拍上。
+            // 计数夹在上限：回退（降级后无网）那条路径不受上限门限制、每轮都会再试一次，
+            // 不夹的话计数会一路涨上去，且每次失败都按「已放弃」的 ERROR 文案刷屏。
+            val attempts = (current.restoreAttempts + 1).coerceAtMost(MAX_RESTORE_ATTEMPTS)
+            val giveUp = attempts >= MAX_RESTORE_ATTEMPTS
+            val crossedLimit = giveUp && current.restoreAttempts < MAX_RESTORE_ATTEMPTS
+            val next = current.copy(
+                restoreAttempts = attempts,
+                lastEvent = if (giveUp) {
+                    "$event（连续 $attempts 次写入失败，已停止重试，制式仍停在 ${current.appliedMode}）"
+                } else {
+                    "$event（写入失败，下一轮继续尝试）"
+                },
+                lastEventAtMs = System.currentTimeMillis(),
+            )
+            // 只有「刚好到上限」那一次记 ERROR；之后仍在重试的（回退分支）降成 DEBUG，
+            // 否则无网期间每个采样周期都会刷一条 ERROR。
+            val level = when {
+                crossedLimit -> LogLevel.ERROR
+                giveUp -> LogLevel.DEBUG
+                else -> LogLevel.WARN
+            }
+            LogStore.log(TAG, next.lastEvent, level)
+            persist(next)
+            _state.value = next
+            return
+        }
         val next = current.copy(
             active = false,
             degradedAtMs = 0L,
@@ -294,7 +345,8 @@ class AutoDowngradeEngine(private val context: Context) {
             noNetFailCount = 0,
             appliedMode = -1,
             savedMode = -1,
-            lastEvent = if (ok) event else "$event（写入失败）",
+            restoreAttempts = 0,
+            lastEvent = event,
             lastEventAtMs = System.currentTimeMillis(),
         )
         persist(next)
@@ -368,11 +420,9 @@ class AutoDowngradeEngine(private val context: Context) {
         val thresholds = MonitorSettings.thresholds()
         val target = restoreTarget(subId, current, thresholds)
         val ok = writeMode(subId, target, thresholds)
-        LogStore.log(
-            TAG,
-            if (ok) "启动自愈完成，制式已写回 $target（${modeLabel(target)}）" else "启动自愈写回失败",
-            if (ok) LogLevel.INFO else LogLevel.ERROR,
-        )
+        if (ok) {
+            LogStore.log(TAG, "启动自愈完成，制式已写回 $target（${modeLabel(target)}）", LogLevel.INFO)
+        }
         finish(current, ok, "启动自愈")
     }
 
@@ -394,6 +444,8 @@ class AutoDowngradeEngine(private val context: Context) {
                 noNetFailCount = json.optInt("noNetFailCount", 0),
                 appliedMode = json.optInt("appliedMode", -1),
                 savedMode = json.optInt("savedMode", -1),
+                // 旧存档没有这个字段：缺省 0 就是「没有待重试的写回」，语义自洽。
+                restoreAttempts = json.optInt("restoreAttempts", 0),
                 lastEvent = json.optString("lastEvent", ""),
                 lastEventAtMs = json.optLong("lastEventAtMs", 0L),
             )
@@ -418,6 +470,7 @@ class AutoDowngradeEngine(private val context: Context) {
             .put("noNetFailCount", state.noNetFailCount)
             .put("appliedMode", state.appliedMode)
             .put("savedMode", state.savedMode)
+            .put("restoreAttempts", state.restoreAttempts)
             .put("lastEvent", state.lastEvent)
             .put("lastEventAtMs", state.lastEventAtMs)
             .toString()
@@ -430,6 +483,15 @@ class AutoDowngradeEngine(private val context: Context) {
         const val TAG = "降级引擎"
         private const val PREFS_NAME = "netpilot_downgrade"
         private const val KEY_STATE = "state"
+
+        /**
+         * 恢复写回的最大连续失败次数。
+         *
+         * 特权通道临时不可用（Shizuku 断连、root 授权框被切走）值得再试两轮，但一直失败时
+         * 每轮都去 fork 一次 app_process 只会白耗电，所以到上限就停手 —— 注意仍然**不清**
+         * `savedMode`，那份「降级前制式」要留给下次启动自愈或用户手动清除。
+         */
+        private const val MAX_RESTORE_ATTEMPTS = 3
 
         /**
          * 息屏后台轮次的探测降频窗口（1.5.3）。

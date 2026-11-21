@@ -22,11 +22,31 @@ object ConfigState {
         if (!initialized) reload()
     }
 
-    /** 从磁盘重新加载全部配置（导入后调用）。 */
+    /**
+     * 从磁盘重新加载全部配置（导入后调用）。
+     *
+     * 为什么必须回调 observers：导入换掉的是磁盘上的值，而系统侧状态（Tasker 组件启停等）
+     * 只认 [observe] 的回调。不回调的后果是「配置变了、系统侧还是旧的」，而且没有自愈路径，
+     * 要等用户下一次手动动同一个开关才能对齐。
+     *
+     * 只回调**值确实变了**的键：导入一份只改了一条规则的备份，不该把所有联动都跑一遍。
+     * 首次加载（[init] 阶段）直接返回：那时没有旧值可比，回调只会把冷启动拖慢。
+     */
     fun reload() {
+        val previous = HashMap(values)
+        val firstLoad = !initialized
         values.clear()
         PrefsStore.getAll().forEach { (key, value) -> values[key] = value }
         initialized = true
+        if (firstLoad) return
+        // 先算出要回调哪些 key、再统一回调：observer 里可能又调 set()/observe()，
+        // 一边遍历 observers 一边注册会撞上并发容器的遍历语义。
+        val changedKeys = observers.keys.filter { previous[it] != values[it] }
+        changedKeys.forEach { key ->
+            val observer = observers[key] ?: return@forEach
+            // 回调抛异常不能让导入失败（值已经落盘了），也不该中断其余回调。
+            runCatching { observer(values[key]) }
+        }
     }
 
     fun get(key: String): Any? = values[key]

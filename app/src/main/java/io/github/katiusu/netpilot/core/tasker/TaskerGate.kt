@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import io.github.katiusu.netpilot.core.monitor.LogStore
 import io.github.katiusu.netpilot.prefs.ConfigState
+import java.util.UUID
 
 /**
  * Tasker / Locale 接口的总开关落点。
@@ -25,6 +26,14 @@ object TaskerGate {
 
     /** 默认关闭：自动化接口是少数人用的能力，默认不该带来任何后台开销。 */
     const val DEFAULT_ENABLED = false
+
+    /**
+     * 写类命令口令的配置键。
+     *
+     * 口令随「打开接口」生成、随「关闭接口」**保留**：用户关掉再打开，Tasker 里存着的意图
+     * 不用改一个字。只有用户主动重置才会换（本版没有这个入口；卸载或清除数据也会让它消失）。
+     */
+    const val KEY_TOKEN = "np_tasker_token"
 
     /**
      * 随开关一起启用/禁用的组件（值 = manifest 里 `android:name` 除包名之外的部分）。
@@ -69,6 +78,9 @@ object TaskerGate {
         // 接口开着才接线事件出口。为什么「关着时连订阅都不建立」，而不是只靠发送侧判断：
         // 两道门都要 —— 组件禁用只挡住「外面叫醒我们」，发送侧的门控（TaskerEventSender.broadcast）
         // 才挡住「我们主动播出去」；而这里少建立两个常驻收集协程，关着时这块后台开销严格为零。
+        // 接口开着就保证有口令（写类命令一律校它）：漏生成会让所有写类命令被拒，
+        // 而用户从界面上看不出原因，所以生成动作跟着 sync 一起做，而不是只挂在开关那一下。
+        if (enabled) token(app)
         if (enabled) TaskerBridge.init(app)
     }
 
@@ -83,6 +95,30 @@ object TaskerGate {
         val app = context.applicationContext
         runCatching { ConfigState.init(app) }
         return ConfigState.bool(KEY_ENABLED, DEFAULT_ENABLED)
+    }
+
+    /**
+     * 取当前口令；没有就现生成一个。
+     *
+     * 用「查询 + 懒生成」而不是「只在开关打开时写死」：[sync] 会在多个时机跑（开机、导入配置、
+     * 组件状态被系统重置），每次都查一次才不会出现「开关开着、口令却是空的」这种死锁。
+     */
+    @Synchronized
+    fun token(context: Context): String {
+        val app = context.applicationContext
+        runCatching { ConfigState.init(app) }
+        val existing = ConfigState.string(KEY_TOKEN, "")
+        if (existing.isNotEmpty()) return existing
+        return generateToken(app)
+    }
+
+    private fun generateToken(app: Context): String {
+        val token = UUID.randomUUID().toString()
+        // 走 ConfigState.set 而不是直接写 PrefsStore：内存里的 values 与磁盘必须同时更新，
+        // 否则同进程内的下一次校验还会读到空值。
+        ConfigState.set(KEY_TOKEN, token)
+        LogStore.info(TAG, "已生成自动化接口口令")
+        return token
     }
 
     private fun apply(pm: PackageManager, component: ComponentName, enabled: Boolean) {

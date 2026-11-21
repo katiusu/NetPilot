@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import io.github.katiusu.netpilot.core.NetPilotEvents
+import io.github.katiusu.netpilot.core.keepalive.KeepAliveState
 import io.github.katiusu.netpilot.core.priv.ControlManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -35,6 +38,18 @@ object MonitorEngine {
 
     private var engine: AutoDowngradeEngine? = null
     private var loop: Job? = null
+
+    /**
+     * 串行化 [AutoDowngradeEngine.tick]。
+     *
+     * 后台循环与 [sampleOnce]（界面「立即检测」、监控页 5 秒快采、Tasker 触发）跑在两个
+     * 不同协程上，却共用同一个降级状态机。tick 内部是「读当前态 → 判定 → 写回制式 → 落盘」
+     * 的读改写序列，并发进入会让同一轮降级被记两次、恢复计数被重复累加。
+     *
+     * 互斥区只包 tick 本身：它内部本来就是阻塞 IO，锁外不安排任何等待，
+     * 循环的 delay 节拍因此完全不受影响（最坏只是等另一轮采样跑完）。
+     */
+    private val tickMutex = Mutex()
 
     private val _running = MutableStateFlow(false)
     val running: StateFlow<Boolean> = _running.asStateFlow()
@@ -87,7 +102,9 @@ object MonitorEngine {
                 val t = MonitorSettings.thresholds()
                 // 后台循环允许在「屏幕关闭 + 未降级 + 信号非强」时跳过 HTTP 探测；
                 // 界面/Tasker 主动触发的 sampleOnce() 走 tick() 的默认值，永远真探。
-                val snap = runCatching { e.tick(allowProbeSkip = true) }.getOrElse {
+                val snap = runCatching {
+                    tickMutex.withLock { e.tick(allowProbeSkip = true) }
+                }.getOrElse {
                     LogStore.error(TAG, "采样失败：${it.message ?: it.javaClass.simpleName}")
                     null
                 }
@@ -180,7 +197,8 @@ object MonitorEngine {
      */
     suspend fun sampleOnce(context: Context): SignalSnapshot = withContext(Dispatchers.IO) {
         val e = ensure(context)
-        val snap = e.tick()
+        // 与后台循环互斥：两边共用同一个状态机，不能同时进去读改写。
+        val snap = tickMutex.withLock { e.tick() }
         publish(e)
         snap
     }
@@ -192,12 +210,20 @@ object MonitorEngine {
     fun setEnabled(context: Context, enabled: Boolean) {
         val ctx = context.applicationContext
         if (enabled) {
+            // 「用户要它跑」这条意图只认显式入口：总开关、磁贴、Tasker 最终都走这里。
+            // 先落意图再起服务，服务起来后才判断得出这是用户要的而不是被谁拉起的。
+            // 显式开启 = 用户现在就要它跑：清掉「用户停过」的标记，解除自动路径的抑制。
+            MonitorSettings.setUserStopped(ctx, false)
+            KeepAliveState.setMonitorWanted(ctx, true)
             runCatching {
                 ContextCompat.startForegroundService(ctx, Intent(ctx, MonitorService::class.java))
             }.onFailure {
                 LogStore.error(TAG, "启动前台服务失败：${it.message ?: it.javaClass.simpleName}")
             }
         } else {
+            // 关总开关同样要落 false：onDestroy 会读它决定要不要排一次保活重启，
+            // 留在 true 的话刚关掉的监控会被自己的重启闹钟拉回来。
+            KeepAliveState.setMonitorWanted(ctx, false)
             runCatching { ctx.stopService(Intent(ctx, MonitorService::class.java)) }
         }
     }

@@ -57,28 +57,64 @@ object TelephonyReflection {
     /** `Build.VERSION_CODES.P` 之前还没有非 SDK 接口管控，也就无所谓豁免。 */
     private val enforcementActive get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
 
+    /** 豁免状态。0 = 还没成功过，1 = 已成功（已成功才值得缓存）。 */
+    private const val EXEMPTION_NONE = 0
+    private const val EXEMPTION_DONE = 1
+
+    @Volatile
+    private var exemptionState = EXEMPTION_NONE
+
+    /** 只保护「读状态 → 尝试 → 写状态」这一段，不让两个线程重复登记同一批前缀。 */
+    private val exemptionLock = Any()
+
+    /** 失败只记一次日志：否则每次反射前都会刷一条一模一样的 warn。 */
+    @Volatile
+    private var exemptionFailureLogged = false
+
     /**
-     * 一次性把 telephony 相关包从非 SDK 接口管控里放行。
+     * 把 telephony 相关包从非 SDK 接口管控里放行，**成功才缓存**，供 [SubscriptionSwitcher]
+     * 等同样要反射这些包的调用方复用，避免各自重复登记。
      *
      * 用 `addHiddenApiExemptions` 而不是 `setHiddenApiExemptions`：后者会把别的库已经登记的
      * 条目一并清空。Shizuku 用户进程本身就在豁免名单里，重复执行无害；`app_process` 起的
-     * root 进程没有这个保证，因此两条入口都要先读一次这个值来触发豁免。
+     * root 进程没有这个保证，所以两条入口都要先调一次。
+     *
+     * 为什么不用 `by lazy`：lazy 一旦求值就锁死，第一次失败（例如 Shizuku 还没起来）
+     * 之后即使环境恢复也永远返回 false，且没有任何失效入口。现在失败不写入状态，
+     * 下次调用会重试 —— 代价只是一次 try/catch。
      */
-    private val exemptionApplied: Boolean by lazy {
-        if (!enforcementActive) return@lazy true
-        try {
-            HiddenApiBypass.addHiddenApiExemptions(*EXEMPT_PREFIXES)
-        } catch (failure: Throwable) {
-            Log.w(TAG, "隐藏 API 豁免未生效；进程可能本身已被豁免，继续尝试反射", failure)
-            false
+    fun ensureHiddenApiExempted(): Boolean {
+        if (!enforcementActive) return true
+        if (exemptionState == EXEMPTION_DONE) return true
+        // 用局部变量承接 synchronized 的结果，而不是让 `return` 嵌在 lambda 里：
+        // 那样函数尾部就只剩一个 Nothing 类型的 inline 表达式，「所有分支都返回」
+        // 完全靠编译器推导，读起来也不直观。这里每个出口都是显式 return。
+        var granted = false
+        synchronized(exemptionLock) {
+            // 双检：等锁期间别的线程可能已经豁免成功。
+            granted = if (exemptionState == EXEMPTION_DONE) {
+                true
+            } else {
+                try {
+                    HiddenApiBypass.addHiddenApiExemptions(*EXEMPT_PREFIXES)
+                    exemptionState = EXEMPTION_DONE
+                    exemptionFailureLogged = false
+                    true
+                } catch (failure: Throwable) {
+                    if (!exemptionFailureLogged) {
+                        exemptionFailureLogged = true
+                        Log.w(
+                            TAG,
+                            "隐藏 API 豁免未生效（下次调用会重试）；进程可能本身已被豁免，继续尝试反射",
+                            failure
+                        )
+                    }
+                    false
+                }
+            }
         }
+        return granted
     }
-
-    /**
-     * 触发并返回一次性豁免的结果，供 [SubscriptionSwitcher] 等同样要反射这两个包的调用方复用，
-     * 避免各自重复登记。
-     */
-    fun ensureHiddenApiExempted(): Boolean = exemptionApplied
 
     // ── 反射原语 ──────────────────────────────────────────────────────────
 
@@ -111,7 +147,7 @@ object TelephonyReflection {
      */
     private fun bindTelephony(): Binding {
         val binder = try {
-            exemptionApplied // 反射前必须已豁免，读一次即触发
+            ensureHiddenApiExempted() // 反射前必须已豁免，调一次即触发（失败会在下次重试）
             staticInvoke(
                 SERVICE_MANAGER,
                 "getService",
@@ -281,7 +317,7 @@ object TelephonyReflection {
 
     /** 默认数据 subId；自 API 24 起是公开静态方法。 */
     private fun defaultDataSubId(): Int = try {
-        exemptionApplied
+        ensureHiddenApiExempted()
         staticInvoke(
             SUBSCRIPTION_MANAGER,
             "getDefaultDataSubscriptionId",

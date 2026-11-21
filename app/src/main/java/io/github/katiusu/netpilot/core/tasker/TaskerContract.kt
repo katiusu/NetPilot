@@ -1,6 +1,8 @@
 package io.github.katiusu.netpilot.core.tasker
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import io.github.katiusu.netpilot.core.mode.NetworkMode
 
 /**
@@ -58,6 +60,35 @@ object TaskerContract {
         ACTION_SAMPLE_NOW,
         ACTION_GET_STATUS,
     )
+
+    /**
+     * 只读 action：执行后不改任何系统状态或持久配置，因此不需要口令。
+     *
+     * 判定标准不是「名字像查询」，而是「制式 / 默认数据卡 / 降级开关一个都不变」。
+     * [ACTION_SAMPLE_NOW] 会触发一次信号采样，但它只刷新监控自身的内存快照，
+     * 不写系统状态，所以归读类。
+     */
+    val READ_ONLY_ACTIONS: Set<String> = setOf(
+        ACTION_SAMPLE_NOW,
+        ACTION_GET_STATUS,
+    )
+
+    /**
+     * 写类 action：会改制式 / 默认数据卡 / 降级开关，必须带 [EXTRA_TOKEN]。
+     *
+     * 用「全集减只读」而不是手写清单：以后往 [RECEIVE_ACTIONS] 里加新命令却忘了登记，
+     * 它会默认落进写类，没带口令就直接失败 —— 漏登记的代价是「新命令暂时不能用」，
+     * 而不是「悄悄多出一个免鉴权的入口」。
+     */
+    val WRITE_ACTIONS: Set<String> = RECEIVE_ACTIONS - READ_ONLY_ACTIONS
+
+    /**
+     * 写类命令的口令 extra（String）。
+     *
+     * 为什么口令放在 extra 里：action 与组件名必须公开（Tasker 得知道往哪儿发），
+     * 能保密的东西只有 extra 里的值。
+     */
+    const val EXTRA_TOKEN = "netpilot.token"
 
     // ---------------- 发送侧 action（NetPilot → Tasker）----------------
 
@@ -177,17 +208,53 @@ object TaskerContract {
         PRESET_OPTIONS.firstOrNull { it.first == key }?.second ?: key
 
     /**
-     * 构造回执 Intent。
+     * 构造回执 Intent（只有 ok / message 两个字段，快照由 [putTaskerSnapshot] 另行附加）。
      *
-     * 注意：**不要**对回执调用 `setPackage(自己的包名)`。`setPackage` 会把广播
-     * 限制成「只发给本应用的接收者」，而回执的接收方是 Tasker（另一个包），
-     * 加了 package 之后 Tasker 的「Intent Received」永远收不到。回执是隐式广播，
-     * 由 Tasker 运行时注册的接收者接收，这是 Android 8 以后仍然允许的路径。
+     * 注意：这里**不**设 package。回执要不要定向、能定向到谁，统一由 [resultTarget] 在发送处决定
+     * （见 sendTaskerResult）：这里写死 `setPackage` 要么把 Tasker 发丢（写成自己的包名），
+     * 要么在没有 Tasker 的设备上彻底发不出去。
      */
     fun resultIntent(ok: Boolean, message: String): Intent =
         Intent(ACTION_RESULT)
             .putExtra(EXTRA_RESULT_OK, ok)
             .putExtra(EXTRA_RESULT_MESSAGE, message)
+
+    /**
+     * 回执广播的已知接收方包名（Tasker 正式版与旧版）。
+     *
+     * 用途见 sendTaskerResult：确认其中某个包装着，就把回执**定向**发过去（setPackage），
+     * 别的 App 就监听不到快照了；一个都装不上时才退回隐式广播，且只带 ok / message。
+     *
+     * 为什么用「包存在性」而不是 queryBroadcastReceivers 问谁注册了这个 action：
+     * Tasker 的接收者是**动态注册**的，它进程没起来时查不到，查得到时也只是碰巧活着。
+     */
+    val RESULT_TARGET_PACKAGES: List<String> = listOf(
+        "net.dinglisch.android.taskerm",
+        "net.dinglisch.android.tasker",
+    )
+
+    /**
+     * 找出设备上实际装着的那个 Tasker 包；一个都没装返回 null。
+     *
+     * 回执（[ACTION_RESULT]）与事件（[ACTION_DOWNGRADED] 等）都走这里，保证「定向」的判定只有一份：
+     * 两处各自判断迟早会漂移成一个定向、一个隐式。
+     */
+    fun resultTarget(context: Context): String? {
+        // 命中过的包缓存起来：采样事件每轮监控都要发一次，每次都做两趟 getPackageInfo 是白花的 IPC。
+        // 只缓存「找到了」—— 缓存 null 会让「先开监控、后装 Tasker」的用户永远收不到事件。
+        cachedTarget?.let { return it }
+        val pm = context.applicationContext.packageManager
+        val found = RESULT_TARGET_PACKAGES.firstOrNull { pkg ->
+            // NameNotFoundException 也在 runCatching 里：没装就是没装，不需要区分。
+            runCatching { pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0L)) }.isSuccess
+        }
+        cachedTarget = found
+        return found
+    }
+
+    /** [resultTarget] 的命中缓存；只存非 null，Tasker 被卸载后最多发到空包（系统静默丢弃）。 */
+    @Volatile
+    private var cachedTarget: String? = null
 
     /**
      * 全部接收侧 action 的规格表（兼容别名，等价于顶层 [TASKER_ACTION_SPECS]）。
@@ -215,54 +282,64 @@ data class TaskerActionSpec(
     val example: String,
 )
 
-/** 全部接收侧 action 的规格表，顺序与文档一致。 */
+/**
+ * 全部接收侧 action 的规格表，顺序与文档一致。
+ *
+ * 写类 action 的 adb 示例末尾都带 `--es netpilot.token 口令`：`adb shell` 的身份是 shell（uid 2000），
+ * 不是本应用 uid，走不了「同 uid 免口令」那条快速路径，不带口令会被直接拒绝。
+ * 口令怎么取见 [TaskerGate.token] 与 docs/TASKER.md 第 3.4 节。
+ */
 val TASKER_ACTION_SPECS: List<TaskerActionSpec> = listOf(
     TaskerActionSpec(
         TaskerContract.ACTION_SET_NETWORK_MODE,
         "切换制式（裸值）",
         "netpilot.sub_id (Int，必填) + netpilot.mode_value (Int，必填，0..33)",
         "adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_NETWORK_MODE " +
-            "--ei netpilot.sub_id 1 --ei netpilot.mode_value 11",
+            "--ei netpilot.sub_id 1 --ei netpilot.mode_value 11 " +
+            "--es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_SET_PRESET,
         "切换制式（预设名）",
         "netpilot.sub_id (Int，必填) + netpilot.preset (String，必填：5g/5g_only/4g/4g_only/3g/2g)",
         "adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_PRESET " +
-            "--ei netpilot.sub_id 1 --es netpilot.preset 4g_only",
+            "--ei netpilot.sub_id 1 --es netpilot.preset 4g_only " +
+            "--es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_TOGGLE_AUTO_DOWNGRADE,
         "反转自动降级开关",
         "（无参数）",
-        "adb shell am broadcast -a io.github.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE",
+        "adb shell am broadcast -a io.github.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE " +
+            "--es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_SET_AUTO_DOWNGRADE,
         "设置自动降级开关",
         "netpilot.enabled (Boolean，必填)",
         "adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_AUTO_DOWNGRADE " +
-            "--ez netpilot.enabled true",
+            "--ez netpilot.enabled true --es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_SET_DATA_SIM,
         "切换默认数据卡",
         "netpilot.sub_id (Int，必填)",
         "adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_DATA_SIM " +
-            "--ei netpilot.sub_id 2",
+            "--ei netpilot.sub_id 2 --es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_SWITCH_DATA_SIM,
         "双卡一键互换",
         "（无参数）",
-        "adb shell am broadcast -a io.github.katiusu.netpilot.action.SWITCH_DATA_SIM",
+        "adb shell am broadcast -a io.github.katiusu.netpilot.action.SWITCH_DATA_SIM " +
+            "--es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_LOCK_LTE,
         "锁定 / 恢复仅 4G",
         "netpilot.lock (Boolean，必填：true=锁仅 4G，false=恢复运营商默认)",
         "adb shell am broadcast -a io.github.katiusu.netpilot.action.LOCK_LTE " +
-            "--ez netpilot.lock true",
+            "--ez netpilot.lock true --es netpilot.token 口令",
     ),
     TaskerActionSpec(
         TaskerContract.ACTION_SAMPLE_NOW,

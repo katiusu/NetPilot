@@ -43,6 +43,16 @@ object DataCardEngine {
     private const val MODE_WRITE_THROTTLE_MS = 60_000L
 
     /**
+     * 全局防抖（秒级）。**只**用来挡住「同一轮 / 相邻轮重复写」，不再当作规则冷却：
+     * 规则冷却按 (ruleId, targetSubId) 单独记，见 [lastRuleApplyAt]。
+     */
+    private const val APPLY_DEBOUNCE_MS = 5_000L
+
+    /** 还原失败后的重试退避：第 n 次失败等 BASE×2^(n-1)，上限 MAX。 */
+    private const val RESTORE_RETRY_BASE_MS = 60_000L
+    private const val RESTORE_RETRY_MAX_MS = 15 * 60_000L
+
+    /**
      * 当前生效的匹配：命中的规则 + 这次要切的卡。
      *
      * 必须把目标卡一起记下来 —— 否则「已经切过去了」的短路判断和离开 Wi-Fi
@@ -54,15 +64,31 @@ object DataCardEngine {
 
     @Volatile private var lastApplyAtMs = 0L
 
-    /** 每个 subId 上次写制式的时间（Wi-Fi 降级用）。 */
-    private val lastModeWriteAt = mutableMapOf<Int, Long>()
+    /**
+     * 每条规则（按 ruleId + 目标卡）上次应用的时间，冷却以它为准。
+     *
+     * 以前冷却用的是全局 [lastApplyAtMs]：规则 A 应用后，规则 B（另一个 SSID / 另一张卡）
+     * 在 A 的冷却期内也会被压住，用户换个 Wi-Fi 规则就不生效。
+     */
+    private val lastRuleApplyAt = mutableMapOf<String, Long>()
 
     /**
-     * Wi-Fi 降级前的制式：subId → 制式裸值。
+     * 每个 subId 上次**尝试**写制式的时间（Wi-Fi 降级 + 规则写制式共用，避免两套节流互相打架）。
      *
-     * 存下来才能「断开 Wi-Fi 后还原」。没有它就只能一直停在 4G（旧实现的缺陷）。
+     * 记「尝试」而不是「成功」：失败也必须记时间。否则 60s 节流对失败尝试形同虚设，
+     * 秒级采样会一轮接一轮去 fork app_process 重刷（每次几十 MB RSS、几秒到十几秒）。
      */
-    private val savedModeBeforeWifiDowngrade = mutableMapOf<Int, Int>()
+    private val lastModeWriteAt = mutableMapOf<Int, Long>()
+
+    /** 还原失败次数与下次允许重试的时间（per subId），见 [restoreAfterWifiDowngrade]。 */
+    private val restoreFailures = mutableMapOf<Int, Int>()
+    private val restoreRetryAt = mutableMapOf<Int, Long>()
+
+    /**
+     * Wi-Fi 降级前的制式**落盘**在 [DataCardStore] 里（以前是这里的一张内存 Map）：
+     * 进程被杀或 App 被系统回收后，内存记录会连同「原来是什么制式」一起丢失，
+     * 用户就只能停在降级后的制式上。写入顺序也反了过来：先落盘再改制式。
+     */
 
     fun matchedRule(context: Context): DataCardRule? =
         activeMatch?.ruleId?.let { id -> DataCardStore.rules(context).firstOrNull { it.id == id } }
@@ -70,8 +96,12 @@ object DataCardEngine {
     fun reset() {
         activeMatch = null
         lastApplyAtMs = 0L
+        lastRuleApplyAt.clear()
         lastModeWriteAt.clear()
-        savedModeBeforeWifiDowngrade.clear()
+        restoreFailures.clear()
+        restoreRetryAt.clear()
+        // 降级前制式的记录刻意不清：它是「还原成什么」的唯一依据，
+        // 换了配置也要留着，等真的还原成功再由 restoreAfterWifiDowngrade 删掉。
     }
 
     /**
@@ -148,10 +178,15 @@ object DataCardEngine {
         // 少了这个短路，每次采样（秒级）都会去写一遍 setting。
         val sameMatch = activeMatch?.let { it.ruleId == rule.id && it.targetSubId == targetSubId } == true
         if (sameMatch && (targetSubId < 0 || targetSubId == current)) return null
-        if (now - lastApplyAtMs < cooldownMs) {
+
+        // 冷却按「这条规则 + 这张目标卡」记：规则之间互不牵连。
+        val cooldownKey = ruleKey(rule.id, targetSubId)
+        if (now - (lastRuleApplyAt[cooldownKey] ?: 0L) < cooldownMs) {
             LogStore.debug(TAG, "规则「${rule.name}」命中但仍在冷却（${rule.cooldownSec}s）")
             return null
         }
+        // 全局单值只剩秒级防抖：挡住同一轮采样里重复进入，不再压制别的规则。
+        if (now - lastApplyAtMs < APPLY_DEBOUNCE_MS) return null
 
         val notes = mutableListOf<String>()
         if (targetSubId >= 0 && targetSubId != current) {
@@ -165,11 +200,14 @@ object DataCardEngine {
         if (rule.targetModeValue > 0 && targetSubId >= 0) {
             val m = NetworkMode.fromValue(rule.targetModeValue)
             if (m != null && ControlManager.setMode(targetSubId, m)) {
+                // 规则刚写过这张卡的制式，记进 per-subId 节流，免得紧接着的单卡策略再写一遍。
+                lastModeWriteAt[targetSubId] = now
                 notes += "制式设为 ${m.shortLabel}"
             }
         }
         activeMatch = ActiveMatch(rule.id, targetSubId)
         lastApplyAtMs = now
+        lastRuleApplyAt[cooldownKey] = now
         if (notes.isEmpty()) return null
         return "Wi-Fi「${snap.wifiSsid ?: rule.name}」命中规则「${rule.name}」：${notes.joinToString("，")}"
     }
@@ -214,7 +252,7 @@ object DataCardEngine {
 
             if (DataCardStrategy.WIFI_DOWNGRADE !in active) {
                 // 策略没开：如果之前降级过，就要还原。
-                restoreAfterWifiDowngrade(sim, now)?.let { out += it }
+                restoreAfterWifiDowngrade(context, sim, now)?.let { out += it }
                 continue
             }
 
@@ -222,16 +260,17 @@ object DataCardEngine {
             if (now - throttle < MODE_WRITE_THROTTLE_MS) continue
 
             if (snap.isWifi) {
-                applyWifiDowngrade(sim, policy, now)?.let { out += it }
+                applyWifiDowngrade(context, sim, policy, now)?.let { out += it }
             } else {
-                restoreAfterWifiDowngrade(sim, now)?.let { out += it }
+                restoreAfterWifiDowngrade(context, sim, now)?.let { out += it }
             }
         }
         return out
     }
 
-    /** 连上 Wi-Fi：降到 [SimPolicy.downgradeModeValue]，并记下降级前的制式。 */
+    /** 连上 Wi-Fi：降到 [SimPolicy.downgradeModeValue]，并**先落盘**降级前的制式。 */
     private suspend fun applyWifiDowngrade(
+        context: Context,
         sim: SimSlotInfo,
         policy: SimPolicy,
         now: Long,
@@ -241,25 +280,65 @@ object DataCardEngine {
         val m = NetworkMode.fromValue(target) ?: return null
         val cur = ControlManager.getMode(sim.subId)
         if (cur == target) return null
-        if (!ControlManager.setMode(sim.subId, m)) return null
+        // 顺序很重要：先把「原来是什么」落盘，再改制式。反过来的话，写成功的一瞬间进程被杀
+        // 就永远不知道原值了（旧实现只存在内存里，且是先改后记）。
         // cur < 0 表示读不到当前制式（特权通道不可用），此时不记录，免得还原成垃圾值。
-        if (cur > 0 && sim.subId !in savedModeBeforeWifiDowngrade) {
-            savedModeBeforeWifiDowngrade[sim.subId] = cur
+        if (cur > 0 && DataCardStore.savedDowngradeModes(context)[sim.subId] == null) {
+            DataCardStore.putSavedDowngradeMode(context, sim.subId, cur, now)
         }
+        // 先记时间再写：失败也算一次尝试，否则下一轮秒级采样会立刻再 fork 一次特权进程。
         lastModeWriteAt[sim.subId] = now
+        if (!ControlManager.setMode(sim.subId, m)) return null
+        // 这次写成功了，历史失败计数与退避作废。
+        restoreFailures.remove(sim.subId)
+        restoreRetryAt.remove(sim.subId)
         return "${sim.title} 因 Wi-Fi 连接降为 ${m.shortLabel}"
     }
 
-    /** 离开 Wi-Fi（或关掉这项策略）：把制式还回降级前记录的值。只还原一次。 */
-    private suspend fun restoreAfterWifiDowngrade(sim: SimSlotInfo, now: Long): String? {
-        val saved = savedModeBeforeWifiDowngrade.remove(sim.subId) ?: return null
-        val m = NetworkMode.fromValue(saved) ?: return null
-        if (ControlManager.getMode(sim.subId) == saved) return null
-        lastModeWriteAt[sim.subId] = now
-        return if (ControlManager.setMode(sim.subId, m)) {
-            "${sim.title} Wi-Fi 降级结束（已离开 Wi-Fi 或策略关闭），制式还原为 ${m.shortLabel}"
-        } else {
-            "${sim.title} Wi-Fi 降级结束，但制式还原失败"
+    /**
+     * 离开 Wi-Fi（或关掉这项策略）：把制式还回降级前记录的值。
+     *
+     * 记录**写成功之后才删**：旧实现先 remove 再 setMode，写失败就再也想不起原来是什么制式，
+     * 只能停在降级后的模式上。失败时保留记录、按指数退避重试，并在日志里留下失败次数。
+     */
+    private suspend fun restoreAfterWifiDowngrade(
+        context: Context,
+        sim: SimSlotInfo,
+        now: Long,
+    ): String? {
+        val saved = DataCardStore.savedDowngradeModes(context)[sim.subId] ?: return null
+        val retryAt = restoreRetryAt[sim.subId] ?: 0L
+        if (now < retryAt) return null
+        val m = NetworkMode.fromValue(saved.modeValue) ?: run {
+            // 记录里的值在本机模式表里已经不存在（换机 / 版本回退），留着也没法还原。
+            LogStore.warn(TAG, "${sim.title} 降级前的制式 ${saved.modeValue} 不在模式表内，丢弃这条记录")
+            DataCardStore.removeSavedDowngradeMode(context, sim.subId)
+            return null
         }
+        if (ControlManager.getMode(sim.subId) == saved.modeValue) {
+            // 已经是原制式（比如用户手动改回来了）：记录用完即弃，不重复写。
+            DataCardStore.removeSavedDowngradeMode(context, sim.subId)
+            return null
+        }
+        if (ControlManager.setMode(sim.subId, m)) {
+            lastModeWriteAt[sim.subId] = now
+            restoreFailures.remove(sim.subId)
+            restoreRetryAt.remove(sim.subId)
+            DataCardStore.removeSavedDowngradeMode(context, sim.subId)
+            return "${sim.title} Wi-Fi 降级结束（已离开 Wi-Fi 或策略关闭），制式还原为 ${m.shortLabel}"
+        }
+        val failures = (restoreFailures[sim.subId] ?: 0) + 1
+        restoreFailures[sim.subId] = failures
+        val backoffMs = minOf(RESTORE_RETRY_BASE_MS shl (failures - 1).coerceAtMost(4), RESTORE_RETRY_MAX_MS)
+        restoreRetryAt[sim.subId] = now + backoffMs
+        LogStore.warn(
+            TAG,
+            "${sim.title} 制式还原失败（连续第 ${failures} 次），保留降级前记录 mode=${saved.modeValue}，" +
+                "${backoffMs / 1000}s 后重试"
+        )
+        return "${sim.title} Wi-Fi 降级结束，但制式还原失败（已排队 ${backoffMs / 1000}s 后重试）"
     }
+
+    /** 规则冷却键：(ruleId, targetSubId)。同一个规则切不同卡 / 不同规则切同一张卡都互不影响。 */
+    private fun ruleKey(ruleId: String, targetSubId: Int): String = ruleId + "@" + targetSubId
 }

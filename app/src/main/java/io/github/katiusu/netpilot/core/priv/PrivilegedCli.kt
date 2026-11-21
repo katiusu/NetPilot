@@ -1,7 +1,9 @@
 package io.github.katiusu.netpilot.core.priv
 
+import android.telephony.SubscriptionManager
 import android.util.Log
 import io.github.katiusu.netpilot.core.mode.NetworkModeBitmaskMapper
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
 /**
@@ -32,6 +34,15 @@ import java.util.concurrent.TimeUnit
 object PrivilegedCli {
 
     private const val TAG = "NetPilot"
+
+    /** 单条外部命令的硬超时：读管道与等退出共用这一个预算。 */
+    private const val COMMAND_TIMEOUT_SEC = 5L
+
+    /** 超时强杀后留给读线程收尾的时间（它是 daemon 线程，拿不到也不会拖住进程退出）。 */
+    private const val READER_DRAIN_MS = 500L
+
+    /** 超时统一用的退出码。 */
+    private const val COMMAND_TIMEOUT_EXIT = -1
 
     @JvmStatic
     fun main(args: Array<String>) {
@@ -99,8 +110,9 @@ object PrivilegedCli {
      * （移植自 Network_Enhance，MIT）。
      *
      * 子进程里起 `settings` 是允许的 —— 不要在 app 进程里做这件事。
-     * 兜底写的是 AOSP 的 `preferred_network_mode`（主卡）；双卡场景下再写一份
-     * `preferred_network_mode1`（副卡），确保主副卡都被锁到同一个模式。
+     * 兜底写的键**按 subId 映射到卡槽**（规则见 [settingsKeyFor]）：槽 0 用不带后缀的
+     * preferred_network_mode，槽 N 用 preferred_network_modeN。以前无论给哪张卡都先写
+     * 不带后缀的键，于是给卡 2 改制式实际改的是卡 1，还因为「命令退出码 0」报成功。
      */
     private fun setModeWithFallback(subId: Int, modeValue: Int): Boolean {
         WriteDiag.detail("cli 开始切换：先走 ITelephony 三条写入策略")
@@ -126,31 +138,42 @@ object PrivilegedCli {
             )
             return true
         }
-        var settingsWhy = ""
-        if (writeSettings("preferred_network_mode", modeValue) { settingsWhy = it }) {
-            WriteDiag.always("cli ITelephony 全部失败，回落 settings put global preferred_network_mode=$modeValue（命令退出码 0）")
-            return true
+        // 1.6.x：settings 兜底的键必须跟着 subId 走。槽位映射不出来时不猜 ——
+        // 猜错的代价就是「改了另一张卡还报成功」，那正是这次要修的缺陷。
+        val key = settingsKeyFor(subId)
+        if (key == null) {
+            WriteDiag.warn(
+                "cli 拿不到 subId=$subId 对应的卡槽，无法确定 settings 键名；跳过 settings 兜底" +
+                    "（不猜键名，避免写到别的卡上）"
+            )
+            return false
         }
-        val slotCount = SubscriptionSwitcher.activeSlotList().size
-        WriteDiag.detail("cli 活动卡槽数=$slotCount")
-        var secondaryWhy = "未执行（活动卡槽数=$slotCount ≤ 1）"
-        if (slotCount > 1) {
-            var why = ""
-            if (writeSettings("preferred_network_mode1", modeValue) { why = it }) {
-                WriteDiag.always("cli 主卡字段失败，回落写副卡字段 preferred_network_mode1=$modeValue（命令退出码 0）")
-                return true
-            }
-            secondaryWhy = "已尝试，失败：" + why
+        var settingsWhy = ""
+        if (writeSettings(key, modeValue) { settingsWhy = it }) {
+            WriteDiag.always("cli ITelephony 全部失败，回落 settings put global $key=$modeValue（写入后已回读一致）")
+            return true
         }
         Log.w(TAG, "setmode($subId, $modeValue): all strategies failed")
         WriteDiag.warn(
             "cli 所有写入策略全部失败 subId=$subId mode=$modeValue；为什么：" +
                 "① ITelephony 三条策略全 Miss（逐策略原因见上一条警告）；" +
                 "② 权威存储：" + authStoreWhy.ifEmpty { "未执行" } + "；" +
-                "③ settings preferred_network_mode：" + settingsWhy.ifEmpty { "未执行" } + "；" +
-                "④ settings preferred_network_mode1：$secondaryWhy"
+                "③ settings $key：" + settingsWhy.ifEmpty { "未执行" }
         )
         return false
+    }
+
+    /**
+     * subId → settings 键名；映射不出来返回 null。
+     *
+     * 规则与项目现有的读法一致（RootController.slotSuffix 就是按这条拼键的）：AOSP 把这一项
+     * 按 phoneId（= 卡槽）分键 —— 槽 0 是不带后缀的 preferred_network_mode，槽 N 是
+     * preferred_network_modeN。这里必须跟读的那一套一致，否则写的是别人的键。
+     */
+    private fun settingsKeyFor(subId: Int): String? {
+        val slot = runCatching { SubscriptionManager.getSlotIndex(subId) }.getOrNull() ?: -1
+        if (slot < 0) return null
+        return if (slot > 0) "preferred_network_mode$slot" else "preferred_network_mode"
     }
 
     /**
@@ -232,77 +255,141 @@ object PrivilegedCli {
     }
 
     /**
-     * 起一个系统命令并等它结束，返回 (退出码, 合并后的输出)。
+     * 起一个系统命令并等它结束，返回 (退出码, 合并后的输出)；超时统一记为退出码 -1。
      *
-     * 与 [writeSettings] 同一套写法（先读 EOF 再 waitFor，避免管道写满死锁），
-     * 抽出来给 `content` 命令复用 —— `content` 没有 API、也没有 SDK 常量，只能走命令行。
+     * 抽出来给 content 命令复用 —— content 没有 API、也没有 SDK 常量，只能走命令行。
      */
-    private fun runTool(vararg argv: String): Pair<Int, String> = try {
-        // 详细日志：命令原文、耗时、是否超时、以及**完整**输出（分块）。
-        // 为什么要耗时：`content` / `settings` 都可能被 provider 卡住几秒，用户报「切换很慢、
-        // 一阵一阵的」时，只有耗时能指出是哪一步在等。
+    private fun runTool(vararg argv: String): Pair<Int, String> {
+        return try {
+            // 详细日志（命令原文、耗时、是否超时、完整输出）都在 [runCommand] 里。
+            val outcome = runCommand(*argv)
+            if (outcome.timedOut) {
+                WriteDiag.warn(
+                    "cli " + (argv.firstOrNull() ?: "?") + " 超过 " + COMMAND_TIMEOUT_SEC + " 秒未结束，已强制结束；" +
+                        "只拿到 " + outcome.output.length + " 字符输出"
+                )
+            }
+            outcome.exitCode to outcome.output
+        } catch (e: Throwable) {
+            WriteDiag.warn("cli " + argv.firstOrNull() + " 抛异常：" + e.javaClass.simpleName + ": " + e.message)
+            -1 to (e.javaClass.simpleName + ": " + e.message)
+        }
+    }
+
+    /** 一次系统命令的结果。[timedOut] 为真表示到点被强制结束，[output] 是已经读到的那部分。 */
+    private data class CommandOutcome(val exitCode: Int, val output: String, val timedOut: Boolean)
+
+    /**
+     * 起一个系统命令并等它结束；读管道与等退出共用一个超时预算。
+     *
+     * 为什么不能用 bufferedReader().use { it.readText() }：它会一直阻塞到 EOF，特权进程卡住时
+     * 后面的 waitFor(5s) 永远轮不到 —— 调用方（设置页 / QS 磁贴）就挂死，而 "读完了再等超时"
+     * 这种写法等于让超时变成死代码。这里读线程只负责泵数据，主线程用有界 join 等它，
+     * 到点 destroyForcibly 拆掉管道；已经读到的部分照旧返回，并由 [CommandOutcome.timedOut]
+     * 明确标成超时，不吞掉。
+     */
+    private fun runCommand(vararg argv: String): CommandOutcome {
         val startedAt = System.currentTimeMillis()
         WriteDiag.detail("cli 执行命令：" + argv.joinToString(" "))
         val process = ProcessBuilder(*argv).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-        val finished = process.waitFor(5, TimeUnit.SECONDS)
-        if (!finished) process.destroy()
-        val code = if (finished) process.exitValue() else -1
+        val sink = ByteArrayOutputStream()
+        val reader = Thread {
+            try {
+                process.inputStream.use { input ->
+                    val buffer = ByteArray(4096)
+                    while (true) {
+                        val read = try {
+                            input.read(buffer)
+                        } catch (_: Throwable) {
+                            -1 // 超时 destroyForcibly 之后流会直接断开，这不是错误
+                        }
+                        if (read < 0) break
+                        synchronized(sink) { sink.write(buffer, 0, read) }
+                    }
+                }
+            } catch (_: Throwable) {
+                // 管道已断（超时路径）时不做补救：已读到的内容由 sink 交出
+            }
+        }
+        reader.name = "np-cli-reader"
+        reader.isDaemon = true
+        reader.start()
+
+        val budgetMs = COMMAND_TIMEOUT_SEC * 1000L
+        val exited = process.waitFor(COMMAND_TIMEOUT_SEC, TimeUnit.SECONDS)
+        // 进程已退出时管道里还有数据要收尾，多给一小段时间；还没退出就只剩共享预算。
+        val remaining = if (exited) READER_DRAIN_MS else (budgetMs - (System.currentTimeMillis() - startedAt)).coerceAtLeast(0L)
+        // Thread.join(long) 在 Kotlin 里返回 Unit（不是「是否已汇合」的 Boolean），
+        // 所以判「排空了没有」只能看读线程自己还在不在。
+        reader.join(remaining)
+        val timedOut = !exited || reader.isAlive
+        if (timedOut) {
+            process.destroyForcibly()
+            // 只等一小会儿：读线程是 daemon，真拿不到锁也不会拖住进程退出
+            reader.join(READER_DRAIN_MS)
+        }
+        val code = if (exited) process.exitValue() else COMMAND_TIMEOUT_EXIT
+        val output = String(synchronized(sink) { sink.toByteArray() }, Charsets.UTF_8).trim()
         WriteDiag.detail(
             "cli 命令结束：exit=$code 耗时=" + (System.currentTimeMillis() - startedAt) + "ms" +
-                (if (finished) "" else "（5 秒超时，已 destroy）")
+                (if (timedOut) "（" + COMMAND_TIMEOUT_SEC + " 秒超时，已 destroyForcibly）" else "")
         )
         WriteDiag.detailBlock("cli 原始输出（" + (argv.firstOrNull() ?: "?") + "）", output)
-        code to output
-    } catch (e: Throwable) {
-        WriteDiag.warn("cli " + argv.firstOrNull() + " 抛异常：" + e.javaClass.simpleName + ": " + e.message)
-        -1 to (e.javaClass.simpleName + ": " + e.message)
+        return CommandOutcome(code, output, timedOut)
     }
 
-    private fun writeSettings(key: String, value: Int, onFailure: (String) -> Unit = {}): Boolean = try {
-        val startedAt = System.currentTimeMillis()
-        WriteDiag.detail("cli 执行命令：settings put global $key $value")
-        val process = ProcessBuilder("settings", "put", "global", key, value.toString())
-            .redirectErrorStream(true)
-            .start()
-        // 先读到 EOF（≈ 进程退出），再 waitFor，避免管道写满导致死锁
-        val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-        val finished = process.waitFor(5, TimeUnit.SECONDS)
-        val ok = finished && process.exitValue() == 0
-        if (!finished) process.destroy()
-        if (!ok) {
-            // 1.5.1：把这一步为什么失败交给结论行（过程原文仍留在下面的 always/detail 里）。
-            // 失败时的原始退出码与输出两种模式都要记。
+    /**
+     * settings put + 写后回读，两步都带超时。
+     *
+     * 退出码 0 只说明 SettingsProvider 收下了这条记录，不代表那一列真的变成了目标值 ——
+     * 键不可写、行被 provider 忽略也会返回 0。所以写之后必须 settings get 回读，
+     * 读不到或读回的值不是目标值一律算失败，绝不因为「命令跑通了」就报成功。
+     */
+    private fun writeSettings(key: String, value: Int, onFailure: (String) -> Unit = {}): Boolean {
+        return try {
+            val put = runCommand("settings", "put", "global", key, value.toString())
+            val ok = !put.timedOut && put.exitCode == 0
+            if (!ok) {
+                // 1.5.1：把这一步为什么失败交给结论行（过程原文仍留在 runCommand 的 detail 里）。
+                val why = if (put.timedOut) {
+                    COMMAND_TIMEOUT_SEC.toString() + " 秒超时被 destroyForcibly"
+                } else {
+                    "exit=" + put.exitCode
+                }
+                WriteDiag.failure(
+                    "cli settings put global $key $value 失败：" + why +
+                        (if (put.output.isEmpty()) "" else "，输出=" + put.output.take(120))
+                )
+                onFailure(
+                    "settings put global $key $value 未成功（" + why +
+                        (if (put.output.isEmpty()) "" else "，输出=" + put.output.take(120)) + "）"
+                )
+                return false
+            }
+            Log.i(TAG, "settings put global $key $value -> ok=true out=${put.output}")
+            val read = runCommand("settings", "get", "global", key)
+            val readBack = read.output.trim().toIntOrNull()
+            if (!read.timedOut && read.exitCode == 0 && readBack == value) {
+                WriteDiag.detail("cli settings get global $key -> $readBack（与目标 $value 一致）")
+                return true
+            }
+            // 回读不一致的原始证据（退出码 + 原文 + 解析值）两种模式都要能看到。
+            val readWhy = if (read.timedOut) "回读超时" else "回读 exit=" + read.exitCode
             WriteDiag.failure(
-                "cli settings put global $key $value 失败：" +
-                    (if (finished) "exit=" + process.exitValue() else "5 秒超时被 kill") +
-                    (if (output.isEmpty()) "" else "，输出=" + output.take(120))
+                "cli settings $key 写入后回读不一致：回读=" + (readBack?.toString() ?: "读不到") +
+                    " 原文=" + WriteDiag.inlineRaw(read.output, 240) + " 期望=$value（$readWhy）"
             )
             onFailure(
-                "settings put global $key $value 未成功（" +
-                    (if (finished) "exit=" + process.exitValue() else "5 秒超时被 kill") +
-                    (if (output.isEmpty()) "" else "，输出=" + output.take(120)) + "）"
+                "settings $key 写后回读 " + (readBack?.toString() ?: "读不到") +
+                    "，与目标 $value 不一致（$readWhy）"
             )
+            false
+        } catch (e: Throwable) {
+            Log.w(TAG, "settings put global $key $value failed: ${e.javaClass.simpleName}: ${e.message}")
+            WriteDiag.warn("cli settings put global $key $value 抛异常：${e.javaClass.simpleName}: ${e.message}")
+            onFailure("settings put global $key $value 抛异常：${e.javaClass.simpleName}: ${e.message}")
+            false
         }
-        WriteDiag.detail(
-            "cli 命令结束：settings put global $key $value exit=" + (if (finished) process.exitValue() else -1) +
-                " 耗时=" + (System.currentTimeMillis() - startedAt) + "ms" +
-                (if (finished) "" else "（5 秒超时，已 destroy）")
-        )
-        WriteDiag.detailBlock("cli 原始输出（settings）", output)
-        Log.i(TAG, "settings put global $key $value -> ok=$ok out=$output")
-        // 退出码 0 只说明 SettingsProvider 收下了这条记录，**不代表 modem 换了制式** ——
-        // 这正是回读能通过却切不动制式的机制之一。
-        // 1.5.1：这是过程原文（原始退出码与输出），归详细诊断开关管；失败原因由 onFailure
-        // 交给上层结论行，成功时的结论由 setModeWithFallback / dispatch 的 always 行承担。
-        WriteDiag.detail("cli settings put global $key $value -> ok=$ok${
-            if (output.isEmpty()) "" else " out=$output"
-        }")
-        ok
-    } catch (e: Throwable) {
-        Log.w(TAG, "settings put global $key $value failed: ${e.javaClass.simpleName}: ${e.message}")
-        WriteDiag.warn("cli settings put global $key $value 抛异常：${e.javaClass.simpleName}: ${e.message}")
-        onFailure("settings put global $key $value 抛异常：${e.javaClass.simpleName}: ${e.message}")
-        false
     }
+
 }

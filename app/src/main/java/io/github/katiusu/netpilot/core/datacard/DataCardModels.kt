@@ -131,7 +131,12 @@ data class DataCardRule(
     val priority: Int = 0,
     /** 两次切换之间的最小间隔，防止在信号边缘反复横跳。 */
     val cooldownSec: Int = 120,
-    /** 离开该 Wi-Fi 后是否回到「默认卡」（[DataCardStore.homeSubId]）。 */
+    /**
+     * 离开该 Wi-Fi 后是否回到**用户设定**的回切卡（[DataCardStore.homeSubId]）。
+     *
+     * 用户没设过时它返回 -1 哨兵（[DataCardStore.HOME_SUB_UNSET]），表示「还没选过」，此时不回切；
+     * 千万别把这个哨兵当成「当前默认卡」—— 那样 home 恒等于当前卡，回切永远等于原地不动。
+     */
     val revertOnLeave: Boolean = true,
 )
 

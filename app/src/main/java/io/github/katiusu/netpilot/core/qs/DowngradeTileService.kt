@@ -29,7 +29,7 @@ import kotlinx.coroutines.withContext
 class DowngradeTileService : TileService() {
 
     /** 见 [NetworkModeTileService] 的线程模型说明。 */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onStartListening() {
         super.onStartListening()

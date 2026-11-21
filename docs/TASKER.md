@@ -1,7 +1,7 @@
 # NetPilot × Tasker / Locale 插件接入文档
 
 > 本文里的 **action 名、extra 键、类型** 全部与代码中的
-> `app/src/main/java/com/katiusu/netpilot/core/tasker/TaskerContract.kt` 一一对应。
+> `app/src/main/java/io/github/katiusu/netpilot/core/tasker/TaskerContract.kt` 一一对应。
 > 代码改了本文却没改，属于 bug —— `TaskerContract.TASKER_ACTION_SPECS` 就是本文
 > 第 3 节表格的「单一事实来源」（Locale 编辑界面也读它）。
 
@@ -21,7 +21,7 @@ NetPilot 对外提供两条自动化通道，可以单独用，也可以混用�
 >
 > 到「功能页 → 自动化接口 → 启用 Tasker / Locale 接口」打开它，本文剩下的内容才成立。
 > 关着时命令接收器、`LocaleFireReceiver` 与插件配置界面都被**系统层面禁用**：
-> Tasker 动作报找不到组件，`adb shell am broadcast … -p com.katiusu.netpilot` 也不会有任何反应
+> Tasker 动作报找不到组件，`adb shell am broadcast … -p io.github.katiusu.netpilot` 也不会有任何反应
 > （日志页同样不新增条目，因为广播根本没派发到应用）。
 >
 > 这么做的原因：只有「禁用组件」才能让 Tasker 广播不唤醒应用；「收到命令再判开关」
@@ -52,7 +52,7 @@ NetPilot 对外提供两条自动化通道，可以单独用，也可以混用�
 
 ## 2. 广播命令总表（Tasker → NetPilot）
 
-所有 action 都在 `com.katiusu.netpilot.action.*` 命名空间下。
+所有 action 都在 `io.github.katiusu.netpilot.action.*` 命名空间下。
 
 | # | Action | 参数（类型） | 说明 |
 | --- | --- | --- | --- |
@@ -65,6 +65,9 @@ NetPilot 对外提供两条自动化通道，可以单独用，也可以混用�
 | 7 | `LOCK_LTE` | `netpilot.lock` (Boolean) | true=锁「仅 4G」，false=恢复运营商默认 |
 | 8 | `SAMPLE_NOW` | 无 | 立即采样一次并回执快照 |
 | 9 | `GET_STATUS` | 无 | 只读当前状态快照（不触发采样） |
+
+**写类 / 读类**：1–7 是**写类**命令（会改网络制式、默认数据卡或降级开关），必须带
+`netpilot.token`，否则直接回失败；8–9 是**只读**命令，随时可以发。口令从哪来、怎么配，见 3.4。
 
 **预设名**（`netpilot.preset`，大小写不敏感，`-` 与空格等价于 `_`）：
 
@@ -92,38 +95,42 @@ NetPilot 对外提供两条自动化通道，可以单独用，也可以混用�
 
 ### 3.1 adb（调试 / 直接验证权限链路）
 
+> 写类命令（总表 1–7）还要带口令：在示例末尾追加 `--es netpilot.token <口令>`，
+> 否则会被拒绝（`adb shell` 是 uid 2000，走不了「同 uid 免口令」那条路）。口令怎么取见 3.4。
+> 本节示例已按代码里的真实 action 前缀（`io.github.katiusu.netpilot.action.*`）写好，可直接复制。
+
 ```bash
 # 1) 按裸值切制式：卡 1 锁「仅 4G」
-adb shell am broadcast -a com.katiusu.netpilot.action.SET_NETWORK_MODE \
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_NETWORK_MODE \
     --ei netpilot.sub_id 1 --ei netpilot.mode_value 11
 
 # 2) 按预设切制式
-adb shell am broadcast -a com.katiusu.netpilot.action.SET_PRESET \
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_PRESET \
     --ei netpilot.sub_id 1 --es netpilot.preset 4g_only
 
 # 3) 反转自动降级开关
-adb shell am broadcast -a com.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE
+adb shell am broadcast -a io.github.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE
 
 # 4) 显式开/关自动降级
-adb shell am broadcast -a com.katiusu.netpilot.action.SET_AUTO_DOWNGRADE \
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_AUTO_DOWNGRADE \
     --ez netpilot.enabled true
 
 # 5) 默认数据卡切到卡 2
-adb shell am broadcast -a com.katiusu.netpilot.action.SET_DATA_SIM \
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_DATA_SIM \
     --ei netpilot.sub_id 2
 
 # 6) 双卡一键互换
-adb shell am broadcast -a com.katiusu.netpilot.action.SWITCH_DATA_SIM
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SWITCH_DATA_SIM
 
 # 7) 游戏模式：锁「仅 4G」/ 恢复
-adb shell am broadcast -a com.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock true
-adb shell am broadcast -a com.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock false
+adb shell am broadcast -a io.github.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock true
+adb shell am broadcast -a io.github.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock false
 
 # 8) 立即采样一次
-adb shell am broadcast -a com.katiusu.netpilot.action.SAMPLE_NOW
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SAMPLE_NOW
 
 # 9) 读状态（不采样）
-adb shell am broadcast -a com.katiusu.netpilot.action.GET_STATUS
+adb shell am broadcast -a io.github.katiusu.netpilot.action.GET_STATUS
 ```
 
 类型开关：`--es` = String，`--ei` = Int，`--ez` = Boolean。
@@ -133,12 +140,12 @@ adb shell am broadcast -a com.katiusu.netpilot.action.GET_STATUS
 所以排查时可以直接用上面的命令。要在 Android 14 上百分百确定送达，加上组件名更稳：
 
 ```bash
-adb shell am broadcast -n com.katiusu.netpilot/.core.tasker.TaskerCommandReceiver \
-    -a com.katiusu.netpilot.action.SET_PRESET --ei netpilot.sub_id 1 --es netpilot.preset 4g_only
+adb shell am broadcast -n io.github.katiusu.netpilot/.core.tasker.TaskerCommandReceiver \
+    -a io.github.katiusu.netpilot.action.SET_PRESET --ei netpilot.sub_id 1 --es netpilot.preset 4g_only
 ```
 
 （`-n` 里的 `.core.tasker.TaskerCommandReceiver` 会展开成
-`com.katiusu.netpilot.core.tasker.TaskerCommandReceiver`。）
+`io.github.katiusu.netpilot.core.tasker.TaskerCommandReceiver`。）
 
 ### 3.2 Tasker「发送意图」（Send Intent）
 
@@ -146,9 +153,9 @@ Tasker → 任务 → `+` → **发送意图（Send Intent）**，字段这样�
 
 | 字段 | 填什么 |
 | --- | --- |
-| 动作 / Action | 例如 `com.katiusu.netpilot.action.SET_PRESET` |
-| 包 / Package | `com.katiusu.netpilot` ← **建议必填**（避开后台隐式广播限制） |
-| 类 / Class | 留空；想更稳可填 `com.katiusu.netpilot.core.tasker.TaskerCommandReceiver`（与 Package 二选一即可，也可以同时填） |
+| 动作 / Action | 例如 `io.github.katiusu.netpilot.action.SET_PRESET` |
+| 包 / Package | `io.github.katiusu.netpilot` ← **建议必填**（避开后台隐式广播限制） |
+| 类 / Class | 留空；想更稳可填 `io.github.katiusu.netpilot.core.tasker.TaskerCommandReceiver`（与 Package 二选一即可，也可以同时填） |
 | 目标 / Target | `广播接收器 / Broadcast Receiver` |
 | 额外 / Extra | 一行一个 `键:值`，例如 `netpilot.sub_id:1`、`netpilot.preset:4g_only`、`netpilot.enabled:true` |
 | 类别 / Category、数据类型 / Mime、数据 / Data | 都留空 |
@@ -158,19 +165,56 @@ Extra 的**类型**：Tasker 按值自动判断 —— 纯数字（`1`）→ Int
 **不要写成 `01` 或 `1.0`**，那会被当成字符串或 Double，接收器读不到就按「缺参数」处理，
 回执里会说缺少 `netpilot.sub_id`。
 
-任务失败排查：接收器的回执广播 `com.katiusu.netpilot.event.RESULT` 里有中文原因，
+任务失败排查：接收器的回执广播 `io.github.katiusu.netpilot.event.RESULT` 里有中文原因，
 用下面的「Intent Received」接一下就能看到（`netpilot.result_message`）。
 
 ### 3.3 更省事的方式：Locale 插件
 
 推荐日常用插件（第 6 节），参数在图形界面里选，不用手打键名和类型。
 
+### 3.4 写类命令必须带口令（`netpilot.token`）
+
+接口开关打开时，NetPilot 生成一个随机口令（UUID）存进自己的配置（键 `np_tasker_token`）。
+关闭接口**不会**清掉它 —— 关掉再打开还是同一个口令，已经配好的意图不用改一个字。
+
+- 写类命令（总表 1–7）必须带 `netpilot.token`（String），且与存储值完全一致。缺失或不匹配
+  会被直接拒绝：回执里是 `鉴权失败：…`，日志页同时留一条
+  「拒绝命令 …（发送方 uid=… pkg=…）」。
+- 只读命令（`SAMPLE_NOW` / `GET_STATUS`）不需要口令。
+- Locale 插件（3.3）走另一条路径：配置由 Tasker 保存并回放，没有、也无法带口令，因此不受影响。
+
+**怎么拿到口令**
+
+1. 打开 NetPilot → 功能 → Tasker / 自动化，把开关打开，口令就在这一刻生成。
+2. 用 adb 读（需要 shell，普通 App 读不到）：
+
+```bash
+adb shell run-as io.github.katiusu.netpilot cat shared_prefs/miuix_template_prefs.xml | grep np_tasker_token
+```
+
+3. 在 Tasker「发送意图」里加一个 Extra：`netpilot.token` : 上面读到的值（String）。
+
+**为什么是这个形状**：广播 action 与组件名必须公开（Tasker 得知道往哪儿发），能保密的只有
+extra 里的值。同机的其他 App 照样发得出这些 action，但没有口令就改不了任何东西。
+归属信息（`getSentFromUid` / `getSentFromPackage`）只写日志，不作唯一防线 ——
+广播派发路径上 `Binder.getCallingUid()` 返回的是 NetPilot 自己的 uid，拿它鉴权等于永远放行。
+
 ---
 
 ## 4. 事件回执（NetPilot → Tasker）
 
-所有事件在 `com.katiusu.netpilot.event.*` 命名空间下，全部是**隐式**广播
-（不带 package —— 带上了只有 NetPilot 自己收得到，Tasker 永远收不到）。
+所有事件在 `io.github.katiusu.netpilot.event.*` 命名空间下。
+
+回执 `event.RESULT` 与**五条事件**（`DOWNGRADED` / `RECOVERED` / `MODE_CHANGED` /
+`DATA_SIM_CHANGED` / `SIGNAL_SAMPLED`）都是**定向广播**：发送前先找设备上已知的 Tasker 包
+（`net.dinglisch.android.taskerm` / `net.dinglisch.android.tasker`），找到就 `setPackage(包名)`，
+只发给它，同机别的 App 收不到。
+
+- **回执**：一个 Tasker 包都没装时退回隐式广播，但**只带 `result_ok` / `result_message`**，
+  不带信号快照、状态文本和特权通道名。
+- **事件**：一个 Tasker 包都没装时**直接不发**（只记一条 DEBUG「未找到 Tasker 包，事件…已丢弃」）。
+  事件是通知性质的，脱敏后没有意义；而隐式发送等于把 RSRP / SINR / ping 播给同机所有注册了
+  同名 action 的 App。
 
 | Action | 何时发 | 附带字段 |
 | --- | --- | --- |
@@ -205,7 +249,7 @@ Tasker → 配置文件/Profile → `+` → **事件 / Event** → **系统 / Sy
 
 | 字段 | 值 |
 | --- | --- |
-| 动作 / Action | 例如 `com.katiusu.netpilot.event.RESULT`（可只写 `com.katiusu.netpilot.event.*` 通配） |
+| 动作 / Action | 例如 `io.github.katiusu.netpilot.event.RESULT`（可只写 `io.github.katiusu.netpilot.event.*` 通配） |
 | 类别 / Category | 留空 |
 | 计划 / Scheme、主人 / Mime Type | 留空 |
 
@@ -279,7 +323,7 @@ Tasker 的「插件」动作/条件就是兼容 Locale 协议的插件机制。
 ```bash
 # 模拟「执行动作：锁仅 4G」
 adb shell am broadcast -a com.twofortyfouram.locale.intent.action.FIRE_SETTING \
-    --es netpilot.plugin_action com.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock true
+    --es netpilot.plugin_action io.github.katiusu.netpilot.action.LOCK_LTE --ez netpilot.lock true
 
 # 模拟「判断条件：是否已降级」（结果码 16/17 在 logcat / dumpsys 里看）
 adb shell am broadcast -a com.twofortyfouram.locale.intent.action.QUERY_CONDITION \
@@ -289,6 +333,9 @@ adb shell am broadcast -a com.twofortyfouram.locale.intent.action.QUERY_CONDITIO
 > Bundle 版（`--es ... --ez ...` 之外）用 `am broadcast --es netpilot.plugin_action ...` 是
 > 把参数放在**广播 Intent 自身**的 extras 里，接收器两种都能读（它直接从 Intent 读
 > `netpilot.*`，不依赖外层 Bundle），所以上面的命令可以直接验证动作逻辑。
+
+> 这两条能直接发，是因为 `LocaleFireReceiver` 按来源包名白名单校验，而 `adb shell` 的包名固定是
+> `com.android.shell`，已在名单里（见 9）。换成别的 App 发同样的广播会被拒绝，日志页留一条 WARN。
 
 ---
 
@@ -316,8 +363,8 @@ adb shell am broadcast -a com.twofortyfouram.locale.intent.action.QUERY_CONDITIO
 
 **Tasker 配置（广播版，等价）**
 
-- 进入任务：`发送意图` → Action `com.katiusu.netpilot.action.SET_DATA_SIM`、
-  Package `com.katiusu.netpilot`、Target = 广播接收器、Extra `netpilot.sub_id:2`
+- 进入任务：`发送意图` → Action `io.github.katiusu.netpilot.action.SET_DATA_SIM`、
+  Package `io.github.katiusu.netpilot`、Target = 广播接收器、Extra `netpilot.sub_id:2`
 - 退出任务：同上，Extra 改成 `netpilot.sub_id:1`
 
 **不要踩的坑**
@@ -331,11 +378,11 @@ adb shell am broadcast -a com.twofortyfouram.locale.intent.action.QUERY_CONDITIO
 **用 adb 验证一次**
 
 ```bash
-adb shell am broadcast -a com.katiusu.netpilot.action.SET_DATA_SIM --ei netpilot.sub_id 2
+adb shell am broadcast -a io.github.katiusu.netpilot.action.SET_DATA_SIM --ei netpilot.sub_id 2
 ```
 
 然后看 NetPilot 日志页应有「默认数据卡已切到 subId 2」，同时 Tasker 的
-`Intent Received`（Action `com.katiusu.netpilot.event.DATA_SIM_CHANGED`）也会收到一条。
+`Intent Received`（Action `io.github.katiusu.netpilot.event.DATA_SIM_CHANGED`）也会收到一条。
 
 ### 示例 B：地铁上「信号满格但没网」自动降到 4G，出站恢复正常
 
@@ -348,7 +395,7 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
   `插件 → NetPilot → 执行动作 → 设置自动降级开关`（打开），离开时关掉；
   或广播版：`SET_AUTO_DOWNGRADE` + `netpilot.enabled:true` / `false`。
 - 想联动提示：加 `事件 → 系统 → 收到的意图`，Action
-  `com.katiusu.netpilot.event.DOWNGRADED` → 任务里 `提示 / Flash`
+  `io.github.katiusu.netpilot.event.DOWNGRADED` → 任务里 `提示 / Flash`
   「已切 4G」；再配一个 `event.RECOVERED` → 「已恢复 5G」。
 - 阈值不在插件里改（插件只做开关），阈值在 NetPilot 设置页调。
 
@@ -356,12 +403,12 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
 
 1. Profile：`时间` 07:30–09:30 + `状态 → 传感器 → 气压/基站` 之类的地铁特征（可选）。
 2. 任务循环（每分钟）：
-   - `发送意图`：`com.katiusu.netpilot.action.SAMPLE_NOW`，Package `com.katiusu.netpilot`；
+   - `发送意图`：`io.github.katiusu.netpilot.action.SAMPLE_NOW`，Package `io.github.katiusu.netpilot`；
    - `等待 2 秒`；
-   - 用 `Intent Received`（Action `com.katiusu.netpilot.event.RESULT`）拿
+   - 用 `Intent Received`（Action `io.github.katiusu.netpilot.event.RESULT`）拿
      `%netpilot_result_ok` 与 `%netpilot_ping_ms`（Tasker 变量名以实际显示为准）；
    - 若 `ping_ms` 超阈值 **且** `network_type` 含 `NR`：`发送意图` →
-     `com.katiusu.netpilot.action.LOCK_LTE` + Extra `netpilot.lock:true`（或
+     `io.github.katiusu.netpilot.action.LOCK_LTE` + Extra `netpilot.lock:true`（或
      `SET_NETWORK_MODE` + `netpilot.mode_value:11`）；
    - 连续 N 次正常后反过来发 `netpilot.lock:false` 恢复。
 3. 结束任务：不管当前状态，发一次 `LOCK_LTE --ez netpilot.lock false` 兜底恢复，
@@ -387,7 +434,7 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
    adb logcat | grep -iE "NetPilot|Tasker接口|Locale插件"
    ```
 3. **怀疑权限链路**：先发一条最轻的命令
-   `adb shell am broadcast -a com.katiusu.netpilot.action.GET_STATUS`，
+   `adb shell am broadcast -a io.github.katiusu.netpilot.action.GET_STATUS`，
    能收到 `event.RESULT`（`netpilot.channel` 会告诉你当前走 Root 还是 Shizuku）说明
    应用侧正常；再试 `SET_NETWORK_MODE`，失败就是特权层问题。
 4. **`settings put` 被拒 / 写了没效果**：部分运营商定制 ROM 与「无线固件」层会拒绝
@@ -409,8 +456,8 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
    `TaskerEditActivity` 的 intent-filter 有 `EDIT_SETTING` 且 `android:exported="true"`；
    装完新版本后 Tasker 需要重启一次才会重扫插件列表。
 9. **命令没反应、日志里也没有**：多半是隐式广播被后台限制拦了 —— 在「发送意图」里把
-   Package 填成 `com.katiusu.netpilot`（或 Class 填
-   `com.katiusu.netpilot.core.tasker.TaskerCommandReceiver`）。
+   Package 填成 `io.github.katiusu.netpilot`（或 Class 填
+   `io.github.katiusu.netpilot.core.tasker.TaskerCommandReceiver`）。
 
 ---
 
@@ -422,15 +469,15 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
     android:name=".core.tasker.TaskerCommandReceiver"
     android:exported="true">
     <intent-filter>
-        <action android:name="com.katiusu.netpilot.action.SET_NETWORK_MODE" />
-        <action android:name="com.katiusu.netpilot.action.SET_PRESET" />
-        <action android:name="com.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE" />
-        <action android:name="com.katiusu.netpilot.action.SET_AUTO_DOWNGRADE" />
-        <action android:name="com.katiusu.netpilot.action.SET_DATA_SIM" />
-        <action android:name="com.katiusu.netpilot.action.SWITCH_DATA_SIM" />
-        <action android:name="com.katiusu.netpilot.action.LOCK_LTE" />
-        <action android:name="com.katiusu.netpilot.action.SAMPLE_NOW" />
-        <action android:name="com.katiusu.netpilot.action.GET_STATUS" />
+        <action android:name="io.github.katiusu.netpilot.action.SET_NETWORK_MODE" />
+        <action android:name="io.github.katiusu.netpilot.action.SET_PRESET" />
+        <action android:name="io.github.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE" />
+        <action android:name="io.github.katiusu.netpilot.action.SET_AUTO_DOWNGRADE" />
+        <action android:name="io.github.katiusu.netpilot.action.SET_DATA_SIM" />
+        <action android:name="io.github.katiusu.netpilot.action.SWITCH_DATA_SIM" />
+        <action android:name="io.github.katiusu.netpilot.action.LOCK_LTE" />
+        <action android:name="io.github.katiusu.netpilot.action.SAMPLE_NOW" />
+        <action android:name="io.github.katiusu.netpilot.action.GET_STATUS" />
     </intent-filter>
 </receiver>
 
@@ -474,15 +521,25 @@ NetPilot 的监控循环本来就在做这件事：RSRP 很强（默认 > -85 dB
 
 **安全取舍**
 
-1. 两个 receiver 都是 `exported="true"` 且无权限保护 —— 设备上**任何 App** 都能发这些
-   广播来控制 NetPilot（切制式、换卡）。这是为了能用 Tasker（跨 App）付出的代价。
-   缓解：所有命令都会被写入 NetPilot 日志（谁发的看不出，但**发了什么、结果如何**都有记录），
-   且动作仅限于「通信制式 / 默认数据卡 / 降级开关 / 读状态」，不涉及文件、短信、安装等敏感能力。
-   若以后要支持敏感动作，应改成「自定义权限 + 签名级校验」或 `setPackage` 定向 + 组件校验。
-2. 事件广播是隐式的（不带 package），因此**别的 App 也能注册同名 action 偷看**这些事件。
-   内容只有信号强度、制式、ping 延迟与降级状态，不含账号/位置/短信；
-   需要保密时应该改成带签名权限的广播。
-3. 插件配置只存基本类型，不含任何凭据；配置文件由 Tasker 保存，随 Tasker 的备份一起走。
+三条口径，按「谁在敲门」分：
+
+1. **命令要口令。** 两个 receiver 都是 `exported="true"`（组件名必须公开，Tasker 才知道往哪儿发），
+   真正的防线是 `netpilot.token`（3.4）：写类命令（切制式、换卡、改降级开关）必须带、
+   且与存储值一致；同机的其他 App 发得出广播，但改不了任何东西。只读命令
+   （`SAMPLE_NOW` / `GET_STATUS`）免口令。每个命令都写日志，被拒绝的写类命令额外记一条
+   发送方 uid / 包名（仅归因，不作唯一防线 —— 广播派发路径上 `Binder.getCallingUid()`
+   返回的是本应用自己的 uid）。
+2. **事件只定向。** 回执与五条事件都用 `setPackage(已知 Tasker 包)` 定向发送，同机别的 App 收不到。
+   回执在找不到 Tasker 包时退回隐式，但只带 `result_ok` / `result_message`；事件在找不到 Tasker 包时
+   **直接丢弃**（DEBUG 日志），不降级成隐式 —— 信号快照脱敏后没有意义，隐式发送只剩害处。
+3. **插件只认 Tasker 来源。** `LocaleFireReceiver` 的 Bundle 由 Tasker 回放、塞不进口令，因此改用
+   来源白名单：只接受 `net.dinglisch.android.taskerm` / `net.dinglisch.android.tasker` 与
+   `com.android.shell`（adb 排错用，见 5.3），其余包名一律拒绝并记 WARN。
+   包名取不到（少数 ROM 返回 null）时放行并记 WARN：一律拒绝会让正常用户的插件静默失效，
+   而这个 receiver 只执行「Tasker 已经保存好的配置」，不引入新的权限面。
+
+另外：插件配置只存基本类型，不含任何凭据；配置文件由 Tasker 保存，随 Tasker 的备份一起走。
+若以后要支持敏感动作，应改成「自定义权限 + 签名级校验」或 `setPackage` 定向 + 组件校验。
 
 **已知限制**
 

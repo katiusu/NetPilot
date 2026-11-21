@@ -45,10 +45,12 @@ class MonitorService : Service() {
         // 必须在 onCreate 里就 startForeground：Android 12+ 要求前台服务启动后
         // 5 秒内挂出通知，否则直接 ANR/崩。
         startForeground(NOTIFICATION_ID, buildNotification("正在监控网络质量…"))
-        // 服务被启动 = 有人要它跑（用户开关 / 磁贴 / Tasker / 开机自启 / 保活）。
-        // 这条运行期意图是保活的判据：只有用户从通知栏点「停止」才会被置回 false，
-        // 否则心跳会在 15 分钟后把用户刚停掉的服务拉回来。
-        KeepAliveState.setMonitorWanted(this, true)
+        // 这里刻意**不**写 monitorWanted。「服务被启动」不等于「用户想要监控」：
+        // 系统按 sticky 重启、onTaskRemoved 自愈、任何第三方 startService 都会走到
+        // onCreate，在这里无条件置 true 就会把用户刚点下的「停止」翻回去，
+        // onDestroy 里那个判断随之永远为真 —— 停止按钮等于失效。
+        // 意图只认显式入口：总开关/磁贴/Tasker 走 MonitorEngine.setEnabled，
+        // 开机自启走 BootReceiver，用户主动停走下面 ACTION_STOP 分支。
         // 给重启退避留一个时间戳：下一次 onDestroy 排「尽快拉回」时，要靠它判断
         // 这一次启动到底站没站稳（活过窗口就从 10 秒重来，没活过就翻倍退避）。
         KeepAliveState.noteServiceStarted(this)
@@ -69,6 +71,10 @@ class MonitorService : Service() {
             // 就会把服务拉回来，用户会发现「怎么关都关不掉」——
             // 保活要防的是系统清理，不是用户的关闭动作。
             KeepAliveState.setMonitorWanted(this, false)
+            // 只撤运行期意图活不过冷启动：下次打开 App 时启动对账看到「开关开着、服务没跑」
+            // 会立刻把监控拉回来，等于把用户这次「停止」撤销掉。所以必须落盘一个显式意图，
+            // 自动路径（冷启动对账 / 开机自启 / 保活拉回）见到它就闭嘴。
+            MonitorSettings.setUserStopped(this, true)
             stopSelf()
             // START_NOT_STICKY：用户停掉的服务不该被系统按 sticky 规则重启。
             return START_NOT_STICKY
@@ -179,8 +185,10 @@ class MonitorService : Service() {
         // 绝大多数轮次三者一字不变，却仍然每次都走一次 NotificationManager binder 调用外加
         // 重新构建一个 Notification 对象。文本没变时跳过，用户看到的通知内容完全一样。
         if (text == lastNotificationText) return
-        lastNotificationText = text
         val mgr = getSystemService(NotificationManager::class.java) ?: return
-        runCatching { mgr.notify(NOTIFICATION_ID, buildNotification(text)) }
+        // 先发后记：如果先把文本写进缓存，notify 失败（被吞掉）之后同文本会在这里
+        // 直接 return，通知就永久停在旧值上，再也没机会重试。
+        val pushed = runCatching { mgr.notify(NOTIFICATION_ID, buildNotification(text)) }.isSuccess
+        if (pushed) lastNotificationText = text
     }
 }

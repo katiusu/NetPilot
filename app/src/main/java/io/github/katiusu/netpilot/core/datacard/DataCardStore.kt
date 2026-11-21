@@ -28,6 +28,12 @@ object DataCardStore {
     private const val KEY_HOME_SUB = "home_sub_id"
     private const val KEY_RULES_ENABLED = "rules_enabled"
 
+    /** 降级前制式快照（subId → 制式 + 时间戳），见 [SavedMode]。 */
+    private const val KEY_SAVED_MODES = "saved_modes_before_wifi"
+
+    /** [homeSubId] 的「用户没设过」哨兵。调用方必须显式判断，不能当成 subId 用。 */
+    const val HOME_SUB_UNSET = -1
+
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -183,11 +189,130 @@ object DataCardStore {
         }.onFailure { LogStore.error(TAG, "保存 Wi-Fi 规则失败：${it.message}") }
     }
 
-    /** 离开 Wi-Fi 后回切的目标卡。 */
-    fun homeSubId(context: Context): Int =
-        prefs(context).getInt(KEY_HOME_SUB, SimReader.defaultDataSubId())
+    /**
+     * 离开 Wi-Fi 后回切的目标卡；用户没设过返回 [HOME_SUB_UNSET]。
+     *
+     * 以前缺省值直接取 [SimReader.defaultDataSubId]：没设过主卡时 home 恒等于「当前默认卡」，
+     * [DataCardEngine] 的 revertIfNeeded 里 home == current 就直接 return，离开 Wi-Fi 永远
+     * 不回切 —— 默认值把这条链路静默关掉了。
+     *
+     * 改成 -1 哨兵后要处理老用户升级：他们的 prefs 里根本没有这个键，若直接让调用方忽略 -1，
+     * 升级那一刻就不会再回切了。所以首次读到「键不存在」时把**当时**的默认卡落盘一次作为
+     * 迁移（只做一次），但**本次仍返回 -1**（本轮不切），避免一升级就跳到一张用户没选过的卡。
+     */
+    fun homeSubId(context: Context): Int {
+        val prefs = prefs(context)
+        if (prefs.contains(KEY_HOME_SUB)) {
+            val stored = prefs.getInt(KEY_HOME_SUB, HOME_SUB_UNSET)
+            return if (stored >= 0) stored else HOME_SUB_UNSET
+        }
+        val migrated = SimReader.defaultDataSubId()
+        if (migrated >= 0) {
+            prefs.edit().putInt(KEY_HOME_SUB, migrated).apply()
+            LogStore.log(
+                TAG,
+                "主卡未设置：已把当前默认卡 subId=$migrated 记为回切目标（一次性迁移，本轮不切）"
+            )
+        } else {
+            LogStore.warn(TAG, "主卡未设置且读不到当前默认卡，暂不写回切目标")
+        }
+        return HOME_SUB_UNSET
+    }
 
+    /**
+     * 设置回切目标卡；传负数（[HOME_SUB_UNSET]）表示清除。
+     *
+     * 清除在落盘层只有这一条实现：真的把键删掉。prefs 里如果留下「键存在但值是 -1」的中间态，
+     * [homeSubId] 的「键不存在」分支就永远走不到，升级迁移也不会再发生 —— 那正是
+     * 「恢复备份后离开 Wi-Fi 再也不回切」的成因。
+     */
     fun setHomeSubId(context: Context, subId: Int) {
-        prefs(context).edit().putInt(KEY_HOME_SUB, subId).apply()
+        if (subId < 0) {
+            clearHomeSubId(context)
+        } else {
+            prefs(context).edit().putInt(KEY_HOME_SUB, subId).apply()
+        }
+    }
+
+    /** 清除回切目标卡：删键而不是写 -1（语义见 [setHomeSubId]）。 */
+    fun clearHomeSubId(context: Context) {
+        prefs(context).edit().remove(KEY_HOME_SUB).apply()
+    }
+
+    // ---------------- 降级前制式快照 ----------------
+
+    /** 降级前保存的制式：[modeValue] 是当时的网络模式值，[atMs] 是写入时间（排障用）。 */
+    data class SavedMode(val modeValue: Int, val atMs: Long)
+
+    /** 「读 JSON → 改 → 写回」必须串行，否则并发写入会互相覆盖、丢条目。 */
+    private val savedModesLock = Any()
+
+    /** 全部快照（subId → 快照）。损坏时按空处理：一条坏记录不该拖垮整条回切路径。 */
+    fun savedDowngradeModes(context: Context): Map<Int, SavedMode> = synchronized(savedModesLock) {
+        readSavedModes(context)
+    }
+
+    /**
+     * 写一条快照。调用方必须在**写制式之前**调用 —— 否则进程被杀就再也想不起原来是什么制式。
+     */
+    fun putSavedDowngradeMode(context: Context, subId: Int, modeValue: Int, atMs: Long) {
+        if (subId < 0 || modeValue < 0) return
+        synchronized(savedModesLock) {
+            val next = readSavedModes(context).toMutableMap()
+            next[subId] = SavedMode(modeValue, atMs)
+            writeSavedModes(context, next)
+        }
+    }
+
+    /** 删一条快照。只在**还原写入成功之后**调用，写失败要留着等下次重试。 */
+    fun removeSavedDowngradeMode(context: Context, subId: Int) {
+        synchronized(savedModesLock) {
+            val next = readSavedModes(context).toMutableMap()
+            if (next.remove(subId) != null) writeSavedModes(context, next)
+        }
+    }
+
+    private fun readSavedModes(context: Context): Map<Int, SavedMode> = runCatching {
+        val raw = prefs(context).getString(KEY_SAVED_MODES, null)
+        if (raw.isNullOrBlank()) {
+            emptyMap()
+        } else {
+            val arr = JSONArray(raw)
+            buildMap {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val subId = o.optInt("subId", -1)
+                    val modeValue = o.optInt("modeValue", -1)
+                    if (subId >= 0 && modeValue >= 0) {
+                        put(subId, SavedMode(modeValue, o.optLong("atMs", 0L)))
+                    }
+                }
+            }
+        }
+    }.getOrElse { t ->
+        LogStore.warn(TAG, "解析降级前制式快照失败，按空处理：${t.message ?: t.javaClass.simpleName}")
+        emptyMap()
+    }
+
+    private fun writeSavedModes(context: Context, modes: Map<Int, SavedMode>) {
+        runCatching {
+            val editor = prefs(context).edit()
+            if (modes.isEmpty()) {
+                editor.remove(KEY_SAVED_MODES)
+            } else {
+                val arr = JSONArray()
+                modes.forEach { (subId, saved) ->
+                    arr.put(
+                        JSONObject().apply {
+                            put("subId", subId)
+                            put("modeValue", saved.modeValue)
+                            put("atMs", saved.atMs)
+                        },
+                    )
+                }
+                editor.putString(KEY_SAVED_MODES, arr.toString())
+            }
+            editor.apply()
+        }.onFailure { LogStore.error(TAG, "保存降级前制式快照失败：${it.message}") }
     }
 }

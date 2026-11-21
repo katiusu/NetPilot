@@ -35,6 +35,9 @@ object FakeSignalDetector {
     fun judge(snapshot: SignalSnapshot, thresholds: DowngradeThresholds): FakeJudgement {
         val rsrpText = snapshot.rsrp?.toString() ?: "未知"
         val isStrong = snapshot.isStrongSignal(thresholds.rsrpThreshold)
+        // 息屏省电轮次会整轮跳过探测，那时 pingMs 是 null 但 pingError 也是 null ——
+        // 界面上不能让它读成「无响应」，判定上更不能把它当成一次真的 Ping 失败。
+        val skipNote = if (snapshot.probeSkipped) "（本轮跳过探测，不据此判定 Ping 失败）" else ""
         // 当前在 Wi-Fi 且没有驻留蜂窝时，蜂窝制式不影响用户实际体验，判定没有意义。
         // 注意这里只是「不判定」，采样本身照常做（界面仍要显示 RSRP/Ping/SINR）。
         if (snapshot.isWifi && snapshot.rawNetworkType == 0) {
@@ -66,7 +69,10 @@ object FakeSignalDetector {
                         reasons += "SINR ${sinr}dB < ${thresholds.sinrThreshold}dB"
                     }
                 }
-                if (snapshot.pingMs == null && thresholds.downgradeOnPingFail) {
+                // 跳过探测的一轮 pingMs 同样是 null，但那表示「省电没去探」，不是
+                // 「探了没通」。不排除的话，息屏期间每一轮都会被判成假满格。
+                // 与 AutoDowngradeEngine.noResponse 里的 !snapshot.probeSkipped 同一语义。
+                if (snapshot.pingMs == null && thresholds.downgradeOnPingFail && !snapshot.probeSkipped) {
                     reasons += "Ping 失败（无响应）"
                 }
             }
@@ -78,7 +84,7 @@ object FakeSignalDetector {
                     // 制式写进 detail（方案 D）：用户看到「一直触发假满格」时，
                     // 第一件要回答的事就是「当时到底在 4G 还是 5G」。
                     detail = "判定为假满格（${snapshot.networkType}）：RSRP=$rsrpText dBm 满格但 " +
-                        reasons.joinToString("；"),
+                        reasons.joinToString("；") + skipNote,
                     reason = DowngradeReason.FAKE_FULL_BAR,
                 )
             }
@@ -94,9 +100,10 @@ object FakeSignalDetector {
                     // 必须说清「没判」而不是「判了正常」：读数仍是强的、Ping 也照样显示，
                     // 差别只是本轮不拿它当降级依据。
                     "当前是 ${snapshot.networkType}，假满格只在 5G / 5G+ 上判定，" +
-                        "本轮不检查 Ping 与 SINR（RSRP=$rsrpText dBm、Ping=$pingText、SINR=$sinrText）"
+                        "本轮不检查 Ping 与 SINR（RSRP=$rsrpText dBm、Ping=$pingText、SINR=$sinrText）" +
+                        skipNote
                 } else {
-                    "信号强且质量正常：RSRP=$rsrpText dBm、Ping=$pingText、SINR=$sinrText"
+                    "信号强且质量正常：RSRP=$rsrpText dBm、Ping=$pingText、SINR=$sinrText" + skipNote
                 },
             )
         }

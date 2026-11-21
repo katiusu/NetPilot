@@ -35,6 +35,16 @@ object MonitorSettings {
     const val KEY_TOGGLE_ENDC = "np_fake5g_endc"
 
     /**
+     * 用户是否在通知栏按过「停止」（运行时意图）。
+     *
+     * 与 [KEY_ENABLED] 正交，不能合成一个键：那个是「配置上要不要自动降级」，用户能在设置里
+     * 看到并改；这个是「我现在不想让它跑」，属于一次性的运行时意图。写进 KEY_ENABLED 会让
+     * 用户下次打开设置发现开关自己关了；而只靠内存里的 monitorWanted 又活不过进程重启，
+     * 冷启动的启动对账会把服务重新拉起来 —— 用户的「停止」就这样被撤销了。
+     */
+    const val KEY_USER_STOPPED = "np_monitor_user_stopped"
+
+    /**
      * 「信号过差」规则的 RSRP 门限，单位 dBm。
      *
      * 与 [KEY_RSRP] 是**两条独立的规则**：那个管「信号满格但没质量」，这个管
@@ -195,6 +205,18 @@ object MonitorSettings {
             else -> null
         } ?: return DEFAULT_ADAPTIVE_STEP
         return raw.coerceIn(ADAPTIVE_STEP_MIN, ADAPTIVE_STEP_MAX)
+    }
+
+    /**
+     * 用户是否显式停止过监控（见 [KEY_USER_STOPPED]）。
+     *
+     * Context 参数只为与其它 settings 入口保持同一种调用形状；配置本身走 [ConfigState] 的
+     * 进程级存储，不依赖调用方传进来的 Context 实例。
+     */
+    fun userStopped(context: Context): Boolean = ConfigState.bool(KEY_USER_STOPPED, false)
+
+    fun setUserStopped(context: Context, stopped: Boolean) {
+        ConfigState.set(KEY_USER_STOPPED, stopped)
     }
 
     fun thresholds(): DowngradeThresholds = DowngradeThresholds(

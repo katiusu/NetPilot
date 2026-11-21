@@ -22,7 +22,12 @@ import io.github.katiusu.netpilot.core.monitor.MonitorSettings
 import io.github.katiusu.netpilot.core.monitor.SignalSnapshot
 import io.github.katiusu.netpilot.core.priv.ControlManager
 import io.github.katiusu.netpilot.core.priv.WriteDiag
+import io.github.katiusu.netpilot.core.radio.BasebandDetector
 import io.github.katiusu.netpilot.prefs.PrefsStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * NetPilot 的统一门面。
@@ -40,6 +45,15 @@ import io.github.katiusu.netpilot.prefs.PrefsStore
 object NetPilot {
 
     private const val TAG = "NetPilot"
+
+    /**
+     * 进程级后台作用域，只跑启动期的只读探测。
+     *
+     * 为什么不用 GlobalScope：那在审查里等于放弃泄漏责任。这个 scope 不随界面销毁 ——
+     * 它跑的是进程级初始化，进程活多久它就该活多久；SupervisorJob 保证一次失败
+     * 不会吊销后续投进来的任务。
+     */
+    private val bootScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * 1.5.4：最近一次 [setMode] 是否被**回读**确认真的生效了。
@@ -108,6 +122,15 @@ object NetPilot {
             LogStore.warn(TAG, "保活闹钟初始化失败：${it.message ?: it.javaClass.simpleName}")
         }
         LogStore.info(TAG, "核心已就绪，首选特权通道：${ControlManager.cachedLabel()}")
+        // 基带只读探测：纯属性读 + stat + getService，最坏 3 秒，不能挡启动，所以投到后台。
+        // 结论由探测侧写进配置缓存，这里只负责把探测原文写进日志页。
+        bootScope.launch {
+            runCatching { BasebandDetector.detect(app) }
+                .onSuccess { profile -> LogStore.info(TAG, profile.logText()) }
+                .onFailure { e ->
+                    LogStore.warn(TAG, "基带探测异常：" + (e.message ?: e.javaClass.simpleName))
+                }
+        }
     }
 
     // ---------------- 制式 ----------------

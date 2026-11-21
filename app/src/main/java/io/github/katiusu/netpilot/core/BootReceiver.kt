@@ -20,6 +20,8 @@ import io.github.katiusu.netpilot.prefs.ConfigState
 class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        // 厂商的快速开机广播（QUICKBOOT_POWERON）与 BOOT_COMPLETED 会重复到达，
+        // 同一个开机过程这里可能被叫醒两次以上，因此下面所有操作都必须幂等。
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
@@ -49,6 +51,12 @@ class BootReceiver : BroadcastReceiver() {
                 // 15 分钟后的心跳就会把服务拉回来，这个开关就形同虚设。
                 KeepAliveState.setMonitorWanted(app, false)
                 LogStore.info(TAG, "开机自启已关闭，跳过监控启动")
+                return
+            }
+            if (MonitorSettings.userStopped(app)) {
+                // 用户按过「停止」：开机自启也不能把他手动停掉的监控拉回来。
+                // 刻意**不**写 monitorWanted —— 保持 false，保活心跳才不会重新拉起。
+                LogStore.info(TAG, "用户曾主动停止监控，开机自启跳过（在应用内重新开启即可恢复）")
                 return
             }
             LogStore.info(TAG, "开机自启：恢复网络监控")

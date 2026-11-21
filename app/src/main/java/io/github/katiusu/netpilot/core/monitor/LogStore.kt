@@ -1,7 +1,10 @@
 package io.github.katiusu.netpilot.core.monitor
 
 import android.content.Context
-import androidx.compose.runtime.mutableStateListOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -32,7 +35,8 @@ data class LogEntry(
  * 运行日志环形缓冲。
  *
  * - 最多保留 [MAX_ENTRIES] 条，超出丢弃最旧的
- * - 用 `mutableStateListOf` 承载，Compose 读 [entries] 自动重组
+ * - 用 `MutableStateFlow<List<LogEntry>>` 承载，写侧整体替换不可变列表（跨线程安全），
+ *   Compose 读 [entries].collectAsState() 自动重组
  * - 落盘做了节流：距上次落盘不足 [PERSIST_INTERVAL_MS] 时只标脏，由下一次落盘一并写出
  */
 object LogStore {
@@ -81,7 +85,7 @@ object LogStore {
     /** 单条消息最长字符数，避免异常堆栈这类超长文本长期占内存（截断而非丢弃）。 */
     private const val MAX_MESSAGE_CHARS = 2_000
 
-    private val buffer = mutableStateListOf<LogEntry>()
+    private val buffer = MutableStateFlow<List<LogEntry>>(emptyList())
 
     /**
      * 单线程落盘器（守护线程）。
@@ -108,7 +112,15 @@ object LogStore {
     @Volatile
     private var importantSincePersist = false
 
-    val entries: List<LogEntry> get() = buffer
+    /**
+     * 当前全部日志（不可变快照），Compose 侧用 `collectAsState()` 订阅。
+     *
+     * 以前这里直接把 `mutableStateListOf` 当 List 交出去，[log] 又在任意线程（含 IO）
+     * 往上 `+=`：SnapshotStateList 的写必须落在 Compose 的快照里，后台线程并发写会破坏
+     * 快照一致性，读侧边遍历边被改还可能撞 ConcurrentModificationException。
+     * 换成 StateFlow 后写侧只有一次 CAS（[update]），读侧拿到的是真正不可变的 List。
+     */
+    val entries: StateFlow<List<LogEntry>> = buffer.asStateFlow()
 
     fun init(context: Context) {
         if (appContext != null) return
@@ -133,15 +145,15 @@ object LogStore {
                     message = obj.optString("m", ""),
                 )
             }
-            buffer.clear()
-            buffer.addAll(restored)
+            // 存档可能来自旧版本、条数也未必还符合当前上限，载入时统一夹一次。
+            buffer.value = restored.takeLast(MAX_ENTRIES)
         }
     }
 
     fun log(tag: String, message: String, level: LogLevel = LogLevel.INFO) {
         val entry = LogEntry(System.currentTimeMillis(), level, tag, message.take(MAX_MESSAGE_CHARS))
-        buffer += entry
-        while (buffer.size > MAX_ENTRIES) buffer.removeAt(0)
+        // update 的 CAS 循环保证并发追加互不覆盖；超限时整体裁掉最旧的。
+        buffer.update { (it + entry).takeLast(MAX_ENTRIES) }
         dirty = true
         if (level == LogLevel.WARN || level == LogLevel.ERROR) importantSincePersist = true
         maybePersist(force = level == LogLevel.ERROR)
@@ -152,11 +164,13 @@ object LogStore {
     fun warn(tag: String, message: String) = log(tag, message, LogLevel.WARN)
     fun error(tag: String, message: String) = log(tag, message, LogLevel.ERROR)
 
-    fun snapshot(limit: Int = 200): List<LogEntry> =
-        if (limit >= buffer.size) buffer.toList() else buffer.takeLast(limit).toList()
+    fun snapshot(limit: Int = 200): List<LogEntry> {
+        val all = buffer.value
+        return if (limit >= all.size) all else all.takeLast(limit)
+    }
 
     fun clear() {
-        buffer.clear()
+        buffer.value = emptyList()
         dirty = true
         // 用户主动清空：这一次必须**同步**写完再返回，否则「清完立刻杀进程」会把日志留下。
         persist(force = true, blocking = true)
@@ -182,8 +196,8 @@ object LogStore {
         lastPersistAt = now
         dirty = false
         importantSincePersist = false
-        // 快照必须在这里取：buffer 是 Compose 的 SnapshotStateList，交给另一个线程延迟读不安全。
-        val pending = buffer.takeLast(PERSIST_ENTRIES).toList()
+        // 快照必须在这里取：交给 writer 线程的是不可变副本，不能是缓冲本身。
+        val pending = buffer.value.takeLast(PERSIST_ENTRIES)
         val task = Runnable { writeEntries(ctx, pending) }
         if (blocking) {
             runCatching { writer.submit(task).get(WRITE_TIMEOUT_MS, TimeUnit.MILLISECONDS) }

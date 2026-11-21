@@ -28,6 +28,16 @@ object SubscriptionSwitcher {
     private const val MAX_PROBED_SLOTS = 4
 
     /**
+     * void 方法的回读校验预算：**读 2 次，中间只等 120ms**（单次调用占用 binder 线程 ≤ 250ms）。
+     *
+     * 以前是 3 次 × 150ms ≈ 300ms+，而这段等待跑在 Shizuku 用户服务的 binder 线程上，期间
+     * 该进程其它 binder 调用（getMode 等）全部排队。切卡本身是异步的，与其在这里死等，
+     * 不如把「到底切过去没有」交给下一次采样复核。
+     */
+    private const val READBACK_ATTEMPTS = 2
+    private const val READBACK_INTERVAL_MS = 120L
+
+    /**
      * Shizuku 用户服务有 Context，塞进来后「取活动卡列表」可以走公开 API
      * （`SubscriptionManager.getActiveSubscriptionInfoList()`）；
      * app_process 的 root 入口没有 Context，则自动退化为静态槽位扫描。
@@ -54,15 +64,28 @@ object SubscriptionSwitcher {
     )
 
     /**
-     * 设置默认数据卡。
+     * 设置默认数据卡，**并通过回读确认真的切过去了**。
      *
-     * @return true 表示调用链没有抛异常（**不代表运营商/协议栈已接受**，是否真的生效
-     *   需要调用方稍后再读一次 `getDefaultDataSubscriptionId()` 校验）。
+     * 以前只要反射调用没抛异常就返回 true（`result !is Boolean || result`），于是
+     * `setPreferredDataSubscriptionId` 这类 void 方法一律算成功 —— 服务侧因为无权限 / 无卡 /
+     * subId 非法而静默 no-op 时，界面照样报「已切换」。现在：Boolean 方法以返回值为准，
+     * void（返回值不是 Boolean）必须回读 `getDefaultDataSubscriptionId()` 校验。
+     *
+     * @return true 仅当默认数据卡确实已经是 [subId]。
      */
     fun setDefaultDataSubId(subId: Int): Boolean {
         if (subId < 0) return false
         TelephonyReflection.ensureHiddenApiExempted()
 
+        // 已经是目标卡就别再下发：服务侧会把它当成「无变化」直接 no-op，
+        // 而下面 void 方法的回读校验会把这种 no-op 误判成失败。
+        val before = currentDefaultDataSubId()
+        if (before == subId) {
+            Log.i(TAG, "setDefaultDataSubId($subId): 已经是默认数据卡，跳过调用")
+            return true
+        }
+
+        var called = false
         for ((className, methodNames) in CANDIDATES) {
             val clazz = loadClass(className) ?: continue
             val instance = obtainInstance(clazz)
@@ -78,11 +101,26 @@ object SubscriptionSwitcher {
                 try {
                     method.isAccessible = true
                     val result = method.invoke(if (isStatic) null else instance, *args)
-                    if (result !is Boolean || result) {
-                        Log.i(TAG, "setDefaultDataSubId($subId) via $className#${method.name} ok")
-                        return true
+                    if (result is Boolean) {
+                        // Boolean 方法自己说了算：false 就是没切开。
+                        if (result) {
+                            Log.i(TAG, "setDefaultDataSubId($subId) via $className#${method.name} ok（Boolean=true）")
+                            return true
+                        }
+                        Log.w(TAG, "setDefaultDataSubId($subId) via $className#${method.name} returned false")
+                    } else {
+                        // void：返回值不携带结果，只能回读。没生效就继续试下一个候选。
+                        called = true
+                        if (awaitDefaultDataSubId(subId)) {
+                            Log.i(TAG, "setDefaultDataSubId($subId) via $className#${method.name} ok（void，回读已生效）")
+                            return true
+                        }
+                        Log.w(
+                            TAG,
+                            "setDefaultDataSubId($subId) via $className#${method.name} 调用未抛异常但回读仍是 " +
+                                "${currentDefaultDataSubId()}，继续尝试下一个候选"
+                        )
                     }
-                    Log.w(TAG, "setDefaultDataSubId($subId) via $className#${method.name} returned false")
                 } catch (e: Throwable) {
                     Log.w(
                         TAG,
@@ -93,7 +131,41 @@ object SubscriptionSwitcher {
             }
         }
 
-        Log.w(TAG, "setDefaultDataSubId($subId): all candidates failed")
+        Log.w(
+            TAG,
+            "setDefaultDataSubId($subId): all candidates failed（调用了 void 候选：$called，" +
+                "当前默认 ${currentDefaultDataSubId()}）"
+        )
+        return false
+    }
+
+    /** 当前默认数据 subId；拿不到返回 -1。公开静态 API，app_process 里没有 Context 也能调。 */
+    fun currentDefaultDataSubId(): Int = try {
+        SubscriptionManager.getDefaultDataSubscriptionId()
+    } catch (e: Throwable) {
+        Log.w(TAG, "getDefaultDataSubscriptionId failed: ${e.javaClass.simpleName}: ${e.message}")
+        -1
+    }
+
+    /**
+     * 回读校验：立刻读一次，再等 120ms 读一次，然后收工。
+     *
+     * 为什么只等这么短：PhoneSwitcher 切换是异步的，但本方法是在 Shizuku 用户服务的 binder
+     * 线程上跑的，等久了会把该进程其它 binder 调用全堵住。读到旧值就报失败、由下一轮采样复核，
+     * 比让调用方阻塞更划算。
+     */
+    private fun awaitDefaultDataSubId(subId: Int): Boolean {
+        repeat(READBACK_ATTEMPTS) { attempt ->
+            if (currentDefaultDataSubId() == subId) return true
+            if (attempt < READBACK_ATTEMPTS - 1) {
+                try {
+                    Thread.sleep(READBACK_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+        }
         return false
     }
 

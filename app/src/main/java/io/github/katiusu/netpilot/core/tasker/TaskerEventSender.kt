@@ -15,10 +15,12 @@ import io.github.katiusu.netpilot.core.monitor.SignalSnapshot
  *    被限制的是「后台应用的**静态（Manifest 声明）**接收者收不到隐式广播」。
  *  - Tasker 的「Intent Received」事件内部用的是**动态注册**（registerReceiver）
  *    的接收者，动态接收者不受这条限制，所以能正常收到我们发的事件。
- *  - 因此这里**不调用** `Intent.setPackage()`：setPackage 会把广播限定成
- *    只发给「本应用自己的接收者」，而接收方 Tasker 是另一个包，加了就永远收不到。
- *  - 代价是：任何 App 都可以注册同名 action 偷看这些事件。事件内容只是信号/制式
- *    这类非敏感信息，可以接受；如果以后要传敏感数据，得改用带签名的自定义权限。
+ *  - 定向发送用 `setPackage(Tasker 包名)`：它只把广播限定给**指定的那个包**，不是限定给本应用。
+ *    「Tasker 是另一个包，加了就收不到」只对 `setPackage(自己包名)` 成立，对 `setPackage(Tasker 包名)`
+ *    恰好相反 —— 那才是唯一能让 Tasker 收到、同时别的 App 收不到的写法。
+ *  - 所以这里**能定向就定向，定不了就丢弃**：设备上找不到已知 Tasker 包时不发（隐式发送等于把
+ *    信号快照播给同机所有注册了同名 action 的 App）；事件是通知性质的，脱敏后也失去意义。
+ *    丢弃只记一条 DEBUG —— 没装 Tasker 的用户每次采样都会走到这里，不该变成噪音。
  *
  * 另外：广播里只放基本类型与 String，绝不放 Parcelable / 自定义对象 ——
  * 跨进程传递自定义对象是最容易踩反序列化坑的地方，这里用不到也不该用。
@@ -83,13 +85,22 @@ object TaskerEventSender {
         // 门控放在这个唯一收口点上：一个判断覆盖全部五条路径，也不存在漏改某条调用链的可能。
         if (!TaskerGate.isEnabled(context)) return
         runCatching {
+            val app = context.applicationContext
+            // 定向目标：与回执共用同一份判定（TaskerContract.resultTarget）。
+            val target = TaskerContract.resultTarget(app)
+            if (target == null) {
+                // 不降级成隐式广播：那条路的代价是把 RSRP/SINR/ping 播给同机任意 App。
+                LogStore.debug(TAG, "未找到 Tasker 包，事件 $action 已丢弃")
+                return@runCatching
+            }
             val intent = Intent(action)
             intent.fill()
             intent.putExtra(
                 TaskerContract.EXTRA_CHANNEL,
                 runCatching { NetPilot.channelLabel() }.getOrDefault("未知"),
             )
-            context.applicationContext.sendBroadcast(intent)
+            intent.setPackage(target)
+            app.sendBroadcast(intent)
             LogStore.debug(TAG, "已发送事件 $action")
         }.onFailure { t ->
             LogStore.warn(TAG, "发送事件 $action 失败：${t.message ?: t.javaClass.simpleName}")

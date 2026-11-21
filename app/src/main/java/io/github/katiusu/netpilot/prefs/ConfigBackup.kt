@@ -56,7 +56,10 @@ object ConfigBackup {
 
         // 3) 双卡策略与 Wi-Fi 规则。同样以前漏掉。
         val dataCard = JSONObject()
-        dataCard.put("home_sub_id", DataCardStore.homeSubId(context))
+        // 没设过主卡时 homeSubId 是 -1 哨兵：导出时干脆不写这个键，而不是把哨兵当用户选择存下来。
+        // 否则恢复端会把 -1 写回 prefs，从此「键不存在」分支再也走不到，升级迁移永久失效。
+        val homeSubId = DataCardStore.homeSubId(context)
+        if (homeSubId >= 0) dataCard.put("home_sub_id", homeSubId)
         dataCard.put("rules_enabled", DataCardStore.rulesEnabled(context))
 
         val policies = JSONArray()
@@ -139,8 +142,13 @@ object ConfigBackup {
     }
 
     private fun applyDataCard(context: Context, section: JSONObject) {
-        if (section.has("home_sub_id")) {
-            DataCardStore.setHomeSubId(context, section.optInt("home_sub_id", -1))
+        // -1 与缺键都表示「这份备份里没有主卡」：清掉本地键（而不是写 -1 进去），
+        // 让 prefs 保持「没有这个键」的状态，下次读到会重新做一次一次性迁移。
+        val restoredHome = section.optInt("home_sub_id", DataCardStore.HOME_SUB_UNSET)
+        if (restoredHome >= 0) {
+            DataCardStore.setHomeSubId(context, restoredHome)
+        } else {
+            DataCardStore.clearHomeSubId(context)
         }
         if (section.has("rules_enabled")) {
             DataCardStore.setRulesEnabled(context, section.optBoolean("rules_enabled", true))
@@ -161,7 +169,9 @@ object ConfigBackup {
                     customWifiDowngrade = o.optBoolean("customWifiDowngrade", false),
                 )
             }
-            if (list.isNotEmpty()) DataCardStore.savePolicies(context, list)
+            // 空数组 = 清空，与下面 rules 的处理保持一致：用户导出后删掉全部策略再导入，
+            // 意图就是「不要任何策略」；跳过空表会把旧策略留在机器上，与备份内容正好相反。
+            DataCardStore.savePolicies(context, list)
         }
 
         section.optJSONArray("rules")?.let { arr ->

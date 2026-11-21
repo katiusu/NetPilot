@@ -15,7 +15,8 @@ import kotlinx.coroutines.withContext
  * 特权通道选择器：**Root 优先，Shizuku 兜底**，都不行返回 null。
  *
  * - 结果缓存，`forceRefresh = true` 强制重探；缓存通道掉线（su 被撤销 / Shizuku 退出）会自动重探；
- * - 用 [Mutex] 串行化，多个页面同时 acquire 也只会探测一次；
+ * - 两把锁：probe 串行用 [probeMutex]，缓存引用用 [mutex]。probe 是慢操作（bind service、
+ *   起 app_process），绝不能占着读写锁做 —— 否则持有的那段时间里所有制式读写都得排队。
  * - 两条通道的失败原因都留在 [status] / [statuses] 里供 UI 展示
  *   （"没有 root" 和 "Shizuku 没授权" 要区分开，后者用户自己能修）；
  * - 除通道选择外还提供一层**门面 API**（[getMode] / [setMode] / [setDefaultDataSubId] …），
@@ -62,15 +63,20 @@ object ControlManager {
     @Volatile
     private var rootCacheStale = true
 
-    /** [getMode] 的短期记忆（1.5.3），见 [MODE_MEMO_MS]。 */
-    @Volatile
-    private var modeMemoSubId = -1
+    /**
+     * [getMode] 的短期记忆（1.5.3），见 [MODE_MEMO_MS]。
+     *
+     * subId / 值 / 时间必须**一次读、一次写**：以前是三个独立的 @Volatile 字段，getMode / setMode
+     * 在锁外按下标读写，并发时会读到「新的 subId + 旧的值」这种半新半旧的组合，把 A 卡的制式
+     * 当成 B 卡的答案返回。合成一条不可变记录后，任何一次读到的组合都是某次写入的完整快照。
+     */
+    private data class ModeMemo(val subId: Int, val value: Int, val atMs: Long)
 
     @Volatile
-    private var modeMemoValue = -1
+    private var modeMemo: ModeMemo? = null
 
-    @Volatile
-    private var modeMemoAtMs = 0L
+    /** 探测串行锁：只保证「同一时刻只有一个线程在 probe」，不参与缓存读写。 */
+    private val probeMutex = Mutex()
 
     /** 最近一次 [acquire] 的结果。 */
     val activeMethod: ControlMethod get() = cachedMethod
@@ -88,20 +94,44 @@ object ControlManager {
      * 拿到可用通道；`forceRefresh = true` 时忽略缓存重新探测。
      * 注意本方法可能触发 su 探测（最长 5s）与 Shizuku 绑定（最长 15s），必须在协程里调用。
      */
-    suspend fun acquire(forceRefresh: Boolean = false): NetworkControlChannel? = mutex.withLock {
-        val current = cachedChannel
-        if (!forceRefresh && current != null) {
-            val alive = withContext(Dispatchers.IO) {
-                runCatching { current.isConnected() }.getOrDefault(false)
-            }
-            if (alive) return@withLock current
-            Log.w(TAG, "cached ${current.method} channel is no longer connected; re-probing")
-            WriteDiag.always("缓存的 ${current.method} 通道已掉线，重新探测特权通道")
-            runCatching { current.destroy() }
-            cachedChannel = null
-            cachedMethod = ControlMethod.NONE
+    suspend fun acquire(forceRefresh: Boolean = false): NetworkControlChannel? {
+        // 快路径：只读缓存引用 + 判断存活。probe 不在这把锁里 —— 它是慢操作
+        // （bind service、起 app_process），持锁做 probe 会让所有制式读写排队、界面卡顿。
+        fastChannel(forceRefresh)?.let { return it }
+        return probeMutex.withLock {
+            // 等锁期间别的线程可能刚探测完：复核一次，避免同一通道被重复 probe。
+            fastChannel(forceRefresh)?.let { return@withLock it }
+            probe(forceRefresh)
         }
+    }
 
+    /** 缓存通道还活着就直接返回；没有缓存、要求重探或已掉线时返回 null。 */
+    private suspend fun fastChannel(forceRefresh: Boolean): NetworkControlChannel? {
+        if (forceRefresh) return null
+        val current = cachedChannel ?: return null
+        val alive = withContext(Dispatchers.IO) {
+            runCatching { current.isConnected() }.getOrDefault(false)
+        }
+        if (alive) return current
+        Log.w(TAG, "cached ${current.method} channel is no longer connected; re-probing")
+        WriteDiag.always("缓存的 ${current.method} 通道已掉线，重新探测特权通道")
+        mutex.withLock {
+            // 只丢自己读到的那一条：期间可能已有别的线程换上了新通道。
+            if (cachedChannel === current) {
+                cachedChannel = null
+                cachedMethod = ControlMethod.NONE
+            }
+        }
+        runCatching { current.destroy() }
+        return null
+    }
+
+    /**
+     * 真正探测（调用方必须已持有 [probeMutex]）。慢操作全在这里，**不持 [mutex]**；
+     * 只有写缓存那一步才进 [mutex]，所以探测期间别的线程读缓存不会被挡住。
+     * 探测本身仍然串行，并发 acquire 的结果与以前一致：先探测完的写缓存，后来的直接命中。
+     */
+    private suspend fun probe(forceRefresh: Boolean): NetworkControlChannel? {
         // su 结论缓存也在 reset/forceRefresh 时失效
         val refreshRoot = forceRefresh || rootCacheStale
         withContext(Dispatchers.IO) {
@@ -114,9 +144,9 @@ object ControlManager {
             val rootStatus = withContext(Dispatchers.IO) { root.probe() }
             lastRootStatus = rootStatus
             if (rootStatus is ChannelStatus.Available) {
-                adopt(root)
+                publish(root)
                 WriteDiag.always("已选用特权通道：Root（su）")
-                return@withLock root
+                return root
             }
             runCatching { root.destroy() }
         }
@@ -134,21 +164,32 @@ object ControlManager {
             val shizukuStatus = shizuku.probe()
             lastShizukuStatus = shizukuStatus
             if (shizukuStatus is ChannelStatus.Available) {
-                adopt(shizuku)
+                publish(shizuku)
                 WriteDiag.always("已选用特权通道：Shizuku")
-                return@withLock shizuku
+                return shizuku
             }
             runCatching { shizuku.destroy() }
         }
 
-        cachedChannel = null
-        cachedMethod = ControlMethod.NONE
+        publish(null)
         Log.w(TAG, "no usable privileged channel: root=$lastRootStatus shizuku=$lastShizukuStatus")
         WriteDiag.warn(
             "没有可用的特权通道：Root=" + describe(lastRootStatus) +
                 "；Shizuku=" + describe(lastShizukuStatus)
         )
-        null
+        return null
+    }
+
+    /** 写缓存：通道引用与它的方法名必须成对更新，所以统一在 [mutex] 里做。 */
+    private suspend fun publish(channel: NetworkControlChannel?) {
+        mutex.withLock {
+            if (channel == null) {
+                cachedChannel = null
+                cachedMethod = ControlMethod.NONE
+            } else {
+                adopt(channel)
+            }
+        }
     }
 
     /**
@@ -180,9 +221,7 @@ object ControlManager {
         lastShizukuStatus = null
         rootCacheStale = true
         // 1.5.3：通道换了，制式的短期记忆也必须一起作废。
-        modeMemoSubId = -1
-        modeMemoValue = -1
-        modeMemoAtMs = 0L
+        modeMemo = null
     }
 
     // ---------------- 门面 API（给 NetPilot / DataCardEngine / MonitorEngine 直接调） ----------------
@@ -223,14 +262,14 @@ object ControlManager {
      */
     suspend fun getMode(subId: Int, useMemo: Boolean = true): Int {
         val now = System.currentTimeMillis()
-        if (useMemo && modeMemoValue >= 0 && modeMemoSubId == subId && now - modeMemoAtMs < MODE_MEMO_MS) {
-            return modeMemoValue
+        // 一次读出完整快照，不会出现「新 subId 配旧值」这种半新半旧的组合。
+        val memo = modeMemo
+        if (useMemo && memo != null && memo.subId == subId && now - memo.atMs < MODE_MEMO_MS) {
+            return memo.value
         }
         val fresh = acquire()?.getMode(subId) ?: -1
         if (useMemo && fresh >= 0) {
-            modeMemoSubId = subId
-            modeMemoValue = fresh
-            modeMemoAtMs = now
+            modeMemo = ModeMemo(subId, fresh, now)
         }
         return fresh
     }
@@ -239,9 +278,7 @@ object ControlManager {
     suspend fun setMode(subId: Int, mode: NetworkMode): Boolean {
         val ok = acquire()?.setMode(subId, mode) ?: false
         if (ok) {
-            modeMemoSubId = subId
-            modeMemoValue = mode.value
-            modeMemoAtMs = System.currentTimeMillis()
+            modeMemo = ModeMemo(subId, mode.value, System.currentTimeMillis())
         }
         return ok
     }

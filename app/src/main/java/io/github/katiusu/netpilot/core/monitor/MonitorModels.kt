@@ -303,6 +303,14 @@ data class DowngradeState(
     val appliedMode: Int = -1,
     /** 降级前读到的模式值，-1 表示读不到，恢复时退回运营商默认值。 */
     val savedMode: Int = -1,
+    /**
+     * 恢复写回连续失败的次数（0 = 没有待重试的写回）。
+     *
+     * 写回失败时不能把降级态清掉：`savedMode` 是「降级前制式」的唯一副本，
+     * 清掉就再也写不回去。所以失败只累加这个计数，状态保持 `active`，
+     * 下一轮 tick 继续重试；到上限才停手（仍不清 `savedMode`）。
+     */
+    val restoreAttempts: Int = 0,
     val lastEvent: String = "",
     val lastEventAtMs: Long = 0L,
 ) {

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.PowerManager
+import android.os.SystemClock
 import io.github.katiusu.netpilot.core.ServicesGate
 import io.github.katiusu.netpilot.core.monitor.LogStore
 
@@ -29,6 +30,24 @@ object ScreenStateGate {
 
     @Volatile
     private var registered = false
+
+    /**
+     * 两次重排之间的最小间隔。
+     *
+     * [KeepAliveScheduler.schedule] 用的是 `setInexactRepeating`，**每次调用都会把下一次触发
+     * 重置成「现在 + 15 分钟」**。亮灭屏抖动（口袋里的接近感应、通知点亮的瞬间屏幕）如果每次都
+     * 重排，15 分钟的倒计时就永远走不完 —— 心跳被饿死。30 秒足够滤掉这类抖动，而人手的一次
+     * 亮屏→灭屏间隔通常远大于它。
+     */
+    private const val MIN_RESCHEDULE_INTERVAL_MS = 30_000L
+
+    /** 当前已排的闹钟是按哪个屏幕状态排的；null = 本进程还没排过（或不知道）。 */
+    @Volatile
+    private var armedForScreenOn: Boolean? = null
+
+    /** 上一次真正重排的时刻（elapsedRealtime）；0 = 本进程还没排过。 */
+    @Volatile
+    private var lastRescheduleAt = 0L
 
     /**
      * 屏幕是否亮着。
@@ -66,12 +85,51 @@ object ScreenStateGate {
             runCatching {
                 val app = context.applicationContext
                 // 总开关关着就什么都不做，免得把闹钟又带回来。
-                if (ServicesGate.enabled(app)) KeepAliveScheduler.schedule(app)
+                if (!ServicesGate.enabled(app)) return@runCatching
+                // 用广播的 action 判定目标状态，而不是再读一次 PowerManager：
+                // 广播是排队投递的，等我们处理时屏幕可能已经又变了一次，读到的会是那一次的值。
+                val screenOn = when (intent.action) {
+                    Intent.ACTION_SCREEN_ON -> true
+                    Intent.ACTION_SCREEN_OFF -> false
+                    else -> isScreenOn(app)
+                }
+                if (requestReschedule(app, screenOn)) {
+                    LogStore.debug(TAG, "按「" + (if (screenOn) "亮屏" else "灭屏") + "」重排保活闹钟")
+                }
             }.onFailure {
                 runCatching {
                     LogStore.error(TAG, "处理屏幕状态变化失败：${it.message ?: it.javaClass.simpleName}")
                 }
             }
         }
+    }
+
+    /**
+     * 按新的屏幕状态决定要不要重排，返回是否真的排了。三条规则按顺序：
+     *
+     * 1. **闹钟不存在 ⇒ 一定排。** 这条是节流的安全阀：不管抖动多频繁，只要系统把闹钟清了
+     *    （重启、强制停止、系统回收），下一次屏幕事件就会补上，绝不会「节流把心跳彻底节没」。
+     * 2. **闹钟已经是按当前屏幕状态排的 ⇒ 不排。** 重复广播、状态没变都落在这里；
+     *    重排只会把 15 分钟倒计时重置，对这个场景百害无一利。
+     * 3. **状态确实变了、但距上次重排不到 [MIN_RESCHEDULE_INTERVAL_MS] ⇒ 不排**，且**不**更新
+     *    [armedForScreenOn]：让「闹钟类型落后于屏幕状态」保持可见，下一次屏幕事件会补上。
+     *    宁可短暂不匹配，也不要让倒计时被连续重置。
+     */
+    private fun requestReschedule(app: Context, screenOn: Boolean): Boolean {
+        if (!KeepAliveScheduler.isScheduled(app)) {
+            arm(app, screenOn)
+            return true
+        }
+        if (armedForScreenOn == screenOn) return false
+        val now = SystemClock.elapsedRealtime()
+        if (lastRescheduleAt != 0L && now - lastRescheduleAt < MIN_RESCHEDULE_INTERVAL_MS) return false
+        arm(app, screenOn)
+        return true
+    }
+
+    private fun arm(app: Context, screenOn: Boolean) {
+        KeepAliveScheduler.schedule(app)
+        armedForScreenOn = screenOn
+        lastRescheduleAt = SystemClock.elapsedRealtime()
     }
 }
