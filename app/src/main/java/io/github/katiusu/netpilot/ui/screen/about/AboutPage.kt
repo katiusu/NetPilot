@@ -424,7 +424,7 @@ private fun AboutContent(
                     }
 
                     Card(
-                        modifier = cardModifier.padding(top = 12.dp),
+                        modifier = Modifier.padding(top = 12.dp).then(cardModifier),
                         colors = cardColors,
                     ) {
                         ArrowPreference(
