@@ -20,6 +20,8 @@ jobs:
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          SDKMGR="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
+          "$SDKMGR" "platforms;android-37.2" "build-tools;37.0.0" 2>&1 | tail -3 || true
       - name: Gradle build
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}

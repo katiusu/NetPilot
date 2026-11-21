@@ -16,10 +16,12 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "io.github.katiusu.netpilot"
-    // Miuix 0.9.4 的 AAR 元数据要求依赖方 compileSdk >= 37，故用 37；
+    // Miuix 0.9.5 的 AAR 元数据要求 compileSdk >= 37.2，故用 release(37){minorApiLevel=2}；
     // build-tools 固定 36.0.0：SDK 上 37.0.0 只有 x86_64 产物，本容器（aarch64 + PRoot）跑不了，
     // 而 36.0.0 内置的 aapt2 是 aarch64 且能正常解析 android-37.0 的 resources.arsc。
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
