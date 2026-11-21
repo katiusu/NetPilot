@@ -9,6 +9,7 @@ import io.github.katiusu.netpilot.prefs.OptionSpec
 import top.yukonga.miuix.kmp.preference.CheckboxLocation
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
 import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
+import io.github.katiusu.netpilot.ui.util.LocalPreferenceBackdrop
 
 @Composable
 fun HookDropdownCard(

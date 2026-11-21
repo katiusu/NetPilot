@@ -32,6 +32,7 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
+import io.github.katiusu.netpilot.ui.util.LocalPreferenceBackdrop
 
 @Composable
 internal fun RuleEditorDialog(
