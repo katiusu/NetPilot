@@ -13,7 +13,7 @@ shizuku = "13.1.5"
 # 隐藏 API 豁免（TelephonyReflection 反射 setPreferredNetworkTypeBitmask 必需）
 hiddenapibypass = "6.1"
 
-miuix = "0.9.4"
+miuix = "0.9.5-beta02"
 materialIcons = "1.7.8"
 
 # 渐变模糊库
@@ -43,6 +43,9 @@ miuix-preference = { group = "top.yukonga.miuix.kmp", name = "miuix-preference-a
 miuix-icons = { group = "top.yukonga.miuix.kmp", name = "miuix-icons-android", version.ref = "miuix" }
 miuix-squircle = { group = "top.yukonga.miuix.kmp", name = "miuix-squircle-android", version.ref = "miuix" }
 miuix-navigation = { group = "top.yukonga.miuix.kmp", name = "miuix-nav-android", version.ref = "miuix" }
+miuix-material = { group = "top.yukonga.miuix.kmp", name = "miuix-material-android", version.ref = "miuix" }
+miuix-glass = { group = "top.yukonga.miuix.kmp", name = "miuix-glass-android", version.ref = "miuix" }
+miuix-glass-icons = { group = "top.yukonga.miuix.kmp", name = "miuix-glass-icons-android", version.ref = "miuix" }
 # 别名为 2 段（避免 IDE 对三段版本目录访问器的解析问题），实际坐标为 material-icons-core
 material-icons = { group = "androidx.compose.material", name = "material-icons-core", version.ref = "materialIcons" }
 

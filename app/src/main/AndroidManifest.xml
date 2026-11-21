@@ -113,8 +113,8 @@
             android:name=".core.keepalive.KeepAliveReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.katiusu.netpilot.action.KEEPALIVE_HEARTBEAT" />
-                <action android:name="com.katiusu.netpilot.action.KEEPALIVE_RESTART" />
+                <action android:name="io.github.katiusu.netpilot.action.KEEPALIVE_HEARTBEAT" />
+                <action android:name="io.github.katiusu.netpilot.action.KEEPALIVE_RESTART" />
             </intent-filter>
         </receiver>
 
@@ -162,15 +162,15 @@
             android:enabled="false"
             android:exported="true">
             <intent-filter>
-                <action android:name="com.katiusu.netpilot.action.SET_NETWORK_MODE" />
-                <action android:name="com.katiusu.netpilot.action.SET_PRESET" />
-                <action android:name="com.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE" />
-                <action android:name="com.katiusu.netpilot.action.SET_AUTO_DOWNGRADE" />
-                <action android:name="com.katiusu.netpilot.action.SET_DATA_SIM" />
-                <action android:name="com.katiusu.netpilot.action.SWITCH_DATA_SIM" />
-                <action android:name="com.katiusu.netpilot.action.LOCK_LTE" />
-                <action android:name="com.katiusu.netpilot.action.SAMPLE_NOW" />
-                <action android:name="com.katiusu.netpilot.action.GET_STATUS" />
+                <action android:name="io.github.katiusu.netpilot.action.SET_NETWORK_MODE" />
+                <action android:name="io.github.katiusu.netpilot.action.SET_PRESET" />
+                <action android:name="io.github.katiusu.netpilot.action.TOGGLE_AUTO_DOWNGRADE" />
+                <action android:name="io.github.katiusu.netpilot.action.SET_AUTO_DOWNGRADE" />
+                <action android:name="io.github.katiusu.netpilot.action.SET_DATA_SIM" />
+                <action android:name="io.github.katiusu.netpilot.action.SWITCH_DATA_SIM" />
+                <action android:name="io.github.katiusu.netpilot.action.LOCK_LTE" />
+                <action android:name="io.github.katiusu.netpilot.action.SAMPLE_NOW" />
+                <action android:name="io.github.katiusu.netpilot.action.GET_STATUS" />
             </intent-filter>
         </receiver>
 

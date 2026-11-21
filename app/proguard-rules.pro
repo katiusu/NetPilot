@@ -13,12 +13,12 @@
 # 1) Root 通道的命令行入口：由 root 的 app_process 直接按类名启动
 #
 #    CLASSPATH=/data/app/~~xxx/base.apk app_process /system/bin \
-#        com.katiusu.netpilot.core.priv.PrivilegedCli probe
+#        io.github.katiusu.netpilot.core.priv.PrivilegedCli probe
 #
 #    类名写死在 WriteCompat.MAIN_CLASS（core/priv/WriteCompat.kt 的 MAIN_CLASS 常量）；
 #    app_process 只认 public static void main(String[])。
 # ---------------------------------------------------------------------------
--keep class com.katiusu.netpilot.core.priv.PrivilegedCli {
+-keep class io.github.katiusu.netpilot.core.priv.PrivilegedCli {
     public static void main(java.lang.String[]);
 }
 
@@ -30,7 +30,7 @@
 #    （Shizuku 用 app_process 拉起的用户服务），所以「类名 + 无参构造」必须保留；
 #    跨进程调用的方法体也要跟着 AIDL 一起留下。
 # ---------------------------------------------------------------------------
--keep class com.katiusu.netpilot.core.priv.shizuku.ShizukuControllerService {
+-keep class io.github.katiusu.netpilot.core.priv.shizuku.ShizukuControllerService {
     <init>();
     *;
 }
@@ -42,6 +42,6 @@
 #    但接口名与 Stub/Proxy 类是两端各自加载的，显式保留最稳妥（AGP 只对 AIDL 生成的
 #    类做基本保护，接口本身在混淆后仍可能被内联/裁剪）。
 # ---------------------------------------------------------------------------
--keep interface com.katiusu.netpilot.core.priv.shizuku.IShizukuController { *; }
--keep class com.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub { *; }
--keep class com.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub$Proxy { *; }
+-keep interface io.github.katiusu.netpilot.core.priv.shizuku.IShizukuController { *; }
+-keep class io.github.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub { *; }
+-keep class io.github.katiusu.netpilot.core.priv.shizuku.IShizukuController$Stub$Proxy { *; }

@@ -15,7 +15,7 @@ val keystoreProps = Properties().apply {
 }
 
 android {
-    namespace = "com.katiusu.netpilot"
+    namespace = "io.github.katiusu.netpilot"
     // Miuix 0.9.4 的 AAR 元数据要求依赖方 compileSdk >= 37，故用 37；
     // build-tools 固定 36.0.0：SDK 上 37.0.0 只有 x86_64 产物，本容器（aarch64 + PRoot）跑不了，
     // 而 36.0.0 内置的 aapt2 是 aarch64 且能正常解析 android-37.0 的 resources.arsc。
@@ -23,7 +23,7 @@ android {
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
-        applicationId = "com.katiusu.netpilot"
+        applicationId = "io.github.katiusu.netpilot"
         minSdk = 34
         // targetSdk 36（Android 16）。Play 的 targetSdk 36 提交要求已于 2026-08-31 生效
         // （可申请延期到 2026-11-01），继续用 34 已经无法提交更新。本应用已满足 36 的全部强制项：
@@ -38,7 +38,7 @@ android {
         // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
         // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
         targetSdk = 36
-        versionCode = 2026101800
+        versionCode = 20
         // versionName 是给人看的语义版本；versionCode 是构建号（2026100505 = 2026-10-05 第 5 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
         // 1.5.1：把「provider 不认调用方身份」与「真的缺权限」分开（uid 名单 / AMS 应用进程记录 /
@@ -48,7 +48,7 @@ android {
         // 所以本版可以直接覆盖安装那个包。
         // 1.5.4：锁屏期间保活心跳换成不唤醒闹钟（深睡）+ 手动切换制式后回读确认并如实记录
         //   + Shizuku 晚于应用启动时也能清掉残留的用户服务进程。
-        versionName = "1.6.0"
+        versionName = "2.0.0-rc.1"
 
     }
 
@@ -120,12 +120,14 @@ dependencies {
 
     implementation(libs.miuix.core)
     implementation(libs.miuix.ui)
-    implementation(libs.miuix.shader)
     implementation(libs.miuix.blur)
     implementation(libs.miuix.preference)
     implementation(libs.miuix.icons)
     implementation(libs.miuix.squircle)
     implementation(libs.miuix.navigation)
+    implementation(libs.miuix.material)
+    implementation(libs.miuix.glass)
+    implementation(libs.miuix.glass.icons)
     implementation(libs.material.icons)
     implementation(libs.haze)
     // Shizuku：api 提供 Shizuku.newProcess / 权限接口，provider 提供 ContentProvider 授权入口

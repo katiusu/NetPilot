@@ -210,4 +210,7 @@
     <string name="update_version_latest">最新版本</string>
     <string name="update_notes_title">更新内容</string>
     <string name="update_ok">知道了</string>
+    <string name="settings_footer">NetPilot %1$s</string>
+    <string name="current_changelog">本次更新</string>
+    <string name="current_changelog_unavailable">暂无更新说明</string>
 </resources>

@@ -11,7 +11,7 @@ cd "$(dirname "$0")" || exit 1
 export GRADLE_USER_HOME=/root/.gradle
 LOG=/tmp/np_build.log
 TASK="${*:-:app:assembleDebug}"
-./gradlew $TASK --console=plain \
+bash ./gradlew $TASK --console=plain \
   -Dorg.gradle.jvmargs="-Xmx1152m -XX:MaxMetaspaceSize=320m -XX:+UseSerialGC -Dfile.encoding=UTF-8" \
   -Dorg.gradle.configuration-cache.parallel=false \
   > "$LOG" 2>&1

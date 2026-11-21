@@ -1,0 +1,49 @@
+name: Build
+on:
+  push:
+    branches: [ "new-ui" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: android-actions/setup-android@v3
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-37" "platform-tools" "build-tools;37.0.0" || sdkmanager "platforms;android-37" "platform-tools" "build-tools;36.0.0"
+      - name: Gradle build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release.keystore
+            printf 'storeFile=release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+          fi
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dorg.gradle.vfs.watch=false
+      - name: Verify APK
+        run: |
+          python3 - <<'EOF'
+          import glob, zipfile
+          for apk in glob.glob("app/build/outputs/apk/release/*.apk"):
+              names = zipfile.ZipFile(apk).namelist()
+              has_manifest = "AndroidManifest.xml" in names
+              has_arsc = "resources.arsc" in names
+              print(f"APK_CHECK: {apk} entries={len(names)} manifest={has_manifest} arsc={has_arsc}")
+              assert has_manifest and has_arsc and len(names) >= 150, "broken apk"
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: netpilot-release
+          path: app/build/outputs/apk/release/*.apk
