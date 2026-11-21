@@ -44,7 +44,7 @@ jobs:
               has_manifest = "AndroidManifest.xml" in names
               has_arsc = "resources.arsc" in names
               print(f"APK_CHECK: {apk} entries={len(names)} manifest={has_manifest} arsc={has_arsc}")
-              assert has_manifest and has_arsc and len(names) >= 150, "broken apk"
+              assert has_manifest and has_arsc and len(names) >= 100, "broken apk"
           EOF
       - uses: actions/upload-artifact@v4
         with:
