@@ -14,11 +14,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: android-actions/setup-android@v3
-      - name: Install SDK packages
+      - name: Configure Android SDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-37" "platform-tools" "build-tools;37.0.0" || sdkmanager "platforms;android-37" "platform-tools" "build-tools;36.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
       - name: Gradle build
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
