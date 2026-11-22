@@ -147,8 +147,8 @@ class MtkAtBackend(
     }
 
     private fun successNote(mapping: EratMapping): String {
-        val base = "已写入 " + MtkEratTable.describeRat(mapping.rat)
-            + "，prefer=" + mapping.prefer + "，回读确认生效"
+        val base = "已写入 " + MtkEratTable.describeRat(mapping.rat) +
+            "，prefer=" + mapping.prefer + "，回读确认生效"
         return if (mapping.lenient) base + "（宽松映射：" + mapping.note + "）" else base
     }
 
@@ -163,8 +163,8 @@ class MtkAtBackend(
             val mask = EratRat.ofOrNull(raw)?.let { MtkEratTable.maskOf(it) }
             raw.toString() + "=" + (mask?.toString() ?: "表外")
         }
-        return "当前 rat " + ratText + "；方言参数量 " + (range?.paramCount ?: -1)
-            + "；" + if (canWrite) "可读可写" else "只读（=？回包不足两参，拒写）"
+        val writeText = if (canWrite) "可读可写" else "只读（回包不足两参，拒写）"
+        return "当前 rat " + ratText + "；方言参数量 " + (range?.paramCount ?: -1) + "；" + writeText
     }
 
     /** modem 任一回读字段能覆盖目标就算命中。字段语义没有权威来源，所以「任一候选」而不是指定字段。 */

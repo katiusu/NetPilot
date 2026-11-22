@@ -117,7 +117,7 @@ class RootController(private val context: Context) : NetworkControlChannel {
         // 第 4 条：联发科 AT 直写（实验，默认关闭）。放最后是刻意的 ——
         // AT 直接改 modem，不经过 framework 与 TelephonyProvider，上面三条读通道都看不见结果；
         // 只要 ITelephony / 权威存储 / settings 有一条能生效，就不该动用这条。
-        atSetMode(subId, mode)
+        return atSetMode(subId, mode)
     }
 
     /**
