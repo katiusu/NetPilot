@@ -12,6 +12,7 @@ object LocaleHelper {
     enum class Language(val code: String) {
         SYSTEM(""),
         ZH_CN("zh-CN"),
+        ZH_TW("zh-TW"),
         EN("en")
     }
 
