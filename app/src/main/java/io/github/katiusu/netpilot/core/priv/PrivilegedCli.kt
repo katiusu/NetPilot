@@ -3,6 +3,9 @@ package io.github.katiusu.netpilot.core.priv
 import android.telephony.SubscriptionManager
 import android.util.Log
 import io.github.katiusu.netpilot.core.mode.NetworkModeBitmaskMapper
+import io.github.katiusu.netpilot.core.priv.at.AtApplyResult
+import io.github.katiusu.netpilot.core.priv.at.EratRat
+import io.github.katiusu.netpilot.core.priv.at.MtkAtBackend
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
@@ -24,6 +27,9 @@ import java.util.concurrent.TimeUnit
  * setslot <slot>         -> SETSLOT <true|false>
  * slots                  -> SLOTS <slot>:<subId>,...
  * probe                  -> PROBE OK | PROBE ERR <reason>
+ * atprobe <slot>        -> ATPROBE <一句话结论>
+ * atsetmode <mode> <slot> -> ATSET <true|false> <说明>
+ * atrestore <rat> <slot> -> ATSET <true|false> <说明>
  * 其它                   -> ERR unknown
  * ```
  *
@@ -101,6 +107,28 @@ object PrivilegedCli {
                 }
             }
             "probe" -> TelephonyReflection.probe()?.let { "PROBE ERR $it" } ?: "PROBE OK"
+            "atprobe" -> {
+                val slot = second?.toIntOrNull() ?: 0
+                val probe = MtkAtBackend(slot).probe()
+                WriteDiag.always(
+                    "cli atprobe slot=" + slot + " canRead=" + probe.canRead +
+                        " canWrite=" + probe.canWrite
+                )
+                "ATPROBE " + probe.note
+            }
+            "atsetmode" -> {
+                val modeValue = second?.toIntOrNull() ?: return "ATSET false 缺少制式参数"
+                val slot = argv.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
+                val result = MtkAtBackend(slot).apply(modeValue)
+                WriteDiag.detail("cli atsetmode slot=" + slot + " mode=" + modeValue)
+                formatAtResult(result)
+            }
+            "atrestore" -> {
+                val raw = second?.toIntOrNull() ?: return "ATSET false 缺少 rat 参数"
+                val rat = EratRat.ofOrNull(raw) ?: return "ATSET false rat 越界（应在 0-31）"
+                val slot = argv.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
+                formatAtResult(MtkAtBackend(slot).restore(rat))
+            }
             else -> "ERR unknown"
         }
     }
@@ -393,3 +421,12 @@ object PrivilegedCli {
     }
 
 }
+
+/** 把 AT 写入结论压成契约要求的一行：ATSET <true|false> <说明>。 */
+private fun formatAtResult(result: AtApplyResult): String = when (result) {
+    is AtApplyResult.Succeeded -> "ATSET true " + result.note
+    is AtApplyResult.AlreadyApplied -> "ATSET true " + result.note
+    is AtApplyResult.Rejected -> "ATSET false " + result.reason
+    AtApplyResult.Unsupported -> "ATSET false 该制式在联发科上没有确定的 rat，未写入"
+}
+

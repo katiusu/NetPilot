@@ -110,20 +110,52 @@ object UpdateChecker {
     /**
      * [latest] 是否比 [current] 新。
      *
-     * 按 `[.\-+]` 分段逐段比数字，逐段相等则视为**不是**新版本（同版本不提示更新）。
-     * 非数字段按 0 处理 —— 版本号里出现 `beta` 之类后缀时只会保守地判「不更新」。
+     * 先按版本分隔符逐段比数字；数字核心相同时，带预发布后缀的一方更旧
+     * （2.0.0-rc.3 < 2.0.0），两边都有后缀再逐段比后缀。
+     * 以前把 -rc.3 的 3 当成第 5 段数字，于是 rc 被判定比正式版还新：
+     * 仓库把 rc 标成正式 Release 时会提示更新，实际是降级。
      */
     fun isNewerVersion(latest: String, current: String): Boolean {
         val l = latest.trim().removePrefix("v").removePrefix("V")
         val c = current.trim().removePrefix("v").removePrefix("V")
         if (l == c) return false
-        val lp = l.split(Regex("[.\\-+]"))
-        val cp = c.split(Regex("[.\\-+]"))
-        for (i in 0 until maxOf(lp.size, cp.size)) {
-            val lv = lp.getOrNull(i)?.toIntOrNull() ?: 0
-            val cv = cp.getOrNull(i)?.toIntOrNull() ?: 0
+        val (ln, lpre) = splitVersion(l)
+        val (cn, cpre) = splitVersion(c)
+        for (i in 0 until maxOf(ln.size, cn.size)) {
+            val lv = ln.getOrNull(i) ?: 0
+            val cv = cn.getOrNull(i) ?: 0
             if (lv != cv) return lv > cv
         }
+        // 数字核心一样：没有后缀的是正式版，比任何预发布版都新。
+        if (lpre.isEmpty()) return cpre.isNotEmpty()
+        if (cpre.isEmpty()) return false
+        for (i in 0 until maxOf(lpre.size, cpre.size)) {
+            val lv = lpre.getOrNull(i) ?: return false
+            val cv = cpre.getOrNull(i) ?: return true
+            val ln2 = lv.toIntOrNull()
+            val cn2 = cv.toIntOrNull()
+            val cmp = when {
+                ln2 != null && cn2 != null -> ln2.compareTo(cn2)
+                // SemVer：纯数字段低于字母段。
+                ln2 != null -> -1
+                cn2 != null -> 1
+                else -> lv.compareTo(cv)
+            }
+            if (cmp != 0) return cmp > 0
+        }
         return false
+    }
+
+    /** 拆成「数字段」与「预发布后缀段」；后缀从第一个非数字段开始。 */
+    private fun splitVersion(version: String): Pair<List<Int>, List<String>> {
+        val parts = version.split(Regex('[.+-]'))
+        val numbers = ArrayList<Int>(parts.size)
+        val suffix = ArrayList<String>()
+        for (part in parts) {
+            val n = part.toIntOrNull()
+            if (n != null && suffix.isEmpty()) numbers += n
+            else if (part.isNotEmpty()) suffix += part
+        }
+        return numbers to suffix
     }
 }

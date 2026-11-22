@@ -133,7 +133,11 @@ object ConfigBackup {
     private fun applyPrefs(prefs: JSONObject) {
         prefs.keys().forEach { key ->
             val value: Any? = when (val raw = prefs.get(key)) {
-                is JSONArray -> (0 until raw.length()).map { raw.getString(it) }.toSet()
+                // getString 遇到数字/布尔元素会抛 JSONException，整份导入直接返回 false。
+                // 备份可能来自旧版本或手工改过，这里按「跳过非字符串项」处理。
+                is JSONArray -> (0 until raw.length())
+                    .mapNotNull { i -> raw.optString(i).takeIf { it.isNotEmpty() } }
+                    .toSet()
                 JSONObject.NULL -> null
                 else -> raw
             }

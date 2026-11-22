@@ -43,8 +43,11 @@ import io.github.katiusu.netpilot.core.NetPilot
 import io.github.katiusu.netpilot.core.ServicesGate
 import io.github.katiusu.netpilot.core.datacard.SimReader
 import io.github.katiusu.netpilot.core.keepalive.KeepAliveScheduler
+import io.github.katiusu.netpilot.core.monitor.LogStore
 import io.github.katiusu.netpilot.core.monitor.MonitorEngine
 import io.github.katiusu.netpilot.core.monitor.MonitorSettings
+import io.github.katiusu.netpilot.core.priv.AtWriteSettings
+import io.github.katiusu.netpilot.core.priv.ControlManager
 import io.github.katiusu.netpilot.core.priv.SystemCompatInfo
 import io.github.katiusu.netpilot.core.priv.WriteDiag
 import io.github.katiusu.netpilot.core.priv.WriteVerification
@@ -139,6 +142,14 @@ fun SettingsPageView(
             .getOrDefault(BasebandDetector.cached()?.summaryLine() ?: BasebandProfile.UNKNOWN_SUMMARY)
     }
 
+    // AT 直写开关的本地镜像：ConfigState 背后是普通 SharedPreferences，没有可订阅的流，
+    // 只有本地 state 才能让勾选立刻反馈；初值与 AtWriteSettings.enabled() 同源（默认关）。
+    var atWriteEnabled by remember { mutableStateOf(AtWriteSettings.enabled()) }
+    // 探测结论只放本次组合的内存里：失败不落盘，下次进来重新点，避免把一次偶发失败当成定论。
+    var atProbeResult by remember { mutableStateOf<String?>(null) }
+    var atProbing by remember { mutableStateOf(false) }
+    val atProbeScope = rememberCoroutineScope()
+
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
@@ -160,18 +171,22 @@ fun SettingsPageView(
     ) { uri: Uri? ->
         uri?.let {
             try {
-                val inputStream = context.contentResolver.openInputStream(it)
-                val reader = BufferedReader(InputStreamReader(inputStream))
-                val json = reader.readText()
-                reader.close()
-                inputStream?.close()
+                // openInputStream 可能返回 null（文件被移走 / 授权失效）。以前直接塞进
+                // InputStreamReader 抛 NPE，被 catch 笼统显示「导入失败」，也把流漏在外面。
+                val json = context.contentResolver.openInputStream(it)
+                    ?.use { stream -> BufferedReader(InputStreamReader(stream)).use { it.readText() } }
+                    ?: error("openInputStream 返回 null（文件不可读或授权已失效）")
                 if (ConfigBackup.importJson(context, json)) {
                     Toast.makeText(context, resources.getString(R.string.import_success), Toast.LENGTH_SHORT).show()
                     activity?.recreate()
                 } else {
                     Toast.makeText(context, resources.getString(R.string.import_failed), Toast.LENGTH_SHORT).show()
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                io.github.katiusu.netpilot.core.monitor.LogStore.warn(
+                    "ConfigBackup",
+                    "配置导入失败：" + (e.message ?: e.javaClass.simpleName),
+                )
                 Toast.makeText(context, resources.getString(R.string.import_failed), Toast.LENGTH_SHORT).show()
             }
         }
@@ -568,11 +583,54 @@ fun SettingsPageView(
                         title = stringResource(R.string.ka_compat_vendor),
                         summary = compat.vendor.ifBlank { unknownText },
                     )
-                    // 基带一行：文案在 core.radio 里拼好（含「无结论」的降级说法），
-                    // 这里只显示。标题用字面量是因为 strings.xml 不在本次允许改动的范围内。
+                    // 基带一行：文案在 core.radio 里拼好（含「无结论」的降级说法），这里只显示。
                     CompatInfoRow(
-                        title = "基带",
+                        title = stringResource(R.string.ka_compat_baseband),
                         summary = basebandLine,
+                    )
+                    // AT 直写开关：实验通道，默认关；写错会没网。真正的拦截在特权进程里，
+                    // 这里只是入口，所以不把「打开」当成能力承诺。
+                    SwitchPreference(
+                        title = stringResource(R.string.np_at_write_title),
+                        summary = stringResource(R.string.np_at_write_summary),
+                        checked = atWriteEnabled,
+                        onCheckedChange = { on ->
+                            atWriteEnabled = on
+                            AtWriteSettings.setEnabled(on)
+                        },
+                    )
+                    // 探测行沿用本页已有的可点击写法（AppArrowPreference），不新造组件。
+                    // 开关没开时不发探测：免得用户以为「点了没反应」是通道坏了。
+                    AppArrowPreference(
+                        title = stringResource(R.string.np_at_probe_title),
+                        summary = atProbeResult ?: stringResource(R.string.np_at_probe_summary),
+                        onClick = {
+                            if (!atProbing) {
+                                if (!AtWriteSettings.enabled()) {
+                                    atProbeResult = context.getString(R.string.np_at_probe_need_switch)
+                                } else {
+                                    atProbing = true
+                                    atProbeScope.launch {
+                                        atProbeResult = runCatching {
+                                            val channel = ControlManager.acquire()
+                                                ?: return@runCatching context.getString(R.string.np_at_probe_no_channel)
+                                            val slot = runCatching { channel.getDefaultSlot() }.getOrDefault(0)
+                                            val text = channel.atProbe(slot)
+                                                ?: return@runCatching context.getString(R.string.np_at_probe_no_at)
+                                            LogStore.info("Settings", "AT 探测（slot=" + slot + "）：" + text)
+                                            text
+                                        }.getOrElse { e ->
+                                            LogStore.warn(
+                                                "Settings",
+                                                "AT 探测异常：" + (e.message ?: e.javaClass.simpleName),
+                                            )
+                                            context.getString(R.string.np_at_probe_failed)
+                                        }
+                                        atProbing = false
+                                    }
+                                }
+                            }
+                        },
                     )
                     CompatInfoRow(
                         title = stringResource(R.string.ka_compat_brand),

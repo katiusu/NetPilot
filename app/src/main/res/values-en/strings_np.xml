@@ -212,4 +212,13 @@
     <string name="np_subsim_auto_lte_off">Off: leave the inactive SIM untouched</string>
     <string name="np_subsim_hint">Only affects the secondary SIM (not the default data SIM); requires a privileged channel.</string>
     <string name="np_subsim_manual_entry">SIM %1$d · %2$s</string>
+    <string name="ka_compat_baseband">Baseband</string>
+    <string name="np_at_write_title">Direct AT write (MediaTek experiment)</string>
+    <string name="np_at_write_summary">Writes the network mode straight to the modem, bypassing the framework. Off by default; a wrong write can drop your network, reboot or airplane mode restores it.</string>
+    <string name="np_at_probe_title">Test AT channel</string>
+    <string name="np_at_probe_summary">Tap to probe whether rild-atci can handshake and read the current RAT</string>
+    <string name="np_at_probe_need_switch">Turn on the switch above first</string>
+    <string name="np_at_probe_no_channel">No privileged channel available</string>
+    <string name="np_at_probe_no_at">This channel has no AT capability (needs root and the switch above on)</string>
+    <string name="np_at_probe_failed">Probe failed; see the log</string>
 </resources>

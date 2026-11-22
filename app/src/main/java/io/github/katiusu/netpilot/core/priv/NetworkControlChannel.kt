@@ -46,6 +46,15 @@ interface NetworkControlChannel {
     suspend fun activeSlots(): List<Pair<Int, Int>>
 
     /**
+     * 联发科 AT 直写探测（实验通道）。
+     *
+     * 返回一句话结论，null 表示这条通道没有 AT 能力。只有 root 通道会实现它：
+     * rild-atci socket 的 SELinux 类型是 gsmrild_socket，shell uid 2000 连不上，
+     * 所以 Shizuku 通道永远返回 null，而不是「尝试了但失败」。
+     */
+    suspend fun atProbe(slot: Int): String? = null
+
+    /**
      * 读一次**权威存储**（Android 11+ 是 TelephonyProvider 的 `siminfo.allowed_network_types`，
      * 不是 `Settings.Global.preferred_network_mode`）。见 [AuthStore]。
      *

@@ -213,4 +213,13 @@
     <string name="np_subsim_auto_lte_off">关闭：不改动非活跃卡的制式</string>
     <string name="np_subsim_hint">只影响次卡（非默认上网卡）；需要特权通道才能写入。</string>
     <string name="np_subsim_manual_entry">卡 %1$d · %2$s</string>
+    <string name="ka_compat_baseband">基带</string>
+    <string name="np_at_write_title">AT 直写（联发科实验）</string>
+    <string name="np_at_write_summary">绕过系统直接向 modem 写制式。默认关闭；写错可能没网，重启或飞行模式可复位。</string>
+    <string name="np_at_probe_title">测试 AT 通道</string>
+    <string name="np_at_probe_summary">点按探测 rild-atci 能否握手并读到当前制式</string>
+    <string name="np_at_probe_need_switch">请先打开上方开关</string>
+    <string name="np_at_probe_no_channel">没有可用的特权通道</string>
+    <string name="np_at_probe_no_at">通道没有 AT 能力（需 root 且开关已打开）</string>
+    <string name="np_at_probe_failed">探测失败，详见日志</string>
 </resources>

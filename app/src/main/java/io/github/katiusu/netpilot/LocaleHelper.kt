@@ -29,8 +29,18 @@ object LocaleHelper {
             .apply()
     }
 
+    /**
+     * 进程启动时的系统默认语言。wrapContext 会把选中语言写进 Locale.getDefault()
+     * （排序、toString、SimpleDateFormat 之类都读它），切回「跟随系统」时必须还原，
+     * 否则进程级默认语言会一直停在上一门语言上。
+     */
+    private val systemDefault: Locale = Locale.getDefault()
+
     fun wrapContext(context: Context, language: Language): Context {
-        if (language == Language.SYSTEM) return context
+        if (language == Language.SYSTEM) {
+            Locale.setDefault(systemDefault)
+            return context
+        }
         val locale = Locale.forLanguageTag(language.code)
         Locale.setDefault(locale)
 

@@ -160,7 +160,20 @@ object NetPilot {
             // 切换为仅 4G，实际制式没变」。日志必须自己把这件事说清楚，而不是等用户去对比系统设置。
             val actual = runCatching { ControlManager.getMode(subId, useMemo = false) }.getOrDefault(-1)
             lastModeWriteEffective = modeWriteAccepted(mode.value, actual)
-            if (!lastModeWriteEffective) {
+            // 实验通道：AT 直写改的是 modem，不经过 framework，所以系统回读必然还是旧值。
+            // 这种情况不能报「写入被系统收下但未被接受」—— 那是误导：真正被写的是 modem，
+            // 回读确认已经在子进程里紧跟写入之后做过（MtkAtBackend.verify）。
+            val viaAt = io.github.katiusu.netpilot.core.priv.AtWriteSettings.recentlyApplied() &&
+                io.github.katiusu.netpilot.core.priv.AtWriteSettings.lastAppliedMode() == mode.value
+            if (!lastModeWriteEffective && viaAt) {
+                lastModeWriteEffective = true
+                LogStore.info(
+                    TAG,
+                    "卡 " + subId + " 已由 AT 直写切换为 " + mode.label +
+                        "（绕过 framework，系统回读仍是 " + NetworkMode.labelOf(actual) +
+                        "（" + actual + "），属已知现象；重启后会回到运营商默认制式）",
+                )
+            } else if (!lastModeWriteEffective) {
                 LogStore.warn(
                     TAG,
                     "卡 $subId 制式未真正生效：已请求 ${mode.label}（${mode.value}），" +

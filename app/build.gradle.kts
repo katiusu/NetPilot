@@ -44,7 +44,7 @@ android {
         // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
         // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
         targetSdk = 36
-        versionCode = 23
+        versionCode = 24
         // versionName 是给人看的语义版本；versionCode 是构建号（2026100505 = 2026-10-05 第 5 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
         // 1.5.1：把「provider 不认调用方身份」与「真的缺权限」分开（uid 名单 / AMS 应用进程记录 /
@@ -61,7 +61,9 @@ android {
         //   预测性返回开关；增加繁体中文（zh-rTW）。
         // 1.5.4：锁屏期间保活心跳换成不唤醒闹钟（深睡）+ 手动切换制式后回读确认并如实记录
         //   + Shizuku 晚于应用启动时也能清掉残留的用户服务进程。
-        versionName = "2.0.0"
+        // 2.0.1：缺陷修复（预发布版号被当成更新、预测性返回开关反射打错类、切回跟随系统语言不还原、
+//   配置导入的 null 流与非法数组元素）。
+        versionName = "2.0.1"
 
     }
 

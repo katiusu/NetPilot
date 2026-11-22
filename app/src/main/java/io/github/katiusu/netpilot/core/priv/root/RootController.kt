@@ -12,6 +12,7 @@ import io.github.katiusu.netpilot.core.priv.NetworkControlChannel
 import io.github.katiusu.netpilot.core.priv.RootShell
 import io.github.katiusu.netpilot.core.priv.SubscriptionSwitcher
 import io.github.katiusu.netpilot.core.priv.WriteVerification
+import io.github.katiusu.netpilot.core.priv.AtWriteSettings
 import io.github.katiusu.netpilot.core.priv.WriteDiag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -111,9 +112,109 @@ class RootController(private val context: Context) : NetworkControlChannel {
         val viaSettings = withContext(Dispatchers.IO) { settingsSetMode(subId, mode.value) }
         if (viaSettings) {
             Log.i(TAG, "setMode 走 settings 兜底：subId=$subId mode=${mode.value}")
+            return true
         }
-        return viaSettings
+        // 第 4 条：联发科 AT 直写（实验，默认关闭）。放最后是刻意的 ——
+        // AT 直接改 modem，不经过 framework 与 TelephonyProvider，上面三条读通道都看不见结果；
+        // 只要 ITelephony / 权威存储 / settings 有一条能生效，就不该动用这条。
+        atSetMode(subId, mode)
     }
+
+    /**
+     * 联发科 AT 直写（第 4 条策略，实验通道）。
+     *
+     * 五道闸门，任何一道不过就返回 false 让调用方按失败处理：
+     *
+     * 1. 用户开关（默认关）；
+     * 2. 能解析出卡槽；
+     * 3. 这张卡必须是**当前默认数据卡** —— AT+ERAT 是 per-slot 的，写错槽就是改错卡；
+     * 4. 子进程在 8 秒内给出 ATSET 行；
+     * 5. ATSET 前半是 true（子进程自己已经回读确认过）。
+     *
+     * 为什么不在 App 进程做回读：App 进程读到的永远是 framework 视图，AT 改了 modem 它也不知道。
+     * 回读只能在子进程里、紧跟写入之后做，见 MtkAtBackend.verify。
+     */
+    private suspend fun atSetMode(subId: Int, mode: NetworkMode): Boolean {
+        if (!AtWriteSettings.enabled()) {
+            // 这条分支每个降级周期都会走到，只能用 detail 级，否则日志页会被刷满。
+            WriteDiag.detail("AT 直写：开关关闭，本次未尝试")
+            return false
+        }
+        val slot = runCatching { SubscriptionManager.getSlotIndex(subId) }.getOrDefault(-1)
+        if (slot < 0) {
+            WriteDiag.detail("AT 直写：读不到 subId=" + subId + " 的卡槽，跳过")
+            return false
+        }
+        val defaultSubId = runCatching {
+            SubscriptionManager.getDefaultDataSubscriptionId()
+        }.getOrDefault(-1)
+        if (subId != defaultSubId) {
+            WriteDiag.detail("AT 直写：subId=" + subId + " 不是当前默认数据卡（" + defaultSubId + "），本次跳过")
+            return false
+        }
+        val args = buildList {
+            add("atsetmode")
+            add(mode.value.toString())
+            add(slot.toString())
+            if (WriteDiag.isVerbose) add(WriteDiag.CLI_VERBOSE)
+        }
+        val output = runCliWithin(AT_CLI_TIMEOUT_MS, *args.toTypedArray())
+        val line = output.lineSequence().map { it.trim() }.firstOrNull { it.startsWith(AT_SET) }
+        if (line == null) {
+            WriteDiag.detail("AT 直写：CLI 没有 ATSET 输出，原始=" + output.take(160))
+            return false
+        }
+        val payload = line.removePrefix(AT_SET).trim()
+        val ok = payload.startsWith("true")
+        val note = payload.removePrefix("true").removePrefix("false").trim()
+        if (ok) {
+            // 记一下时间戳：NetPilot.setMode 的回读校验看到 framework 还是旧值时，
+            // 靠这个标记知道「不是写入失败，是我们绕过了 framework」。
+            AtWriteSettings.markApplied(mode.value)
+            WriteDiag.always(
+                "Root 通道：AT 直写已确认生效（subId=" + subId + " mode=" + mode.value + "）" +
+                    if (note.isEmpty()) "" else "：" + note
+            )
+        } else {
+            WriteDiag.detail("AT 直写未生效：" + note.ifEmpty { "无说明" })
+        }
+        return ok
+    }
+
+    /** 联发科 AT 通道探测，给设置页的「测试通道」用。null = 没有 AT 能力或读不到结论。 */
+    override suspend fun atProbe(slot: Int): String? {
+        val output = runCliWithin(AT_CLI_TIMEOUT_MS, "atprobe", slot.toString())
+        return output.lineSequence().map { it.trim() }
+            .firstOrNull { it.startsWith(AT_PROBE) }
+            ?.removePrefix(AT_PROBE)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * 和 [runCli] 相同，但可以单独给一个短超时。
+     *
+     * 为什么需要：AT 命令整轮预算 8 秒（含 app_process 冷启动 200-800ms 与两次回读等待），
+     * 用 runCli 的 15 秒默认值会让一次卡死的 AT 调用拖住整个降级周期。
+     */
+    private suspend fun runCliWithin(timeoutMs: Long, vararg args: String): String =
+        withContext(Dispatchers.IO) {
+            val command = buildString {
+                append("CLASSPATH=").append(RootShell.quote(listOf(context.packageCodePath)))
+                append(' ').append(APP_PROCESS)
+                append(' ').append(APP_PROCESS_BIN)
+                append(' ').append(MAIN_CLASS)
+                if (args.isNotEmpty()) {
+                    append(' ').append(RootShell.quote(args.toList()))
+                }
+            }
+            val result = RootShell.exec(command, timeoutMs)
+            if (result.timedOut) Log.w(TAG, "cli timed out (at): " + args.joinToString(" "))
+            for (line in result.stdout.lineSequence()) {
+                if (line.trim().startsWith(WriteDiag.CLI_PREFIX)) WriteDiag.forwardCliLine(line)
+            }
+            result.stdout.trim()
+        }
 
     override suspend fun getDefaultSlot(): Int {
         if (cliUsable) {
@@ -479,3 +580,11 @@ class RootController(private val context: Context) : NetworkControlChannel {
         const val SLOTS = "SLOTS"
     }
 }
+
+/** AT 直写 CLI 的整轮预算：app_process 冷启动 + 两条读 + 三次等待，8 秒够用且不会拖住降级周期。 */
+private const val AT_CLI_TIMEOUT_MS = 8_000L
+
+private const val AT_SET = "ATSET "
+
+private const val AT_PROBE = "ATPROBE "
+

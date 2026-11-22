@@ -195,13 +195,25 @@ class MainActivity : ComponentActivity() {
      * 「没有预览动画」—— 返回手势本身不受影响，也不会在类校验阶段崩。
      */
     private fun applyPredictiveBack(enabled: Boolean) {
-        runCatching {
-            val method = android.view.Window::class.java.getMethod(
-                "setEnableOnBackInvokedCallback",
-                Boolean::class.javaPrimitiveType,
-            )
-            method.invoke(window, enabled)
+        // 真正的方法是 Activity#setEnableOnBackInvokedCallback（@SystemApi，SDK 桩里没有，只能反射）。
+        // 以前反射的是 Window —— 那个类上从来没这个方法，每次都抛 NoSuchMethodException 又被
+        // runCatching 吞掉，所以开关实际上什么都没做。Window 那条留着兜个别 ROM 的差异实现。
+        val targets = listOf(
+            this to android.app.Activity::class.java,
+            window to android.view.Window::class.java,
+        )
+        for ((receiver, cls) in targets) {
+            val applied = runCatching {
+                cls.getMethod("setEnableOnBackInvokedCallback", Boolean::class.javaPrimitiveType)
+                    .invoke(receiver, enabled)
+            }.isSuccess
+            if (applied) return
         }
+        // targetSdk 36 起系统不允许应用在运行时关掉预测性返回；这里只记一条日志，不再静默。
+        io.github.katiusu.netpilot.core.monitor.LogStore.warn(
+            "MainActivity",
+            "本机不支持运行时切换预测性返回，已仅记录偏好（" + enabled + "）",
+        )
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
