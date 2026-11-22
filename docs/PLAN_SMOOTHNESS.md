@@ -33,7 +33,13 @@
     # 4) 要归因到具体线程用 Perfetto
     #    trace 里看 RenderThread 的 DrawFrame 是否被 GPU 占满、UI 线程是否有 doFrame 超时
 
-对比基线记在 docs 下方「量测记录」，2.0.2 验收要拿它对。
+注意：本机（HyperOS，qcom）实测 dumpsys gfxinfo 对 NetPilot 返回
+"Failure while dumping the app: ProcessRecord{...}"，这条路在本机走不通。
+替代方案二选一：
+    1. adb shell perfetto 抓 10 秒 trace（--categories gfx,view,am），看 RenderThread 的 DrawFrame；
+    2. 2.0.2 的 debug 构建接 JankStats，用应用自己的数据出基线（见 P2-1）。
+
+对比基线记在文末「量测记录」，2.0.2 验收要拿它对。
 
 ## 三、已定位的嫌疑（按把握程度排序）
 
