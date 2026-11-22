@@ -148,7 +148,7 @@ object UpdateChecker {
 
     /** 拆成「数字段」与「预发布后缀段」；后缀从第一个非数字段开始。 */
     private fun splitVersion(version: String): Pair<List<Int>, List<String>> {
-        val parts = version.split(Regex('[.+-]'))
+        val parts = version.split(Regex("[.+-]"))
         val numbers = ArrayList<Int>(parts.size)
         val suffix = ArrayList<String>()
         for (part in parts) {
