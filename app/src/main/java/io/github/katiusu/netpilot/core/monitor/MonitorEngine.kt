@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import io.github.katiusu.netpilot.core.NetPilotEvents
+import io.github.katiusu.netpilot.core.PowerSaveWatcher
 import io.github.katiusu.netpilot.core.keepalive.KeepAliveState
+import io.github.katiusu.netpilot.core.keepalive.ScreenStateGate
 import io.github.katiusu.netpilot.core.priv.ControlManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +32,15 @@ import kotlinx.coroutines.withContext
 object MonitorEngine {
 
     private const val TAG = "监控引擎"
+
+    /** 静止退避（2.0.2）：连续多少轮读到同一组读数才开始拉长间隔。 */
+    private const val STILL_STREAK_BEFORE_BACKOFF = 3
+
+    /** 静止退避的倍率上限：60 秒 × 30 = 1800 秒，与自适应间隔的封顶值一致。 */
+    private const val STILL_BACKOFF_MAX_FACTOR = 30.0
+
+    /** 省电模式下采样间隔的技术下限：从 15 秒抬到 30 秒。 */
+    private const val POWER_SAVE_MIN_INTERVAL_SEC = 30
 
     // IO 而不是 Default：循环里既做 HTTP 探测（Ping）又跑特权 shell，都是阻塞调用。
     // 之前用 Default 虽然不在主线程上、不会抛 NetworkOnMainThreadException，
@@ -98,6 +109,11 @@ object MonitorEngine {
             // 连续「读数靠近门限」的轮数。0 = 用配置的间隔；每多靠近一轮就乘一次
             // thresholds.adaptiveStepFactor（默认 0.85，可在功能页调），任何一轮不靠近立刻归零。
             var nearStreak = 0
+            // 静止退避（2.0.2）：息屏、未降级、读数一轮比一轮完全没变，说明网络当前
+            // 没有任何变化可等，继续按原节奏查 modem + 探测只是白耗电。任何一项变化
+            // （含「靠近门限」）都立刻把 stillStreak 清零。
+            var stillStreak = 0
+            var lastStillKey: String? = null
             while (isActive) {
                 val t = MonitorSettings.thresholds()
                 // 后台循环允许在「屏幕关闭 + 未降级 + 信号非强」时跳过 HTTP 探测；
@@ -129,7 +145,20 @@ object MonitorEngine {
                 val near = snap != null && t.adaptiveIntervalEnabled && snap.isNearThreshold(t)
                 val wasNear = nearStreak > 0
                 nearStreak = if (near) nearStreak + 1 else 0
-                val intervalMs = adaptiveIntervalMs(t, nearStreak)
+                // 静止退避（2.0.2）：屏幕关闭 + 未降级 + 本轮读数与上一轮完全相同，
+                // 连续 3 轮起把间隔按 1.5 倍逐轮放大（封顶 1800 秒）。屏幕一亮、
+                // 读数一变、或读数靠近门限，立刻回到正常节奏。
+                val stillKey = snap?.let { stillKeyOf(it) }
+                val still = stillKey != null &&
+                    !ScreenStateGate.isScreenOn(ctx) &&
+                    !e.state.value.active &&
+                    !near &&
+                    stillKey == lastStillKey
+                lastStillKey = stillKey
+                stillStreak = if (still) stillStreak + 1 else 0
+                val intervalMs = (adaptiveIntervalMs(t, nearStreak) * stillBackoffFactor(stillStreak))
+                    .toLong()
+                    .coerceIn(15_000L, 1_800_000L)
                 // 只在「节奏发生变化」的那一轮记日志，靠近期间不会每轮都刷一条。
                 if (near != wasNear) {
                     LogStore.debug(
@@ -158,9 +187,15 @@ object MonitorEngine {
      * 放大到超过用户配置（[nearStreak] 为 0 时原样返回）。
      */
     private fun adaptiveIntervalMs(t: DowngradeThresholds, nearStreak: Int): Long {
-        val base = t.monitorIntervalSec
+        // 2.0.2 省电模式：配置间隔翻倍、技术下限从 15 秒抬到 30 秒。
+        // 省电模式下用户本来就在抠功耗，60 秒的配置值按 120 秒跑完全够用；
+        // 自适应缩短仍然生效，但同样不会低于 30 秒。
+        val powerSave = PowerSaveWatcher.isPowerSave
+        val minSec = if (powerSave) POWER_SAVE_MIN_INTERVAL_SEC else 15
+        val rawBase = if (powerSave) t.monitorIntervalSec * 2 else t.monitorIntervalSec
+        val base = rawBase.coerceIn(minSec, 3600)
         if (!t.adaptiveIntervalEnabled || nearStreak <= 0) {
-            return base.coerceIn(15, 3600) * 1000L
+            return base * 1000L
         }
         // 倍率来自用户配置（1.4.0 起可调），下限仍用常量夹住：
         // 无论用户把倍率调多小，间隔都不会缩到配置值一半以下。
@@ -168,8 +203,32 @@ object MonitorEngine {
             t.adaptiveStepFactor.toDouble(),
             nearStreak.toDouble(),
         ).coerceAtLeast(MonitorSettings.ADAPTIVE_MIN_FACTOR.toDouble())
-        return (base * factor).toInt().coerceIn(15, 3600) * 1000L
+        return (base * factor).toInt().coerceIn(minSec, 3600) * 1000L
     }
+
+    /**
+     * 静止退避倍率：连续 streak 轮「读数完全没变」时把采样间隔放大多少倍。
+     *
+     * 不足 STILL_STREAK_BEFORE_BACKOFF 轮返回 1.0（不放大）——前两轮就放大，
+     * 遇到「刚息屏、网络正在静默切换」的窗口会错过一次本该记录的变化。
+     * 之后每轮 ×1.5：3 轮 ×1.5、4 轮 ×2.25 …… 第 11 轮起撞上封顶。
+     */
+    private fun stillBackoffFactor(streak: Int): Double {
+        if (streak < STILL_STREAK_BEFORE_BACKOFF) return 1.0
+        val growth = streak - STILL_STREAK_BEFORE_BACKOFF + 1
+        return Math.pow(1.5, growth.toDouble()).coerceAtMost(STILL_BACKOFF_MAX_FACTOR)
+    }
+
+    /**
+     * 把一轮读数压成「有没有变化」用的键。
+     *
+     * 只取会真正影响判定的三样：制式（含 NSA 下「看到过 NR 小区」）、RSRP、探测往返。
+     * 刻意不包含运营商名与时戳 —— 前者在网络切换时会变但往往与质量无关，后者每轮
+     * 都不同，带上就等于退避永远不生效。
+     */
+    private fun stillKeyOf(s: SignalSnapshot): String =
+        s.rawNetworkType.toString() + "|" + s.sawNr.toString() + "|" +
+            (s.rsrp?.toString() ?: "-") + "|" + (s.pingMs?.toString() ?: "-")
 
     fun stopLoop(reason: String) {
         if (loop == null) return

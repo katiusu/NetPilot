@@ -8,6 +8,7 @@ import io.github.katiusu.netpilot.prefs.OptionRegistry
 import io.github.katiusu.netpilot.prefs.PrefsStore
 import io.github.katiusu.netpilot.ui.screen.features.featureSpecs
 import io.github.katiusu.netpilot.core.NetPilot
+import io.github.katiusu.netpilot.core.PowerSaveWatcher
 import io.github.katiusu.netpilot.core.keepalive.ScreenStateGate
 import io.github.katiusu.netpilot.core.priv.ControlManager
 import io.github.katiusu.netpilot.core.tasker.TaskerGate
@@ -35,6 +36,8 @@ class TemplateApp : Application() {
         // 1.5.4：屏幕亮/灭的观察者。锁屏后要把保活心跳换成「不唤醒」闹钟，而闹钟类型只能在
         // 排闹钟那一刻决定 ⇒ 必须在屏幕状态变化时重排。这里注册一次，进程活着就一直有效。
         ScreenStateGate.install(this)
+        // 2.0.2：系统省电模式感知（注册一次，动画帧率/毛玻璃/采样间隔都读它）
+        PowerSaveWatcher.install(this)
         pruneShizukuOrphans()
     }
 

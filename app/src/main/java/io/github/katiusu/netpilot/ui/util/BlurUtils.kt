@@ -50,6 +50,7 @@ import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+import io.github.katiusu.netpilot.core.PowerSaveWatcher
 
 val LocalSubPageScrollBehavior: ProvidableCompositionLocal<ScrollBehavior?> =
     staticCompositionLocalOf { null }
@@ -110,6 +111,9 @@ private object TopBarBlurConfig {
 @Composable
 fun rememberBlurBackdrop(): LayerBackdrop? {
     if (!isRuntimeShaderSupported() || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+    // 2.0.2：省电模式下不建 backdrop。毛玻璃是整块区域逐帧重新采样 + 离屏合成，
+    // 是界面里最贵的一项开销；关掉它视觉上只是少了一层虚化。
+    if (PowerSaveWatcher.isPowerSave) return null
     val surfaceColor = MiuixTheme.colorScheme.surface
     return rememberLayerBackdrop {
         drawRect(surfaceColor)

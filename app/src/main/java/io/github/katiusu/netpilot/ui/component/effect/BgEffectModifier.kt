@@ -10,9 +10,19 @@ import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.invalidateDraw
+import io.github.katiusu.netpilot.core.PowerSaveWatcher
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+
+/**
+ * 省电模式下的动画帧率上限（60 fps）。
+ *
+ * 2.0.2 之前这里**无条件**按 60 fps 节流：在 120 Hz 屏上相邻两帧的抬手间隔在 8 ms
+ * 与 16 ms 之间交替，动画看着就是一顿一顿的（不是掉帧，是被自己的节流顶出来的节奏）。
+ * 现在默认跟随屏幕刷新率，只在系统省电模式下才锁回 60 fps。
+ */
+private const val POWER_SAVE_FRAME_NANOS = 1_000_000_000L / 60L
 
 internal fun Modifier.bgEffectDraw(
     painter: BgEffectPainter,
@@ -145,11 +155,13 @@ private class BgEffectNode(
         animationJob?.cancel()
         startOffset = animTime
         animationJob = coroutineScope.launch {
-            val minDeltaNanos = 1_000_000_000L / 60L
             val origin = withFrameNanos { it }
             var lastEmit = origin
             while (isActive) {
                 val now = withFrameNanos { it }
+                // 每帧读一次：省电模式可能在动画跑着的时候被系统切换，
+                // 读 volatile 字段的成本远低于重启一次动画协程。
+                val minDeltaNanos = if (PowerSaveWatcher.isPowerSave) POWER_SAVE_FRAME_NANOS else 0L
                 if (now - lastEmit < minDeltaNanos) continue
                 lastEmit = now
                 animTime = startOffset + (now - origin) / 1_000_000_000f
