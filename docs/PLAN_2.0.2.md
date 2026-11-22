@@ -17,15 +17,14 @@
 - 数据卡写制式节流：DataCardEngine.kt:43 60s、:49 5s 防抖、:52-53 恢复重试 60s 到 15min；InactiveSimLte.kt:34 5 分钟。
 - 后台探测退避：AutoDowngradeEngine.kt:503 BACKGROUND_PROBE_BACKOFF_MS = 5min。
 
-## 二、还剩的五个耗电源（按收益排序）
+## 二、还剩的四个耗电源（按收益排序）
 
 | # | 耗电源 | 位置 | 现状 |
 |---|---|---|---|
 | A | 息屏静止态仍按 60s 全量采样 | MonitorEngine.kt:101-146 | 自适应只缩短（:129-132），永不放大；凌晨 8h 约 480 轮 |
 | B | 没有任何省电模式感知 | 全仓 grep isPowerSaveMode = 空 | 系统进省电模式时行为不变 |
-| C | 动态背景 60fps 全屏 shader | BgEffectModifier.kt:148 minDeltaNanos = 1s/60 | 亮屏每帧重绘，模糊默认开（AppSettings.kt:62） |
-| D | 息屏仍每轮读 modem / 制式 | SignalReader.tick、MtkAtChannel.kt:93 | 息屏没有轻量采样路径 |
-| E | 息屏日志仍按 5 分钟 fsync | LogStore.kt:80 | 与 A 叠加，整夜持续写盘 |
+| C | 息屏仍每轮读 modem / 制式 | SignalReader.tick、MtkAtChannel.kt:93 | 息屏没有轻量采样路径 |
+| D | 息屏日志仍按 5 分钟 fsync | LogStore.kt:80 | 与 A 叠加，整夜持续写盘 |
 
 ## 三、措施
 
@@ -46,14 +45,6 @@
     3. 日志落盘改走 PERSIST_DEBUG_INTERVAL_MS 档。
 - 代价：约 60 行 + 设置页一个「省电模式下自动降配」开关（默认开）。
 - 预期：省电模式本来就是低电量场景，收益直接体现在剩余续航；待量测。
-
-### P0-3 动态背景 30fps
-
-- 现状：BgEffectModifier.kt:148 minDeltaNanos = 1_000_000_000L / 60L。
-- 改法：常量降到 30fps；withFrameNanos 的自动暂停保持不动（应用不在前台时本来就不产生帧）。
-- 可选：非动态模式（dynamicBackground=false）时把 shader 结果缓存成 bitmap，一次绘制。
-- 代价：2 行 + 可选缓存约 40 行。风险 = 观感，需肉眼确认。
-- 预期：亮屏全屏绘制的功耗层面约减半；待量测。
 
 ### P1-1 息屏轻量采样（跳过 modem / 制式读取）
 
@@ -103,11 +94,10 @@
 - 拟定条目（实施后定稿）：
     - 息屏静止时自动拉长采样间隔，最长 30 分钟，亮屏或读数变化立即恢复
     - 新增省电模式感知：进入系统省电模式时关闭动态背景与模糊，采样下限翻倍
-    - 动态背景帧率由 60fps 降至 30fps
     - 息屏采样不再读取通道制式，减少 modem 查询
     - 息屏日志落盘间隔放宽至 15 分钟
 
 ## 七、开工顺序
 
-P0-1 到 P0-3（都是小改动，可同一次提交）→ 跑一次 8h 息屏量测 → 视数据决定 P1-1 是否进 2.0.2，否则推 2.0.3。
+P0-1 与 P0-2（都是小改动，可同一次提交）→ 跑一次 8h 息屏量测 → 视数据决定 P1-1 是否进 2.0.2，否则推 2.0.3。
 
