@@ -40,7 +40,7 @@
 
 - 现状：全仓无 isPowerSaveMode 引用。
 - 改法：进程内动态注册 ACTION_POWER_SAVE_MODE_CHANGED（Context.RECEIVER_NOT_EXPORTED），命中时：
-    1. 动态背景 playing=false（BgEffectBackground.kt:82 的 playing 入参），模糊走 isBlurEnabled=false；
+    1. 动态背景锁 60fps（不关闭；BgEffectModifier.kt 的节流上限按省电状态取 刷新率 或 60），模糊走 isBlurEnabled=false；
     2. 监控间隔下限翻倍（技术下限 15s 改 30s，配置值乘 2，封顶 3600s）；
     3. 日志落盘改走 PERSIST_DEBUG_INTERVAL_MS 档。
 - 代价：约 60 行 + 设置页一个「省电模式下自动降配」开关（默认开）。
@@ -93,7 +93,7 @@
 - app/src/main/assets/changelog.md 顶部加一段 2.0.2：以两个井号加空格加版本号起头，每条一行、短横线加空格起头、不加编号、不用反引号（UpdateChecker.currentChangelog 按标题逐字匹配）。
 - 拟定条目（实施后定稿）：
     - 息屏静止时自动拉长采样间隔，最长 30 分钟，亮屏或读数变化立即恢复
-    - 新增省电模式感知：进入系统省电模式时关闭动态背景与模糊，采样下限翻倍
+    - 新增省电模式感知：进入系统省电模式时动态背景锁 60 帧、关闭模糊、采样下限翻倍
     - 息屏采样不再读取通道制式，减少 modem 查询
     - 息屏日志落盘间隔放宽至 15 分钟
 
