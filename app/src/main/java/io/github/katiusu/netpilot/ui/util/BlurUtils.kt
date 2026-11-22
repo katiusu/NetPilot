@@ -135,7 +135,6 @@ fun PageBackdrop(
     }
 }
 
-
 @Composable
 @ReadOnlyComposable
 fun isInDarkTheme(): Boolean {
@@ -283,15 +282,6 @@ fun shouldShowSplitPane(): Boolean {
         val heightDp = windowInfo.containerSize.height.toDp()
         val ratio = heightDp / widthDp
         widthDp >= 840.dp || (widthDp >= 600.dp && ratio < 1.2f)
-    }
-}
-
-@Composable
-fun shouldExpandNavigationRail(): Boolean {
-    val windowInfo = LocalWindowInfo.current
-    val density = LocalDensity.current
-    return with(density) {
-        windowInfo.containerSize.width.toDp() >= 1200.dp
     }
 }
 

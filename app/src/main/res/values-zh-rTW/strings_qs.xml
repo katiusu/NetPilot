@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  QS 快捷设置磁贴的专属文案（key 统一 qs_ 前缀）。
+
+  为什么单独成文件：磁贴是独立于 App 界面的入口，而且这些字符串同时被
+  core/qs/*TileService.kt 在非 Compose 上下文里用 getString() 读取，
+  集中放一起便于和磁贴副标题（subtitle）的排版限制对齐。
+-->
+<resources>
+
+    <!-- ===================== 制式磁贴：NetworkModeTileService ===================== -->
+    <string name="qs_network_mode_label">網路制式</string>
+    <string name="qs_network_mode_busy">正在切換…</string>
+    <string name="qs_network_mode_no_sim">沒有可用的資料卡</string>
+    <string name="qs_network_mode_unknown">未知</string>
+    <string name="qs_network_mode_switched">已切到「%1$s」</string>
+    <string name="qs_network_mode_failed">切換失敗，特權通道：%1$s</string>
+
+    <!-- ===================== 自动降级磁贴：DowngradeTileService ===================== -->
+    <string name="qs_downgrade_label">網路質量降級</string>
+    <string name="qs_downgrade_no_channel">無 Root / Shizuku 通道</string>
+    <string name="qs_downgrade_off">已關閉</string>
+    <string name="qs_downgrade_watching">監控中</string>
+    <string name="qs_downgrade_cooldown">已降級，冷卻中</string>
+    <string name="qs_downgrade_recovering">已降級，恢復觀察中</string>
+    <string name="qs_downgrade_rollback">已降級，無網回退中</string>
+    <string name="qs_downgrade_toast_on">已開啟網路質量自動降級</string>
+    <string name="qs_downgrade_toast_off">已關閉網路質量自動降級</string>
+
+</resources>

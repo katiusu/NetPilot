@@ -90,6 +90,24 @@ object UpdateChecker {
     }
 
     /**
+     * 取 assets/changelog.md 中「## 版本号」段正文；找不到该版本返回空串。
+     *
+     * 注意：assets 缺失或读取失败会抛 IOException（不吞），调用方自己 catch。
+     *
+     * 版本串与 versionName 逐字比较（2.0.0 与 2.0.0-rc.3 是两段），
+     * 否则带后缀的版本号会把相邻版本的说明串出来。
+     */
+    fun currentChangelog(context: Context, version: String): String {
+        val changelog = context.assets.open("changelog.md").bufferedReader().use { it.readText() }
+        val heading = Regex("""^##[ \t]+v?(\S+)[ \t]*\r?$""", RegexOption.MULTILINE)
+        val current = heading.findAll(changelog).firstOrNull { it.groupValues[1] == version }
+            ?: return ""
+        val start = current.range.last + 1
+        val end = heading.find(changelog, start)?.range?.first ?: changelog.length
+        return changelog.substring(start, end).trim()
+    }
+
+    /**
      * [latest] 是否比 [current] 新。
      *
      * 按 `[.\-+]` 分段逐段比数字，逐段相等则视为**不是**新版本（同版本不提示更新）。

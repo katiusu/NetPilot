@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  信号质量的补充文案（q_ 前缀）。
+
+  单独放一个文件，避免与其它写者同时改 strings_monitor.xml / strings_np.xml 撞车；
+  新增的信号质量串优先加在这里。
+-->
+<resources>
+
+    <!-- ============ SINR 读不到时的具体原因（对应 core 的 SinrUnavailableReason） ============ -->
+    <string name="q_sinr_unavailable_title">SINR 讀不到的原因</string>
+    <string name="q_sinr_reason_no_cellular">未駐留蜂窩網路，沒有可讀的 SINR</string>
+    <string name="q_sinr_reason_no_phone_state">缺少「電話狀態」許可權（READ_PHONE_STATE），系統拒絕提供訊號強度</string>
+    <string name="q_sinr_reason_no_fine_location">缺少「精確位置」許可權（ACCESS_FINE_LOCATION），無法讀取小區資訊（Android 12+ 必需）</string>
+    <string name="q_sinr_reason_location_off">系統定位服務未開啟，Android 12+ 不允許讀取小區資訊</string>
+    <string name="q_sinr_reason_lte_rssnr_na">當前 LTE 小區未上報 rssnr（SINR），該小區或韌體不提供質量讀數</string>
+    <string name="q_sinr_reason_nr_ss_sinr_na">當前 NR 小區未上報 ssSinr，該小區或韌體不提供 5G SINR</string>
+    <string name="q_sinr_reason_not_reported">該機型或當前制式未上報 SINR（部分 ROM 會遮蔽該欄位）</string>
+    <string name="q_sinr_source_note">SINR 來源：%1$s</string>
+
+    <!-- ============ Ping 失败 ============ -->
+    <string name="q_ping_failed_short">失敗（無響應）</string>
+    <string name="q_ping_error_detail">Ping 失敗原因（完整異常，含異常類名）：%1$s</string>
+
+    <!-- ============ 判定标准（当前生效值） ============ -->
+    <string name="q_section_criteria">判定標準（當前生效值）</string>
+    <string name="q_criteria_hint">以下是真正生效的規則，隨「功能」頁改動即時變化；只能看，不能改。</string>
+    <string name="q_criteria_full_bar_line">① 假滿格降級%5$s：RSRP ≥ %1$d dBm 且（Ping &gt; %2$d ms 或 SINR &lt; %3$d dB%4$s）</string>
+    <string name="q_criteria_full_bar_nr_only">（僅 5G / 5G+）</string>
+    <string name="q_criteria_full_bar_ping_fail">，或 Ping 完全失敗</string>
+    <string name="q_criteria_full_bar_rule">適用條件：RSRP 高於 %1$d dBm，也就是訊號格看著是滿的；依據：Ping &gt; %2$d ms 或 SINR &lt; %3$d dB，滿足任一條就算「滿格但沒質量」，降到 4G。</string>
+    <string name="q_criteria_nr_only_rule">為什麼限 5G / 5G+：在 4G / 3G / 2G 上 Ping 本來就容易偏高，而那時的降級目標正是 4G——射頻側切了等於沒切，判據卻一直成立，「恢復正常輪數」永遠攢不夠，裝置會被永久鎖在 4G。關掉「假滿格只在 5G / 5G+ 判定」即可退回舊行為。</string>
+    <string name="q_criteria_weak_line">② 訊號過差降級：RSRP &lt; %1$d dBm</string>
+    <string name="q_criteria_weak_off_line">② 訊號過差降級：已關閉，不參與判定</string>
+    <string name="q_criteria_rsrp_order_hint">兩個 RSRP 門限互斥：弱訊號閾值至少比強訊號閾值低 1 dBm。填得不滿足時滑條保留你的數字，生效值自動收斂，以本頁顯示為準。</string>
+    <string name="q_criteria_weak_rule">適用條件：RSRP 低於 %1$d dBm，只看強度，與 Ping、SINR 無關；弱 5G 往往比穩的 4G 更慢更耗電。</string>
+    <string name="q_criteria_none_line">③ 不降級：兩條都不滿足時保持當前制式，不做任何改動。</string>
+    <string name="q_criteria_recovery_rule">要連續 %1$d 輪正常才恢復：單輪正常可能只是抖動，而切換制式既耗電又易掉線；降級後 %2$s 內也不恢復，免得剛降 4G 就彈回 5G。</string>
+
+    <!-- ============ 判定区的补充行 ============ -->
+    <string name="q_judge_ping_fail_title">Ping 完全失敗是否算差</string>
+    <string name="q_judge_ping_fail_value">%1$s（可在「功能」頁修改）</string>
+    <string name="q_judge_reason_title">降級成因</string>
+    <string name="q_judge_reason_full_bar">假滿格（訊號強但質量差）</string>
+    <string name="q_judge_reason_weak">訊號過差（弱 5G 不如穩 4G）</string>
+
+</resources>

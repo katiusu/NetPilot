@@ -1,0 +1,229 @@
+<resources>
+    <string name="app_name">NetPilot</string>
+    <string name="tab_home">主頁</string>
+    <string name="tab_features">功能</string>
+    <string name="tab_settings">設定</string>
+    <string name="tab_about">關於</string>
+    <string name="placeholder_value">佔位符</string>
+    <string name="action_back">返回</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_confirm">確定</string>
+    <string name="search_hint">搜尋功能</string>
+    <string name="search_empty">未找到匹配的功能</string>
+
+    <!-- Home -->
+    <string name="home_status_title">狀態卡片</string>
+    <string name="home_stat_one">統計項一</string>
+    <string name="home_stat_two">統計項二</string>
+    <string name="home_scope">作用域</string>
+    <string name="home_feature_count">模組功能</string>
+    <string name="scope_empty">暫無作用域</string>
+    <string name="home_device_info">裝置資訊</string>
+    <string name="home_device_name">裝置名稱</string>
+    <string name="home_device_model">裝置型號</string>
+    <string name="home_hyperos_version">HyperOS 版本</string>
+    <string name="home_android_version">Android 版本</string>
+    <string name="home_system_version">系統版本</string>
+    <string name="home_app_version">應用版本</string>
+
+    <!-- Settings -->
+    <string name="settings_interface">介面</string>
+    <string name="settings_language">語言</string>
+    <string name="settings_update">更新</string>
+    <string name="settings_data">資料管理</string>
+    <string name="settings_module">模組</string>
+    <string name="theme_mode">主題模式</string>
+    <string name="theme_system">跟隨系統</string>
+    <string name="theme_light">淺色</string>
+    <string name="theme_dark">深色</string>
+    <string name="theme_monet_system">Monet 跟隨系統</string>
+    <string name="theme_monet_light">Monet 淺色</string>
+    <string name="theme_monet_dark">Monet 深色</string>
+    <string name="floating_navbar">懸浮導航欄</string>
+    <string name="floating_navbar_summary">使用懸浮樣式的底部導航欄</string>
+    <string name="liquid_glass">液態玻璃效果</string>
+    <string name="liquid_glass_summary">iOS 風格的液態玻璃模糊效果</string>
+    <string name="settings_bottom_bar">底欄樣式</string>
+    <string name="settings_bottom_bar_summary">窄屏與未啟用側欄的寬屏使用該樣式</string>
+    <string name="settings_rail_style">側欄樣式</string>
+    <string name="settings_rail_style_summary">僅在寬屏生效；啟用後由側欄取代底欄，進入時停在所選形態</string>
+    <string name="bottom_bar_style_glass">柔光玻璃</string>
+    <string name="bottom_bar_style_ios">液態玻璃</string>
+    <string name="rail_style_none">關閉</string>
+    <string name="rail_style_top">頂部面板</string>
+    <string name="rail_style_left">左側面板</string>
+    <string name="predictive_back">預測性返回</string>
+    <string name="predictive_back_summary">啟用返回手勢的預測動畫</string>
+    <string name="language_zh_tw">繁體中文</string>
+    <string name="current_changelog_open">檢視當前更新日誌</string>
+    <string name="blur_enabled">背景模糊</string>
+    <string name="blur_enabled_summary">啟用導航欄和底欄的背景模糊效果</string>
+    <string name="language_default">預設</string>
+    <string name="language_zh_cn">簡體中文</string>
+    <string name="language_en">English</string>
+    <string name="copyright">© 2026 遠方緣分的天空</string>
+
+    <!-- Module status -->
+    <string name="module_status">模組狀態</string>
+    <string name="module_status_summary_activated">已啟用</string>
+    <string name="module_status_summary_inactive">未啟用</string>
+    <string name="module_status_summary_no_root">已啟用（無 Root）</string>
+    <string name="module_status_root_hint">未授予 Root，重啟等功能不可用</string>
+    <string name="hook_status_applied">已生效</string>
+    <string name="hook_status_not_applied">未生效</string>
+    <string name="module_scope">作用域</string>
+    <string name="module_scope_count">已授權 %d 個應用</string>
+    <string name="module_scope_request">申請全部作用域</string>
+    <string name="module_scope_request_summary">為所有配置項的目標應用申請作用域</string>
+    <string name="module_scope_request_success">作用域申請已提交</string>
+    <string name="module_scope_request_failed">作用域申請失敗：%s</string>
+    <string name="module_clear_dexkit">清空 DexKit 快取</string>
+    <string name="module_clear_dexkit_summary">刪除所有作用域應用的 DexKit 快取檔案</string>
+    <string name="module_clear_dexkit_success">DexKit 快取已清空</string>
+    <string name="module_clear_dexkit_failed">清空失敗，請檢查許可權與作用域</string>
+
+    <!-- Module: safe mode -->
+    <string name="safe_mode_active_title">模組安全模式已啟用</string>
+    <string name="safe_mode_active_summary">有 %d 個應用的 Hook 已被自動禁用，可逐項恢復</string>
+    <string name="safe_mode_manage">安全模式</string>
+    <string name="safe_mode_manage_summary_none">點選設定各應用的安全模式</string>
+    <string name="safe_mode_manage_summary_active">已禁用 %d 個應用 · 點選逐項設定</string>
+    <string name="safe_mode_declaration">安全模式是模組的保護機制：當目標應用在載入 Hook 後短時間內反覆崩潰時，會自動跳過該應用的 Hook，避免系統應用崩潰導致無法開機。你可以在此手動開關每個被 Hook 應用的安全模式——開啟即跳過該應用全部 Hook，關閉則恢復並清空崩潰計數。</string>
+    <string name="safe_mode_crash_count">崩潰 %d 次</string>
+
+    <!-- Module: device -->
+
+    <!-- Scope page -->
+    <string name="scope_restart">重啟</string>
+    <string name="scope_restart_need_root">重啟應用需要 Root 許可權</string>
+    <string name="scope_safe_mode">安全模式</string>
+    <string name="scope_safe_mode_reset">恢復</string>
+    <string name="scope_safe_mode_reset_done">已恢復 %s</string>
+    <string name="restart_system_confirm_title">重啟系統</string>
+    <string name="restart_system_confirm_message">目標包含系統程序，重啟將導致裝置重啟。確定繼續嗎？</string>
+    <string name="restart_system_confirm_action">重啟</string>
+
+    <!-- Slider -->
+    <string name="hook_slider_current">當前值：%1$s</string>
+    <string name="hook_slider_current_default">當前值 %1$s · 預設值 %2$s</string>
+    <string name="hook_slider_dialog_summary">輸入自定義數值</string>
+    <string name="hook_slider_dialog_values">當前值：%1$s\n預設值：%2$s</string>
+    <string name="hook_slider_dialog_input">數值</string>
+    <string name="hook_slider_dialog_range">範圍：%1$s ~ %2$s</string>
+    <string name="hook_slider_restore_default">恢復預設</string>
+
+    <!-- Text -->
+    <string name="hook_text_placeholder">請輸入內容</string>
+    <string name="hook_text_save">儲存</string>
+    <string name="hook_text_not_set">未設定</string>
+    <string name="hook_text_dialog_summary">輸入自定義文字</string>
+    <string name="hook_text_current">當前：%1$s</string>
+    <string name="hook_text_default">預設：%1$s</string>
+    <string name="hook_text_dialog_values">當前：%1$s\n預設：%2$s</string>
+
+    <!-- Package list -->
+    <string name="hook_package_list_count">已配置 %d 個包名</string>
+    <string name="hook_package_list_dialog_summary">輸入包名列表，每行一個或用逗號分隔</string>
+    <string name="hook_package_list_placeholder">com.example.app</string>
+    <string name="hook_package_list_hint">支援換行、逗號、分號或空格分隔</string>
+
+    <!-- Quick actions -->
+    <string name="quick_action_title">重啟應用</string>
+    <string name="quick_action_select_all">全選</string>
+    <string name="quick_action_deselect_all">全不選</string>
+    <string name="quick_action_restart">重啟</string>
+    <string name="quick_action_restart_success">重啟成功</string>
+
+    <!-- Features -->
+    <string name="example_section_switch">開關卡片</string>
+    <string name="example_section_checkbox">核取方塊卡片</string>
+    <string name="example_section_arrow">箭頭卡片（進入下級頁面）</string>
+    <string name="example_section_dropdown">下拉卡片</string>
+    <string name="example_section_spinner">選擇器卡片</string>
+    <string name="example_section_radio">單選卡片</string>
+    <string name="example_section_slider">滑塊卡片</string>
+    <string name="example_section_text">文字輸入卡片</string>
+    <string name="example_section_package_list">包名列表卡片（右上角重啟應用）</string>
+
+    <string name="example_switch_title">啟用實驗性功能</string>
+    <string name="example_switch_summary">開啟後體驗尚未穩定的新功能</string>
+    <string name="example_checkbox_title">參與體驗計劃</string>
+    <string name="example_checkbox_summary">允許收集匿名使用資料以改進產品</string>
+    <string name="example_arrow_title">高階選項</string>
+    <string name="example_arrow_summary">更多進階配置</string>
+    <string name="example_arrow_back">返回上一級</string>
+    <string name="example_arrow_sub_title">高階選項</string>
+    <string name="example_arrow_sub_item">下級頁示例選項</string>
+    <string name="example_arrow_sub_summary">這裡展示下級頁面內容</string>
+    <string name="example_arrow_sub_body">下級頁面可以繼續放置各種元件，並透過返回按鈕回到上一級。</string>
+    <string name="example_sub_text_title">下級頁文字選項</string>
+    <string name="example_sub_text_summary">該選項位於子頁面，可透過功能頁搜尋直接進入</string>
+    <string name="example_dropdown_title">動畫速度</string>
+    <string name="example_dropdown_summary">選擇介面動畫播放速度</string>
+    <string name="example_dropdown_default">預設（中速）</string>
+    <string name="example_dropdown_slow">慢速</string>
+    <string name="example_dropdown_normal">標準</string>
+    <string name="example_dropdown_fast">快速</string>
+    <string name="example_spinner_title">主題配色</string>
+    <string name="example_spinner_summary">選擇應用的主題配色方案</string>
+    <string name="example_spinner_red">紅色</string>
+    <string name="example_spinner_green">綠色</string>
+    <string name="example_spinner_blue">藍色</string>
+    <string name="example_radio_title">啟動頁面</string>
+    <string name="example_radio_summary">選擇應用啟動後顯示的頁面</string>
+    <string name="example_radio_home">首頁</string>
+    <string name="example_radio_discover">發現</string>
+    <string name="example_radio_mine">我的</string>
+    <string name="example_slider_title">介面縮放</string>
+    <string name="example_slider_summary">調整整體介面元素的縮放比例</string>
+    <string name="example_slider_unit">%</string>
+    <string name="example_slider_value_label">縮放比例</string>
+    <string name="example_text_title">自定義字尾</string>
+    <string name="example_text_summary">為匯出檔案新增自定義字尾</string>
+    <string name="example_package_list_title">自定義應用列表</string>
+    <string name="example_package_list_summary">輸入包名後，頁面右上角可批次重啟</string>
+
+    <!-- Update -->
+    <string name="check_update_on_launch">自動檢查更新</string>
+    <string name="check_update_on_launch_summary">啟動時自動檢查是否有新版本</string>
+    <string name="check_update">檢查更新</string>
+    <string name="check_update_summary">當前版本 %s</string>
+    <string name="check_update_checking">檢查中…</string>
+    <string name="update_available_title">發現新版本</string>
+    <string name="update_available_summary">當前版本：%1$s\n最新版本：%2$s</string>
+    <string name="update_later">稍後</string>
+    <string name="update_now">前往更新</string>
+    <string name="update_latest">當前已是最新版本</string>
+    <string name="update_check_failed">檢查更新失敗，請稍後重試</string>
+
+    <!-- Data -->
+    <string name="export_settings">匯出設定</string>
+    <string name="export_settings_summary">將當前設定儲存為 JSON 檔案</string>
+    <string name="import_settings">匯入設定</string>
+    <string name="import_settings_summary">從 JSON 檔案匯入設定</string>
+    <string name="import_success">匯入成功，即將重啟應用</string>
+    <string name="import_failed">匯入失敗，檔案格式不正確</string>
+    <string name="export_success">匯出成功</string>
+    <string name="export_failed">匯出失敗</string>
+
+    <!-- About -->
+    <string name="about">關於</string>
+    <string name="about_dependencies">第三方許可證與致謝</string>
+    <string name="about_license">Apache License 2.0</string>
+    <string name="about_license_summary">檢視完整協議文字</string>
+    <string name="third_party_licenses_title">第三方許可證與致謝</string>
+    <string name="licenses_header">本應用使用或參考了以下開源專案及參考專案，謹向所有作者與貢獻者致謝。</string>
+    <string name="licenses_section_core">核心</string>
+    <string name="licenses_section_ui">介面</string>
+    <string name="licenses_section_androidx">AndroidX</string>
+    <string name="licenses_section_tools">特權通道與工具</string>
+    <string name="licenses_section_refs">參考專案</string>
+    <!-- 1.6.0 更新弹窗 -->
+    <string name="update_version_current">當前版本</string>
+    <string name="update_version_latest">最新版本</string>
+    <string name="update_notes_title">更新內容</string>
+    <string name="update_ok">知道了</string>
+    <string name="settings_footer">NetPilot %1$s</string>
+    <string name="current_changelog">本次更新</string>
+    <string name="current_changelog_unavailable">暫無更新說明</string>
+</resources>

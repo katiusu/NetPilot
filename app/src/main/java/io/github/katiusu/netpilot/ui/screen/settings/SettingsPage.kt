@@ -6,9 +6,6 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,6 +30,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.katiusu.netpilot.AppSettings
+import io.github.katiusu.netpilot.BottomBarStyle
+import io.github.katiusu.netpilot.RailStyle
+import io.github.katiusu.netpilot.core.update.UpdateChecker
+import io.github.katiusu.netpilot.ui.component.CurrentChangelogDialog
+import io.github.katiusu.netpilot.ui.component.UpdateDialog
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import io.github.katiusu.netpilot.LocaleHelper
 import io.github.katiusu.netpilot.R
 import io.github.katiusu.netpilot.core.NetPilot
@@ -53,7 +57,6 @@ import io.github.katiusu.netpilot.ui.component.AppLazyPage
 import io.github.katiusu.netpilot.ui.component.AppSectionCard
 import io.github.katiusu.netpilot.ui.screen.about.AboutActivity
 import io.github.katiusu.netpilot.ui.util.LocalPreferenceBackdrop
-import io.github.katiusu.netpilot.ui.util.MiuixExpandSpec
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import top.yukonga.miuix.kmp.basic.BasicComponent
@@ -69,10 +72,12 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 fun SettingsPageView(
     currentMode: ColorSchemeMode,
     onModeChange: (ColorSchemeMode) -> Unit,
-    isFloatingNavbar: Boolean,
-    onFloatingNavbarChange: (Boolean) -> Unit,
-    isLiquidGlass: Boolean,
-    onLiquidGlassChange: (Boolean) -> Unit,
+    bottomBarStyle: BottomBarStyle,
+    onBottomBarStyleChange: (BottomBarStyle) -> Unit,
+    railStyle: RailStyle,
+    onRailStyleChange: (RailStyle) -> Unit,
+    predictiveBack: Boolean,
+    onPredictiveBackChange: (Boolean) -> Unit,
     isBlurEnabled: Boolean,
     onBlurEnabledChange: (Boolean) -> Unit,
     extraBottomPadding: Dp = 0.dp,
@@ -87,6 +92,32 @@ fun SettingsPageView(
                 "${it.versionName ?: "1.0"} (${it.longVersionCode})"
             }
         } catch (_: Exception) { "1.0" }
+    }
+    val updateScope = rememberCoroutineScope()
+    val changelogVersion = remember(context) { UpdateChecker.currentVersion(context) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var isCheckingUpdate by remember { mutableStateOf(false) }
+    var showChangelog by remember { mutableStateOf(false) }
+
+    fun checkUpdate() {
+        if (isCheckingUpdate) return
+        isCheckingUpdate = true
+        updateScope.launch {
+            val result = UpdateChecker.checkForUpdate(context)
+            isCheckingUpdate = false
+            result.fold(
+                onSuccess = { info ->
+                    if (info.hasUpdate) {
+                        updateInfo = info
+                    } else {
+                        Toast.makeText(context, context.getString(R.string.update_latest), Toast.LENGTH_SHORT).show()
+                    }
+                },
+                onFailure = {
+                    Toast.makeText(context, context.getString(R.string.update_check_failed), Toast.LENGTH_SHORT).show()
+                },
+            )
+        }
     }
 
     var compatProbe by remember { mutableStateOf<SystemCompatInfo.Probe?>(null) }
@@ -238,6 +269,19 @@ fun SettingsPageView(
 
     var autoUpdate by remember { mutableStateOf(AppSettings.load(context).checkUpdateOnLaunch) }
 
+    updateInfo?.let { info ->
+        UpdateDialog(
+            info = info,
+            onDismissRequest = { updateInfo = null },
+            onConfirm = {
+                updateInfo = null
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.releaseUrl)))
+                }
+            },
+        )
+    }
+
     AppLazyPage(
         title = stringResource(R.string.tab_settings),
         isBlurEnabled = isBlurEnabled,
@@ -275,31 +319,64 @@ fun SettingsPageView(
                         renderInRootScaffold = true,
                     )
 
-                    SwitchPreference(
-                        title = stringResource(R.string.floating_navbar),
-                        summary = stringResource(R.string.floating_navbar_summary),
-                        checked = isFloatingNavbar,
-                        onCheckedChange = onFloatingNavbarChange,
+                    val bottomBarStyles = listOf(
+                        stringResource(R.string.bottom_bar_style_glass),
+                        stringResource(R.string.bottom_bar_style_ios),
+                    )
+                    val bottomBarStyleValues = listOf(
+                        BottomBarStyle.HyperOS,
+                        BottomBarStyle.IOS,
                     )
 
-                    AnimatedVisibility(
-                        visible = isFloatingNavbar,
-                        enter = expandVertically(animationSpec = MiuixExpandSpec),
-                        exit = shrinkVertically(animationSpec = MiuixExpandSpec),
-                    ) {
-                        SwitchPreference(
-                            title = stringResource(R.string.liquid_glass),
-                            summary = stringResource(R.string.liquid_glass_summary),
-                            checked = isLiquidGlass,
-                            onCheckedChange = onLiquidGlassChange,
-                        )
-                    }
+                    GlassDropdownPreference(
+                        title = stringResource(R.string.settings_bottom_bar),
+                        summary = stringResource(R.string.settings_bottom_bar_summary),
+                        items = bottomBarStyles,
+                        selectedIndex = bottomBarStyleValues.indexOf(bottomBarStyle)
+                            .takeIf { it >= 0 } ?: 0,
+                        onSelectedIndexChange = {
+                            onBottomBarStyleChange(bottomBarStyleValues[it])
+                        },
+                        backdrop = LocalPreferenceBackdrop.current,
+                        renderInRootScaffold = true,
+                    )
+
+                    val railStyles = listOf(
+                        stringResource(R.string.rail_style_none),
+                        stringResource(R.string.rail_style_top),
+                        stringResource(R.string.rail_style_left),
+                    )
+                    val railStyleValues = listOf(
+                        RailStyle.None,
+                        RailStyle.Top,
+                        RailStyle.Left,
+                    )
+
+                    GlassDropdownPreference(
+                        title = stringResource(R.string.settings_rail_style),
+                        summary = stringResource(R.string.settings_rail_style_summary),
+                        items = railStyles,
+                        selectedIndex = railStyleValues.indexOf(railStyle)
+                            .takeIf { it >= 0 } ?: 0,
+                        onSelectedIndexChange = {
+                            onRailStyleChange(railStyleValues[it])
+                        },
+                        backdrop = LocalPreferenceBackdrop.current,
+                        renderInRootScaffold = true,
+                    )
 
                     SwitchPreference(
                         title = stringResource(R.string.blur_enabled),
                         summary = stringResource(R.string.blur_enabled_summary),
                         checked = isBlurEnabled,
                         onCheckedChange = onBlurEnabledChange,
+                    )
+
+                    SwitchPreference(
+                        title = stringResource(R.string.predictive_back),
+                        summary = stringResource(R.string.predictive_back_summary),
+                        checked = predictiveBack,
+                        onCheckedChange = onPredictiveBackChange,
                     )
                 }
 
@@ -309,11 +386,13 @@ fun SettingsPageView(
                     val languageNames = listOf(
                         stringResource(R.string.language_default),
                         stringResource(R.string.language_zh_cn),
+                        stringResource(R.string.language_zh_tw),
                         stringResource(R.string.language_en),
                     )
                     val languageValues = listOf(
                         LocaleHelper.Language.SYSTEM,
                         LocaleHelper.Language.ZH_CN,
+                        LocaleHelper.Language.ZH_TW,
                         LocaleHelper.Language.EN,
                     )
                     val savedLanguage = LocaleHelper.getSavedLanguage(context)
@@ -571,6 +650,30 @@ fun SettingsPageView(
                             )
                         },
                     )
+
+                    AppArrowPreference(
+                        title = stringResource(R.string.check_update),
+                        summary = if (isCheckingUpdate) {
+                            stringResource(R.string.check_update_checking)
+                        } else {
+                            stringResource(R.string.check_update_summary, appVersion)
+                        },
+                        onClick = { checkUpdate() },
+                    )
+                    AppArrowPreference(
+                        title = stringResource(R.string.current_changelog_open),
+                        onClick = { showChangelog = true },
+                    )
+                }
+                if (showChangelog) {
+                    val notes = remember(context, changelogVersion) {
+                        try {
+                            UpdateChecker.currentChangelog(context, changelogVersion)
+                        } catch (_: java.io.IOException) {
+                            ""
+                        }
+                    }
+                    CurrentChangelogDialog(changelogVersion, notes) { showChangelog = false }
                 }
 
                 AppSectionCard(

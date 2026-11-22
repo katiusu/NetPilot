@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  监控页（monitor_ 前缀）与日志页（log_ 前缀）的文案。
+
+  刻意不在这里定义 monitor_channel_name / monitor_channel_desc /
+  monitor_notification_title / action_stop：这四个 key 归 strings.xml 统一持有，
+  两处都定义会造成资源重复而合并失败。
+-->
+<resources>
+
+    <!-- ===================== 监控页 ===================== -->
+    <string name="monitor_page_title">監控</string>
+
+    <!-- 1. 监控总开关 -->
+    <string name="monitor_section_switch">監控開關</string>
+    <string name="monitor_switch_title">網路質量自動降級</string>
+    <string name="monitor_switch_summary_on">已開啟：檢出「假滿格」或「訊號過差」後自動降級到配置的制式，冷卻期內不再幹預</string>
+    <string name="monitor_switch_summary_off">已關閉：只記錄判定結果，不修改任何網路制式</string>
+
+    <!-- 1b. 循环与状态机 -->
+    <string name="monitor_loop_title">監控迴圈</string>
+    <string name="monitor_loop_on">執行中（前臺服務）</string>
+    <string name="monitor_loop_off">已停止</string>
+    <string name="monitor_phase_title">狀態機階段</string>
+    <string name="monitor_phase_off">已關閉</string>
+    <string name="monitor_phase_watching">正常監控中</string>
+    <string name="monitor_phase_cooldown">已降級，冷卻期內</string>
+    <string name="monitor_phase_recovering">冷卻結束，累計正常輪數中</string>
+    <string name="monitor_phase_rollback">降級後無網，正在回退</string>
+    <string name="monitor_last_tick_title">上次取樣</string>
+    <string name="monitor_last_tick_never">尚未取樣</string>
+    <string name="monitor_last_tick_value">%1$s（%2$d 秒前）</string>
+    <string name="monitor_last_tick_just_now">%1$s（剛剛）</string>
+    <string name="monitor_cooldown_title">冷卻剩餘</string>
+    <string name="monitor_cooldown_none">不在冷卻期</string>
+    <string name="monitor_recovery_title">恢復進度</string>
+    <string name="monitor_recovery_value">%1$d / %2$d 輪</string>
+
+    <!-- 2. 实时信号 -->
+    <string name="monitor_section_signal">實時訊號</string>
+    <string name="monitor_signal_network">網路制式</string>
+    <string name="monitor_signal_raw">原始制式值</string>
+    <string name="monitor_signal_raw_value">%1$d（0..33 的 RIL 常量）</string>
+    <string name="monitor_signal_carrier">運營商</string>
+    <string name="monitor_signal_rsrp">RSRP（參考訊號接收功率）</string>
+    <string name="monitor_signal_sinr">SINR（訊號與干擾噪聲比）</string>
+    <string name="monitor_signal_ping">Ping（%1$s）</string>
+    <string name="monitor_signal_source">取樣來源</string>
+    <string name="monitor_signal_snapshot_time">快照時間</string>
+    <string name="monitor_value_unknown">未知</string>
+    <string name="monitor_value_none">—</string>
+    <string name="monitor_value_no_response">無響應</string>
+    <string name="monitor_value_ping_skipped">已跳過探測（螢幕關閉）</string>
+    <string name="monitor_value_dbm">%1$d dBm</string>
+    <string name="monitor_value_db">%1$d dB</string>
+    <string name="monitor_value_ping_failed">失敗（%1$s）</string>
+    <string name="monitor_value_ms">%1$d ms</string>
+    <string name="monitor_value_seconds">%1$d 秒</string>
+    <string name="monitor_value_minutes">%1$d 分 %2$d 秒</string>
+    <string name="monitor_value_hours">%1$d 小時 %2$d 分</string>
+    <string name="monitor_value_count">%1$d 次</string>
+    <string name="monitor_value_bool_on">是</string>
+    <string name="monitor_value_bool_off">否</string>
+    <string name="monitor_source_cellular">蜂窩網路（卡槽 %1$d，subId %2$d）</string>
+    <string name="monitor_source_wifi">Wi-Fi%1$s</string>
+    <string name="monitor_source_wifi_ssid">（%1$s）</string>
+    <string name="monitor_source_none">沒有可取樣的物件</string>
+
+    <!-- 3. 网络质量判定 -->
+    <string name="monitor_section_judge">網路質量判定</string>
+    <string name="monitor_judge_none">還沒跑過判定，點下面的「立即取樣」跑一次</string>
+    <string name="monitor_judge_fake">判定為網路質量差</string>
+    <string name="monitor_judge_real">網路質量正常</string>
+    <string name="monitor_judge_strong_ok">訊號強且有質量（未命中任何降級規則）</string>
+    <string name="monitor_judge_weak">訊號不夠強，不參與「假滿格」判定（可能命中「訊號過差」）</string>
+    <string name="monitor_judge_reason">降級成因</string>
+    <string name="monitor_judge_reasons">判定依據</string>
+    <string name="monitor_judge_detail">判定詳情</string>
+
+    <!-- 4. 阈值一览（只读；值来自内核真正生效的 DowngradeThresholds） -->
+    <string name="monitor_section_thresholds">當前閾值（只讀）</string>
+    <string name="monitor_threshold_hint">要改這些數請去「功能」頁的「網路質量自動降級」卡片；這裡只顯示核心此刻真正在用的值</string>
+    <string name="monitor_threshold_rsrp">RSRP 強訊號閾值</string>
+    <string name="monitor_threshold_rsrp_summary">單位 dBm；RSRP 嚴格高於該值才算「強訊號」，才可能命中「假滿格」規則</string>
+    <string name="monitor_threshold_sinr">SINR 下限</string>
+    <string name="monitor_threshold_sinr_summary">單位 dB；在「訊號強」的前提下，SINR 低於該值即算質量差。讀不到 SINR 時這一條不生效，判定改用 Ping</string>
+    <string name="monitor_threshold_ping">Ping 上限</string>
+    <string name="monitor_threshold_ping_summary">單位 ms；在「訊號強」的前提下，Ping 高於該值即算質量差</string>
+    <string name="monitor_threshold_weak_signal">訊號過差也觸發降級</string>
+    <string name="monitor_threshold_weak_signal_summary">關：弱訊號只記錄、不動制式；開：RSRP 低於下面的弱訊號閾值時把 5G 換成更穩的 4G</string>
+    <string name="monitor_threshold_weak_rsrp">RSRP 弱訊號閾值</string>
+    <string name="monitor_threshold_weak_rsrp_summary">單位 dBm；RSRP 低於該值即命中「訊號過差」，與 Ping、SINR 無關</string>
+    <string name="monitor_threshold_cooldown">降級後冷卻時長</string>
+    <string name="monitor_threshold_cooldown_summary">單位 秒；降級後這段時間內不做任何恢復嘗試，避免剛切到 4G 又立刻彈回 5G</string>
+    <string name="monitor_threshold_recovery">恢復所需連續正常輪數</string>
+    <string name="monitor_threshold_recovery_summary">單位 輪；冷卻結束後需要連續這麼多輪判定為正常才恢復，單輪正常可能只是抖動</string>
+    <string name="monitor_threshold_rollback">無網回退閾值</string>
+    <string name="monitor_threshold_rollback_summary">單位 輪；降級態下連續這麼多輪無網或無響應，就整體回退到完整制式</string>
+    <string name="monitor_threshold_interval">常規取樣間隔</string>
+    <string name="monitor_threshold_interval_summary">單位 秒；前臺服務每隔這麼久取樣一次（開啟監控頁時會臨時加快到 5 秒）</string>
+    <string name="monitor_threshold_downgrade">降級目標制式</string>
+    <string name="monitor_threshold_downgrade_summary">命中規則後寫入的制式；預設 9 = LTE/GSM/WCDMA，保留 3G 回退</string>
+    <string name="monitor_threshold_lock_lte">鎖定 LTE 時用的制式</string>
+    <string name="monitor_threshold_lock_lte_summary">恢復與回退時寫回的制式；「跟隨運營商」= 按 SIM 卡 MCC/MNC 推導的 5G 自動</string>
+    <string name="monitor_threshold_ping_fail">Ping 完全失敗也算網路質量差</string>
+    <string name="monitor_threshold_ping_fail_summary">關：Ping 全失敗只記日誌、不降級；開：Ping 全失敗與「Ping 超上限」一視同仁，同樣觸發降級</string>
+    <string name="monitor_threshold_endc">降級時同時關閉 EN-DC</string>
+    <string name="monitor_threshold_endc_summary">開：降級與恢復時額外寫 endc_capability；部分機型必須關掉 NSA 雙連線才能真正落到 4G</string>
+
+    <!-- 4. 手动操作 -->
+    <string name="monitor_section_actions">手動操作</string>
+    <string name="monitor_action_sample">立即取樣</string>
+    <string name="monitor_action_sample_summary">馬上做一次完整探測（含 TCP Ping），並重新整理上面所有資料</string>
+    <string name="monitor_action_reset">重置降級狀態機</string>
+    <string name="monitor_action_reset_summary">只清掉冷卻與恢復計數，不改動當前網路制式</string>
+    <string name="monitor_action_refresh_channel">重新探測特權通道</string>
+    <string name="monitor_action_refresh_channel_summary">清掉快取，重新確認 Root / Shizuku 哪條能用</string>
+    <string name="monitor_action_shizuku">申請 Shizuku 許可權</string>
+    <string name="monitor_action_shizuku_summary">彈出 Shizuku 授權框（需要 Shizuku 服務已經在執行）</string>
+    <string name="monitor_busy">正在執行…</string>
+
+    <!-- 5/8. 特权通道 -->
+    <string name="monitor_section_channel">特權通道</string>
+    <string name="monitor_channel_current">當前首選通道</string>
+    <string name="monitor_channel_none">無（既沒有 Root 也沒連上 Shizuku）</string>
+    <string name="monitor_channel_detail">各通道可用性</string>
+    <string name="monitor_channel_detail_empty">正在探測…</string>
+    <string name="monitor_channel_shortcut">檢視全部通道狀態</string>
+
+    <!-- 操作提示 -->
+    <string name="monitor_toast_sampled">已完成一次取樣</string>
+    <string name="monitor_toast_sampled_fail">取樣失敗，請看日誌頁</string>
+    <string name="monitor_toast_reset">已重置降級狀態機</string>
+    <string name="monitor_toast_channel">特權通道：%1$s</string>
+    <string name="monitor_toast_shizuku_ok">已獲得 Shizuku 許可權</string>
+    <string name="monitor_toast_shizuku_fail">沒有拿到許可權，請確認 Shizuku 已啟動並授權給 NetPilot</string>
+
+    <!-- ===================== 日志页 ===================== -->
+    <string name="log_page_title">日誌</string>
+    <string name="log_filter_all">全部</string>
+    <string name="log_filter_warn">警告以上</string>
+    <string name="log_filter_error">僅錯誤</string>
+    <string name="log_order_asc">正序（舊→新）</string>
+    <string name="log_order_desc">倒序（新→舊）</string>
+    <string name="log_order_line">顯示順序：%1$s（點按切換）</string>
+    <string name="log_empty">暫無日誌</string>
+    <string name="log_empty_filtered">當前篩選條件下沒有日誌</string>
+    <string name="log_count">共 %1$d 條（記憶體裡最多保留 400 條，超出會丟掉最舊的）</string>
+    <string name="log_action_clear">清空</string>
+    <string name="log_action_copy">複製</string>
+    <string name="log_action_share">分享</string>
+    <string name="log_action_export">匯出檔案</string>
+    <string name="log_action_more">更多</string>
+    <string name="log_clear_dialog_title">清空全部日誌？</string>
+    <string name="log_clear_dialog_summary">清空後無法恢復；監控還在跑的話，之後的新日誌會繼續寫入。</string>
+    <string name="log_toast_copied">已複製 %1$d 條日誌到剪貼簿</string>
+    <string name="log_toast_copied_one">已複製這 1 條日誌</string>
+    <string name="log_toast_exported">已匯出到 %1$s</string>
+    <string name="log_toast_export_failed">匯出失敗：%1$s</string>
+    <string name="log_toast_copy_empty">沒有可複製的內容</string>
+    <string name="log_toast_cleared">已清空日誌</string>
+    <string name="log_share_title">NetPilot 執行日誌</string>
+    <string name="log_mode_line">日誌模式：%1$s</string>
+    <string name="log_mode_brief">簡要模式</string>
+    <string name="log_mode_detailed">詳細模式</string>
+    <string name="log_mode_brief_hint">簡要模式只記結論、失敗原因與失敗時系統返回的原始值。要逐候選、逐步的完整原始輸出，請在設定頁開啟「詳細日誌模式」。</string>
+
+</resources>

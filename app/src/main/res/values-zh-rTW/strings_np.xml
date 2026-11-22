@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="tab_monitor">監控</string>
+    <string name="tab_log">日誌</string>
+
+    <!-- 前台服务通知 -->
+    <string name="np_monitor_channel_name">網路監控</string>
+    <string name="np_monitor_channel_desc">網路質量降級的常駐監控通知</string>
+    <string name="np_monitor_notification_title">正在監控網路質量…</string>
+    <string name="np_action_stop">停止</string>
+
+    <!-- 首页 -->
+    <string name="np_home_section_status">實時狀態</string>
+    <string name="np_home_section_switch">自動降級</string>
+    <string name="np_home_section_actions">快捷操作</string>
+    <string name="np_home_section_channel">特權通道</string>
+    <string name="np_home_mode">當前制式</string>
+    <string name="np_home_signal">訊號與質量</string>
+    <string name="np_home_latency">網路延遲</string>
+    <string name="np_home_downgrade">降級狀態</string>
+    <string name="np_home_channel">控制通道</string>
+    <string name="np_home_sim_default">預設資料卡</string>
+    <string name="np_home_not_sampled">尚未取樣</string>
+    <string name="np_home_monitoring">監控執行中</string>
+    <string name="np_home_idle">監控已停止</string>
+    <string name="np_home_downgraded">已降級到 4G</string>
+    <string name="np_home_normal">網路正常</string>
+    <string name="np_home_auto_summary_on">每 %1$d 秒取樣一次，命中降級條件即自動降級</string>
+    <string name="np_home_auto_summary_off">已關閉，網路制式不會被自動修改</string>
+    <string name="np_home_preset_5g">5G 自動</string>
+    <string name="np_home_preset_5g_only">僅 5G</string>
+    <string name="np_home_preset_4g_only">僅 4G</string>
+    <string name="np_home_sample">立即檢測</string>
+    <string name="np_home_lock_lte">鎖定 LTE</string>
+    <string name="np_home_open_monitor">監控詳情</string>
+    <string name="np_home_open_log">執行日誌</string>
+    <string name="np_home_open_datacard">資料卡與規則</string>
+    <string name="np_home_refresh">重新探測</string>
+    <string name="np_home_shizuku">申請 Shizuku 許可權</string>
+    <string name="np_home_result_ok">操作成功</string>
+    <string name="np_home_result_fail">操作失敗，請檢查特權通道</string>
+    <string name="np_home_channel_none">無可用特權通道</string>
+
+    <!-- 功能页分区 -->
+    <string name="np_section_fake5g">降級判定條件</string>
+    <string name="np_section_policy">降級與恢復策略</string>
+    <string name="np_mode_switch_title">切換網路制式</string>
+    <string name="np_mode_switch_summary">手動寫入首選制式：按 5G/4G/3G/2G 分組；重複項與四個運營商版 5G 自動已合併為「自動適配運營商」（按本機 SIM 卡解析）；不改自動降級的目標制式</string>
+    <string name="np_mode_switch_dialog_title">選擇網路制式</string>
+    <string name="np_mode_switch_dialog_summary">當前：%1$s。點按即寫入本機首選制式</string>
+    <string name="np_mode_switch_none">沒有可用的資料卡（subId 無效），無法寫入</string>
+    <string name="np_mode_switch_unknown">暫時讀不到當前制式，仍可寫入</string>
+    <string name="np_mode_auto_carrier">自動適配運營商</string>
+    <string name="np_mode_auto_carrier_named">自動適配運營商（%1$s）</string>
+    <string name="np_mode_group_5g">5G（NR）組合</string>
+    <string name="np_mode_group_4g">4G（LTE）組合</string>
+    <string name="np_mode_group_3g">3G 組合</string>
+    <string name="np_mode_group_2g">2G / CDMA 組合</string>
+    <string name="np_mode_switch_applied">已切換為 %1$s</string>
+    <string name="np_mode_switch_failed">切換為 %1$s 失敗，原因見日誌頁</string>
+    <!-- 1.5.4：写入被系统收下、但回读确认没生效（权限更严格的机型，如 OriginOS）。 -->
+    <string name="np_mode_switch_no_effect">已請求切換為 %1$s，但系統回讀仍是原制式（未生效，詳見日誌頁）</string>
+    <string name="np_section_monitor">監控</string>
+    <string name="np_section_datacard">資料卡</string>
+    <string name="np_section_tasker">自動化介面</string>
+    <string name="np_section_other">其它</string>
+
+    <!-- 功能页配置项 -->
+    <string name="np_fake5g_enabled_title">啟用網路質量降級</string>
+    <string name="np_fake5g_enabled_summary">總開關（預設開）。開：命中「假滿格」或「訊號過差」就自動把 5G 換成 4G；關：只取樣記日誌，不改網路制式</string>
+    <string name="np_fake5g_rsrp_title">RSRP 強訊號閾值</string>
+    <string name="np_fake5g_rsrp_summary">單位 dBm（預設 -85）。RSRP 高於它才算「訊號強」，才可能命中假滿格；數值越大越苛刻，越難觸發降級</string>
+    <string name="np_fake5g_sinr_title">SINR 質量閾值</string>
+    <string name="np_fake5g_sinr_summary">單位 dB（預設 0）。僅當訊號強時才看它：SINR 低於它算質量差，數值越大越嚴格；讀不到 SINR 時這條不生效，改用 Ping</string>
+    <string name="np_fake5g_ping_title">Ping 上限</string>
+    <string name="np_fake5g_ping_summary">單位 ms（預設 300）。僅當訊號強時才看它：Ping 高於它算質量差，數值越小越嚴格、越容易觸發降級。這個讀數是含 DNS 與建連的完整首位元組耗時，不是無線 RTT，所以預設給得比較寬鬆</string>
+    <string name="np_fake5g_ping_fail_title">Ping 失敗也算差</string>
+    <string name="np_fake5g_ping_fail_summary">預設關。開：Ping 全部失敗也按質量差處理、照樣降級；關：只記日誌不降級。經常整片探測不通才建議開</string>
+    <string name="np_fake5g_nr_only_title">假滿格只在 5G / 5G+ 判定</string>
+    <string name="np_fake5g_nr_only_summary">預設開啟。開：只有當前駐留在 5G 或 5G+（NSA 雙連線）時，才拿 Ping / SINR 判「假滿格」；在 4G / 3G / 2G 上不再判。關：退回舊行為，任何制式下都按 Ping / SINR 判。為什麼預設開：4G 上 Ping 本來就容易超過上限，而那時的降級目標正是 4G——切了等於沒切，判據卻一直成立，「恢復正常輪數」永遠攢不夠，裝置會被永久鎖在 4G。副作用：機型在 NSA 上讀不到 NR 小區（缺「精確位置」許可權）時，5G 也可能不再觸發降級，真遇到就關掉這個開關</string>
+    <string name="np_fake5g_weak_signal_title">訊號過差也降級</string>
+    <string name="np_fake5g_weak_signal_summary">預設開。開：RSRP 低於下面的弱訊號閾值就換 4G；關：弱訊號只記錄，不改制式</string>
+    <string name="np_fake5g_weak_rsrp_title">RSRP 弱訊號閾值</string>
+    <string name="np_fake5g_weak_rsrp_summary">單位 dBm（預設 -110）。RSRP 低於它即算訊號過差，與 Ping、SINR 無關；上面的開關開啟才生效，數值越大越容易降級</string>
+    <string name="np_fake5g_endc_title">降級時關閉 EN-DC</string>
+    <string name="np_fake5g_endc_summary">預設關。開：降級和恢復時額外關閉 EN-DC（NSA 雙連線），部分機型才能真正落到 4G；不確定就別開</string>
+    <string name="np_fake5g_downgrade_mode_title">降級目標制式</string>
+    <string name="np_fake5g_downgrade_mode_summary">預設「4G 優先」。命中規則時寫入的制式；選「僅 4G」更徹底，但丟了 3G 回退，訊號差的地方可能直接無網</string>
+    <string name="np_fake5g_lock_lte_mode_title">恢復目標制式</string>
+    <string name="np_fake5g_lock_lte_mode_summary">預設「跟隨運營商」。冷卻結束恢復時寫回的制式，按 SIM 卡自動推匯出 5G 自動，換卡不用改；亂選可能恢復後上不了 5G</string>
+    <string name="np_fake5g_cooldown_title">降級冷卻時間</string>
+    <string name="np_fake5g_cooldown_summary">單位 秒（預設 120 = 2 分鐘）。降級後這麼久內不嘗試恢復，免得剛切到 4G 又立刻彈回 5G；調大更省電，但 5G 回來更慢</string>
+    <string name="np_fake5g_recovery_title">恢復所需正常輪數</string>
+    <string name="np_fake5g_recovery_summary">單位 輪（預設 2）。冷卻結束後要連續這麼多輪正常才恢復；調大更穩但更慢，調成 1 會被單次抖動騙回 5G</string>
+    <string name="np_fake5g_no_net_rollback_title">無網回退閾值</string>
+    <string name="np_fake5g_no_net_rollback_summary">單位 輪（預設 2）。降級後連續這麼多輪完全無網就整體回退到完整制式；調小自救更快，調大容易一直卡在無網</string>
+    <string name="np_fake5g_interval_title">取樣間隔</string>
+    <string name="np_fake5g_interval_summary">單位 秒（預設 60）。前臺服務每隔這麼久採一次，越大越省電、反應越慢；開啟監控頁會臨時加快到 5 秒</string>
+    <string name="np_monitor_autostart_title">開機自動啟動監控</string>
+    <string name="np_monitor_autostart_summary">重啟後自動恢復監控與降級狀態</string>
+    <string name="np_adaptive_interval_title">自適應取樣間隔</string>
+    <string name="np_adaptive_interval_summary">預設開啟。當讀數靠近判定門限時，取樣間隔逐輪按下面的倍率縮短（最多縮到設定值的一半）；一旦遠離門限立刻恢復成設定值。靠近門限時反應更快，代價是更頻繁的取樣與網路探測</string>
+    <string name="np_adaptive_margin_title">自適應靈敏度</string>
+    <string name="np_adaptive_margin_summary">單位 dBm（預設 20）。RSRP 距任一門限不超過此值、SINR 不超過它的三分之一、Ping 不超過它的 5 倍時，算作「靠近門限」</string>
+    <string name="np_adaptive_step_title">自適應縮短倍率</string>
+    <string name="np_adaptive_step_summary">預設 0.85（每輪縮短 15%）。每連續靠近門限一輪，取樣間隔就乘這個數，例如 60 秒 → 51 → 43 → 37……；最低只縮到設定值的一半，且不低於 15 秒。調小反應更快、更耗電；調大更省電、更遲鈍</string>
+    <string name="np_tasker_enabled_title">啟用 Tasker / Locale 介面</string>
+    <string name="np_tasker_enabled_summary">預設關閉。關閉時命令接收器、Locale 外掛與外掛配置介面會被系統直接禁用，Tasker 廣播不會喚醒本應用（後臺開銷嚴格為零）；開啟後 Tasker 動作立即生效。從 1.2.0 升級上來的使用者需要重新開啟一次</string>
+    <string name="np_datacard_manage_title">資料卡與規則</string>
+    <string name="np_datacard_manage_summary">管理預設資料卡、雙卡策略與 Wi-Fi 規則</string>
+    <string name="np_about_title">關於 NetPilot</string>
+    <string name="np_about_summary">版本資訊、開源許可與專案地址</string>
+
+    <!-- 数值单位 -->
+    <string name="np_unit_dbm"> dBm</string>
+    <string name="np_unit_db"> dB</string>
+    <string name="np_unit_ms"> ms</string>
+    <string name="np_unit_sec"> 秒</string>
+    <string name="np_unit_rounds"> 輪</string>
+    <string name="np_unit_times"> 倍</string>
+
+    <!-- 制式下拉项 -->
+    <string name="np_mode_follow_carrier">跟隨運營商（5G 自動）</string>
+    <string name="np_mode_9">4G 優先（LTE/GSM/WCDMA）</string>
+    <string name="np_mode_11">僅 4G（LTE Only）</string>
+    <string name="np_mode_12">4G/3G（LTE/WCDMA）</string>
+    <string name="np_mode_26">5G 自動（NR/LTE/GSM/WCDMA）</string>
+    <string name="np_mode_27">5G 全制式（含 CDMA）</string>
+
+    <!-- 数据卡页 -->
+    <string name="np_dc_title">資料卡與規則</string>
+    <string name="np_dc_section_sim">SIM 卡</string>
+    <string name="np_dc_section_policy">雙卡策略</string>
+    <string name="np_dc_section_rules">Wi-Fi 規則</string>
+    <string name="np_dc_sim_default">預設資料卡</string>
+    <string name="np_dc_set_default">設為預設資料卡</string>
+    <string name="np_dc_is_default">當前預設資料卡</string>
+    <string name="np_dc_policy_title">卡 %1$d 策略</string>
+    <string name="np_dc_rule_empty">還沒有規則，點下面的按鈕新增一條</string>
+    <string name="np_dc_rule_add">新增規則</string>
+    <string name="np_dc_rule_edit">編輯規則</string>
+    <string name="np_dc_rule_name">規則名稱</string>
+    <string name="np_dc_rule_ssid">Wi-Fi 名稱（SSID）</string>
+    <string name="np_dc_rule_bssid">Wi-Fi 地址（BSSID，可空）</string>
+    <string name="np_dc_rule_target">目標資料卡</string>
+    <string name="np_dc_rule_priority">優先順序（大者優先）</string>
+    <string name="np_dc_rule_cooldown">冷卻時間（秒）</string>
+    <string name="np_dc_rule_revert">離開 Wi-Fi 後切回</string>
+    <string name="np_dc_rule_delete">刪除</string>
+    <string name="np_dc_rule_any_wifi">任意 Wi-Fi</string>
+    <string name="np_dc_any_sim">任意卡</string>
+    <string name="np_dc_sim_title">卡 %1$d · %2$s</string>
+    <string name="np_dc_no_sim">未檢測到 SIM 卡</string>
+    <string name="np_dc_no_channel">無可用特權通道，無法修改資料卡</string>
+    <string name="np_dc_switch_ok">已切換資料卡</string>
+    <string name="np_dc_switch_fail">切換失敗，請檢查特權通道</string>
+    <!-- 1.6.0 主页 / 快速操作 / 关于页 / 次卡 -->
+    <string name="np_home_status_running_summary">每 %1$d 秒取樣一次</string>
+    <string name="np_home_info_system">系統版本</string>
+    <string name="np_home_info_app">應用版本</string>
+    <string name="np_home_info_channel">特權通道</string>
+    <string name="np_home_info_device">裝置型號</string>
+    <string name="np_home_info_unknown">未知</string>
+    <string name="np_home_action_quick">快速操作</string>
+    <string name="np_home_action_quick_summary">切制式、立即檢測、鎖定 LTE、申請授權</string>
+    <string name="np_home_action_datacard_summary">預設上網絡卡、每卡策略、Wi-Fi 規則</string>
+    <string name="np_home_action_log">執行日誌</string>
+    <string name="np_home_action_log_summary">檢視、搜尋、匯出診斷日誌</string>
+    <string name="np_home_link_repo">專案主頁</string>
+    <string name="np_home_link_changelog">更新日誌</string>
+    <string name="np_home_link_issues">問題反饋</string>
+    <string name="np_home_alert_channel_title">讀不到當前制式</string>
+    <string name="np_home_alert_channel_message">讀取與寫入制式都需要 Root 或 Shizuku 授權，當前沒有可用的特權通道。</string>
+    <string name="np_quick_title">快速操作</string>
+    <string name="np_quick_section_preset">制式預設</string>
+    <string name="np_quick_section_manual">手動操作</string>
+    <string name="np_quick_section_auto">自動降級</string>
+    <string name="np_quick_section_channel">特權通道</string>
+    <string name="np_quick_section_nav">頁面入口</string>
+    <string name="np_quick_manual_hint">立即取樣一次，重新整理當前制式讀數</string>
+    <string name="np_quick_nav_monitor">監控詳情</string>
+    <string name="np_quick_nav_monitor_summary">實時取樣、訊號與降級狀態</string>
+    <string name="np_quick_nav_log">執行日誌</string>
+    <string name="np_quick_nav_log_summary">搜尋、篩選、匯出</string>
+    <string name="np_about_section_project">專案</string>
+    <string name="np_about_section_references">參考與致謝</string>
+    <string name="np_about_releases_summary">檢視每個版本的具體改動</string>
+    <string name="np_about_issues_summary">報告問題、提出建議</string>
+    <string name="np_about_reference_hyperisland">HyperIsland（主頁與關於頁結構參考）</string>
+    <string name="np_about_reference_hyperisland_summary">MIT · © 2026 1812z</string>
+    <string name="np_about_reference_haf">HyperAutofillFix（日誌頁參考）</string>
+    <string name="np_about_reference_haf_summary">MIT · © 2026 遠方緣分的天空</string>
+    <string name="np_about_opensource_note">以上專案均以 MIT 許可證釋出：本應用只借鑑其介面結構與互動，沒有複製其業務程式碼。</string>
+    <string name="log_filter_debug">除錯</string>
+    <string name="log_filter_info">資訊</string>
+    <string name="log_search_hint">搜尋 tag 或內容</string>
+    <string name="log_search_empty">沒有匹配的日誌</string>
+    <string name="log_level_debug">除錯</string>
+    <string name="log_level_info">資訊</string>
+    <string name="log_level_warn">警告</string>
+    <string name="log_level_error">錯誤</string>
+    <string name="log_summary">共 %1$d 條，顯示 %2$d 條</string>
+    <string name="log_action_order">切換排序</string>
+    <string name="np_section_subsim">次卡與資料卡</string>
+    <string name="np_subsim_auto_detect_title">上網絡卡編號自動檢測</string>
+    <string name="np_subsim_auto_detect_on">開啟：自動讀取系統當前的上網絡卡</string>
+    <string name="np_subsim_auto_detect_off">關閉：手動指定上網絡卡編號</string>
+    <string name="np_subsim_manual_title">手動指定上網絡卡</string>
+    <string name="np_subsim_manual_summary">當前使用：%1$s</string>
+    <string name="np_subsim_manual_none">未檢測到 SIM 卡</string>
+    <string name="np_subsim_auto_lte_title">非活躍資料卡自動設為 4G</string>
+    <string name="np_subsim_auto_lte_on">開啟：每輪取樣都把非活躍卡糾正到 4G</string>
+    <string name="np_subsim_auto_lte_off">關閉：不改動非活躍卡的制式</string>
+    <string name="np_subsim_hint">隻影響次卡（非預設上網絡卡）；需要特權通道才能寫入。</string>
+    <string name="np_subsim_manual_entry">卡 %1$d · %2$s</string>
+</resources>

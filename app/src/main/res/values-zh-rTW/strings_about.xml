@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「关于」页新增的文案，key 统一 ab_ 前缀。
+
+  为什么另开一个文件：strings.xml 由多个分支并发修改，新文案放独立文件可以避免冲突。
+  这里只放本页新加的串；标题类仍复用 strings.xml 里的 about_* 键。
+-->
+<resources>
+
+    <!-- GitHub 仓库：副标题就是仓库地址本身，点按交给系统浏览器打开 -->
+    <string name="ab_github_repo">GitHub 倉庫</string>
+    <string name="ab_github_repo_summary">github.com/katiusu/NetPilot</string>
+
+    <!-- 打开外部链接失败（设备上没有能处理该 URL 的应用）时的提示 -->
+    <string name="ab_open_failed">沒有應用可以開啟這個連結</string>
+
+    <!-- 许可证行：说明这一行点下去到底会看到什么、以及 Apache-2.0 对使用者意味着什么 -->
+    <string name="ab_license_summary">在瀏覽器開啟 Apache-2.0 協議原文。本應用以 Apache-2.0 釋出：可自由使用、修改和再分發，需保留版權與許可宣告。</string>
+
+    <!-- 依赖库行：这一页列出应用实际用到的开源库与许可证全文 -->
+    <string name="ab_dependencies_summary">列出本應用用到的開源庫及其許可證全文。</string>
+
+</resources>

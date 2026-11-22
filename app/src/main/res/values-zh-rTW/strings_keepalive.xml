@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  后台服务（保活 / 总开关）与系统兼容性的文案，key 统一 ka_ 前缀。
+
+  分成独立文件的原因和 strings_monitor.xml 一样：这块功能由一个开发者独立负责，
+  单独成文件可以避免和其他分支并发改 strings.xml 时产生冲突。
+
+  写作约定：开关的 summary 只写「改了什么 / 默认值 / 最要紧的后果」，长解释放 *_hint
+  脚注（脚注一定会换行，summary 有被截断的风险）。系统兼容性里的每一项都必须是真测出来
+  的值，测不到就显示「未知」——「未知」表示没测到，不表示没问题。
+-->
+<resources>
+
+    <!-- ===================== 后台服务总开关 ===================== -->
+    <string name="ka_section_services">後臺服務</string>
+    <string name="ka_gate_title">啟用所有後臺服務</string>
+    <string name="ka_gate_summary">預設開啟，是後臺行為的總閘。關閉會停掉監控前臺服務、心跳、被殺重啟、開機自啟，Tasker 和磁貼觸發的操作也失效。</string>
+    <string name="ka_gate_hint">開啟：登記心跳、開機自啟、被殺重啟，Tasker 與磁貼生效；監控需自動降級開著才拉起。關閉：監控與心跳即停，不再自啟重啟。</string>
+    <string name="ka_status_title">執行狀態</string>
+    <string name="ka_status_summary">監控服務：%1$s · 保活心跳：%2$s</string>
+    <string name="ka_status_running">執行中</string>
+    <string name="ka_status_stopped">已停止</string>
+    <string name="ka_heartbeat_on">已註冊</string>
+    <string name="ka_heartbeat_off">未註冊</string>
+    <string name="ka_status_hint">心跳走系統鬧鐘，息屏或省電時可能遲到幾分鐘。顯示「已停止」時點上面開關重新拉起；但通知欄點過「停止」後不會再自動拉起。</string>
+
+    <!-- ===================== 系统兼容性 ===================== -->
+    <string name="ka_section_compat">系統相容性</string>
+    <string name="ka_verify_title">寫入後回讀校驗</string>
+    <string name="ka_verify_summary">預設開啟。開啟：寫完 settings 立刻讀回比對，不一致算失敗並寫日誌。關閉：寫一次就當成功，不再比對。</string>
+    <string name="ka_verify_hint">只在「寫入生效卻誤報失敗」時才關：部分廠商 ROM 回讀不準，會把成功判成失敗。關掉後只能自己到系統設定核對，失敗不再進日誌。</string>
+    <string name="ka_verbose_title">詳細日誌模式</string>
+    <string name="ka_verbose_summary">預設關閉 = 簡要模式：只記結論、失敗原因，以及失敗時系統返回的原始值（退出碼、原始輸出、異常原文）。開啟 = 詳細模式：連每一步的原始輸出、逐次嘗試過程都記進日誌頁。</string>
+    <string name="ka_verbose_hint">先看簡要模式；排查「開關撥了但網路沒變」時再開詳細模式。root 通道下詳細診斷要從 app_process 子程序搬回應用程序，開啟會有額外開銷，問題查完請關掉。</string>
+
+    <string name="ka_compat_vendor">廠商</string>
+    <string name="ka_compat_model">型號</string>
+    <string name="ka_compat_brand">品牌</string>
+    <string name="ka_compat_android">Android 版本</string>
+    <string name="ka_compat_miui">系統構建版本</string>
+
+    <string name="ka_compat_channel">當前特權通道</string>
+    <!-- 1.5.0：值由 CarrierInfo.activeCarrierSummary 生成（识别到的运营商 + 会用的默认制式）。 -->
+    <string name="ka_compat_carrier">運營商識別</string>
+    <string name="ka_compat_channel_none">未檢測到</string>
+    <string name="ka_compat_channel_reason">通道探測結果：%1$s</string>
+
+    <string name="ka_compat_write">寫入方式</string>
+    <string name="ka_compat_write_cli">app_process → PrivilegedCli setmode %1$d（經 su 執行）</string>
+    <string name="ka_compat_write_settings">su -c \"settings put global %1$s &lt;模式值&gt;\"</string>
+    <string name="ka_compat_write_shizuku">binder → IShizukuController.setNetworkMode(%1$d)</string>
+    <string name="ka_compat_write_command">當前配置下真正會執行的命令：%1$s</string>
+
+    <string name="ka_compat_read">讀取探測</string>
+    <string name="ka_compat_read_ok">成功，讀回 %1$s</string>
+    <string name="ka_compat_read_failed">失敗：%1$s</string>
+    <string name="ka_compat_read_no_value">沒有讀回任何值（通道超時或被拒絕）</string>
+    <string name="ka_compat_read_skipped">未執行：沒有可用的特權通道</string>
+    <string name="ka_compat_read_no_target">未執行：沒能確定寫入目標（讀不到預設資料卡）</string>
+
+    <string name="ka_compat_write_methods">本機可用的寫入方法</string>
+    <string name="ka_compat_self_check">程式自檢</string>
+    <string name="ka_compat_self_check_ok">透過（%1$s）</string>
+    <string name="ka_compat_self_check_failed">失敗（%1$s）</string>
+    <string name="ka_compat_self_check_skipped">未執行：沒有可用的特權通道</string>
+
+    <string name="ka_compat_verify_state">回讀校驗</string>
+    <string name="ka_compat_verify_on">開啟</string>
+    <string name="ka_compat_verify_off">關閉</string>
+
+    <string name="ka_compat_probing">檢測中…</string>
+    <string name="ka_compat_unknown">未知</string>
+    <string name="ka_compat_unknown_note">這些值每次進本頁都會重新探測。「未知」表示真沒測出來（屬性讀不到、通道沒授權或超時），不代表沒問題。</string>
+    <string name="ka_compat_conclusion">本應用不對廠商做分支處理；某機型寫入若被系統忽略，回讀校驗會標為失敗並寫進日誌頁，可查可定位。</string>
+
+</resources>

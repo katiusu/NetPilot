@@ -26,7 +26,11 @@ android {
 
     defaultConfig {
         applicationId = "io.github.katiusu.netpilot"
-        minSdk = 34
+        // minSdk 33（Android 13）：液态玻璃与预测性返回都依赖 API 33 的 RuntimeShader /
+        // setEnableOnBackInvokedCallback，33 是这套 UI 的最低可用版本，再低就得给全部
+        // glass 组件写降级路径。manifest 里的 specialUse 前台服务类型（API 34）在 33 上
+        // 被系统忽略，只是退化成无类型前台服务，不影响启动与保活。
+        minSdk = 33
         // targetSdk 36（Android 16）。Play 的 targetSdk 36 提交要求已于 2026-08-31 生效
         // （可申请延期到 2026-11-01），继续用 34 已经无法提交更新。本应用已满足 36 的全部强制项：
         //   * edge-to-edge —— 5 个 Activity 都调了 enableEdgeToEdge()，manifest 里也没有
@@ -40,7 +44,7 @@ android {
         // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
         // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
         targetSdk = 36
-        versionCode = 22
+        versionCode = 23
         // versionName 是给人看的语义版本；versionCode 是构建号（2026100505 = 2026-10-05 第 5 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
         // 1.5.1：把「provider 不认调用方身份」与「真的缺权限」分开（uid 名单 / AMS 应用进程记录 /
@@ -51,9 +55,13 @@ android {
         // 2.0.0-rc.3：24 条缺陷修复（广播鉴权与回执定向、降级态失败不再丢记录、
         //   双卡降级前制式持久化、命令行读写超时、监控停止不再被服务自身翻回）+
         //   基带只读探测（高通/联发科/三星/紫光，不做写入）。
+        // 2.0.0：底栏形态（柔光玻璃 / 液态玻璃）与宽屏侧栏（无 / 顶部 / 左侧）改为枚举偏好，
+        //   替换原先能组合出非法状态的两个布尔；日志页溢出菜单改用玻璃卡片；
+        //   设置页与关于页都能看当前版本更新日志（changelog.md 打包进 assets）；
+        //   预测性返回开关；增加繁体中文（zh-rTW）。
         // 1.5.4：锁屏期间保活心跳换成不唤醒闹钟（深睡）+ 手动切换制式后回读确认并如实记录
         //   + Shizuku 晚于应用启动时也能清掉残留的用户服务进程。
-        versionName = "2.0.0-rc.3"
+        versionName = "2.0.0"
 
     }
 

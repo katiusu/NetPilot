@@ -30,7 +30,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -50,9 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import io.github.katiusu.netpilot.R
-import io.github.katiusu.netpilot.core.update.UpdateChecker
 import io.github.katiusu.netpilot.ui.component.AppPageScaffold
-import io.github.katiusu.netpilot.ui.component.UpdateDialog
 import io.github.katiusu.netpilot.ui.component.effect.BgEffectBackground
 import io.github.katiusu.netpilot.ui.component.isGlassTopBarAvailable
 import io.github.katiusu.netpilot.ui.theme.squircleShape
@@ -62,7 +59,6 @@ import io.github.katiusu.netpilot.ui.util.pageContentPadding
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
 import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import kotlin.math.abs
-import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
@@ -195,43 +191,6 @@ private fun AboutContent(
             val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
             "${info.versionName ?: "1.0"} (${info.longVersionCode})"
         } catch (_: Exception) { "1.0" }
-    }
-
-    val updateScope = rememberCoroutineScope()
-    val appVersion = remember(ctx) { UpdateChecker.currentVersion(ctx) }
-    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
-
-    fun checkUpdate() {
-        if (isCheckingUpdate) return
-        isCheckingUpdate = true
-        updateScope.launch {
-            val result = UpdateChecker.checkForUpdate(ctx)
-            isCheckingUpdate = false
-            result.fold(
-                onSuccess = { info ->
-                    if (info.hasUpdate) {
-                        updateInfo = info
-                    } else {
-                        Toast.makeText(ctx, ctx.getString(R.string.update_latest), Toast.LENGTH_SHORT).show()
-                    }
-                },
-                onFailure = {
-                    Toast.makeText(ctx, ctx.getString(R.string.update_check_failed), Toast.LENGTH_SHORT).show()
-                },
-            )
-        }
-    }
-
-    updateInfo?.let { info ->
-        UpdateDialog(
-            info = info,
-            onDismissRequest = { updateInfo = null },
-            onConfirm = {
-                updateInfo = null
-                openExternalUrl(ctx, info.releaseUrl)
-            },
-        )
     }
 
     BgEffectBackground(
@@ -411,15 +370,6 @@ private fun AboutContent(
                             title = stringResource(R.string.np_home_link_issues),
                             summary = stringResource(R.string.np_about_issues_summary),
                             onClick = { openExternalUrl(ctx, GITHUB_ISSUES_URL) },
-                        )
-                        ArrowPreference(
-                            title = stringResource(R.string.check_update),
-                            summary = if (isCheckingUpdate) {
-                                stringResource(R.string.check_update_checking)
-                            } else {
-                                stringResource(R.string.check_update_summary, appVersion)
-                            },
-                            onClick = { checkUpdate() },
                         )
                     }
 

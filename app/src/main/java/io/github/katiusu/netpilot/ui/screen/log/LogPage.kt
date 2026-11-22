@@ -49,6 +49,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.katiusu.netpilot.R
+import io.github.katiusu.netpilot.ui.component.isGlassTopBarAvailable
 import io.github.katiusu.netpilot.core.NetPilot
 import io.github.katiusu.netpilot.core.monitor.LogEntry
 import io.github.katiusu.netpilot.core.monitor.LogLevel
@@ -57,6 +58,7 @@ import io.github.katiusu.netpilot.core.priv.WriteDiag
 import io.github.katiusu.netpilot.ui.util.BlurredBar
 import io.github.katiusu.netpilot.ui.util.PageBackdrop
 import io.github.katiusu.netpilot.ui.util.pageScrollModifiers
+import io.github.katiusu.netpilot.ui.util.TopLayer
 import io.github.katiusu.netpilot.ui.util.rememberBlurBackdrop
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -64,6 +66,12 @@ import java.util.Locale
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
+import top.yukonga.miuix.kmp.glass.GlassIconButton
+import top.yukonga.miuix.kmp.glass.GlassIconDropdownMenu
+import top.yukonga.miuix.kmp.glass.GlassTopAppBarDefaults
+import top.yukonga.miuix.kmp.glass.glassPopupAnchor
+import top.yukonga.miuix.kmp.glass.glassPopupAnchorContent
+import top.yukonga.miuix.kmp.glass.rememberGlassPopupAnchor
 import top.yukonga.miuix.kmp.menu.WindowIconDropdownMenu
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -73,6 +81,7 @@ import top.yukonga.miuix.kmp.basic.Text as MiuixText
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.More
+import top.yukonga.miuix.kmp.icon.glass.More
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
 
@@ -110,6 +119,13 @@ fun LogPageView(
     val backdrop = rememberBlurBackdrop()
     val blurActive = isBlurEnabled && backdrop != null
     val barColor = if (blurActive) Color.Transparent else MiuixTheme.colorScheme.surface
+
+    // 玻璃菜单要自己记展开态与锚点；玻璃不可用时同一份 menuEntries 走窗口菜单，两条分支共用排序/清空逻辑。
+    var showMoreMenu by remember { mutableStateOf(false) }
+    val moreAnchor = rememberGlassPopupAnchor()
+    // 顶栏是否玻璃与菜单是否玻璃必须同判：RuntimeShader 不可用时顶栏会退成普通样式，
+    // 菜单若还走玻璃分支，会出现「没有模糊底的玻璃菜单」甚至渲染异常。
+    val glassMenu = isGlassTopBarAvailable() && blurActive
 
     // LogStore.entries 现在是 StateFlow：collectAsState 订阅后拿到的就是不可变快照，
     // 后台线程 append 也会触发重组（与原来的 SnapshotStateList 行为一致）。
@@ -151,7 +167,7 @@ fun LogPageView(
 
     fun buildText(maxChars: Int = MAX_EXPORT_CHARS): String {
         val sb = StringBuilder()
-        val list = if (order == LogOrder.ASC) entries else entries.asReversed()
+        val list = entries
         for (e in list) {
             sb.append(oneLine(e)).append('\n')
             if (sb.length > maxChars) break
@@ -230,7 +246,7 @@ fun LogPageView(
                     ?: error("openOutputStream 返回 null")
                 stream.bufferedWriter(Charsets.UTF_8).use { w ->
                     w.append(fileHeader())
-                    val list = if (order == LogOrder.ASC) entries else entries.asReversed()
+                    val list = entries
                     var written = 0
                     for (e in list) {
                         val line = oneLine(e)
@@ -310,14 +326,33 @@ fun LogPageView(
                     color = barColor,
                     scrollBehavior = scrollBehavior,
                     actions = {
-                        WindowIconDropdownMenu(
-                            entries = menuEntries,
-                            collapseOnSelection = true,
-                        ) {
-                            Icon(
-                                imageVector = MiuixIcons.More,
-                                contentDescription = stringResource(R.string.log_action_more),
-                            )
+                        if (glassMenu) {
+                            GlassIconButton(
+                                onClick = { showMoreMenu = !showMoreMenu },
+                                modifier = Modifier.glassPopupAnchor(
+                                    anchor = moreAnchor,
+                                    cornerRadius = GlassTopAppBarDefaults.ButtonSize / 2,
+                                    floating = true,
+                                ),
+                            ) {
+                                Icon(
+                                    imageVector = MiuixIcons.Glass.More,
+                                    contentDescription = stringResource(R.string.log_action_more),
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .glassPopupAnchorContent(moreAnchor),
+                                )
+                            }
+                        } else {
+                            WindowIconDropdownMenu(
+                                entries = menuEntries,
+                                collapseOnSelection = true,
+                            ) {
+                                Icon(
+                                    imageVector = MiuixIcons.More,
+                                    contentDescription = stringResource(R.string.log_action_more),
+                                )
+                            }
                         }
                     },
                 )
@@ -446,6 +481,30 @@ fun LogPageView(
                             },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.textButtonColorsPrimary(),
+                        )
+                    }
+                }
+            }
+
+            // 玻璃弹层挂在页面顶层（TopLayerHost 在 MainActivity），这样菜单不会被底栏和滚动内容裁掉。
+            if (glassMenu) {
+                TopLayer {
+                    // GlassIconDropdownMenu 是 BoxScope 扩展，这里套一层满屏 Box 既拿作用域也保持坐标原点一致。
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        GlassIconDropdownMenu(
+                            show = showMoreMenu,
+                            onDismissRequest = { showMoreMenu = false },
+                            anchor = moreAnchor,
+                            anchorContent = {
+                                Icon(
+                                    imageVector = MiuixIcons.Glass.More,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            },
+                            entries = menuEntries,
+                            backdrop = backdrop,
+                            collapseOnSelection = false,
                         )
                     }
                 }

@@ -43,6 +43,19 @@
     <string name="floating_navbar_summary">Use floating style bottom navigation bar</string>
     <string name="liquid_glass">Liquid Glass</string>
     <string name="liquid_glass_summary">iOS-style liquid glass blur effect</string>
+    <string name="settings_bottom_bar">Bottom Bar Style</string>
+    <string name="settings_bottom_bar_summary">Style used on narrow screens and wide screens without the sidebar</string>
+    <string name="settings_rail_style">Sidebar Style</string>
+    <string name="settings_rail_style_summary">Wide screens only; the sidebar replaces the bottom bar and opens in the selected form</string>
+    <string name="bottom_bar_style_glass">Soft Glass</string>
+    <string name="bottom_bar_style_ios">Liquid Glass</string>
+    <string name="rail_style_none">Off</string>
+    <string name="rail_style_top">Top Panel</string>
+    <string name="rail_style_left">Left Panel</string>
+    <string name="predictive_back">Predictive Back</string>
+    <string name="predictive_back_summary">Enable predictive back gesture animation</string>
+    <string name="language_zh_tw">繁體中文</string>
+    <string name="current_changelog_open">View Current Changelog</string>
     <string name="blur_enabled">Background Blur</string>
     <string name="blur_enabled_summary">Enable background blur effect for navigation bar and bottom bar</string>
     <string name="language_default">Default</string>
@@ -210,4 +223,8 @@
     <string name="update_version_latest">Latest version</string>
     <string name="update_notes_title">What\'s new</string>
     <string name="update_ok">OK</string>
+    <!-- current changelog -->
+    <string name="settings_footer">NetPilot %1$s</string>
+    <string name="current_changelog">This update</string>
+    <string name="current_changelog_unavailable">No release notes available</string>
 </resources>
