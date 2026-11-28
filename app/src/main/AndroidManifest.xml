@@ -118,6 +118,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- ===== 前台服务授权修复入口（Android 17 specialUse 的 app-op） =====
+             「监控未启动」通知上的「立即修复」按钮发广播到这里；
+             不导出，只接本应用自己的广播。 -->
+        <receiver
+            android:name=".core.monitor.FgsRepairReceiver"
+            android:exported="false" />
+
         <!-- ===== Shizuku 兜底通道的 Binder 提供者 =====
              Shizuku 管理器通过该 provider 找到应用并授予权限；缺少它 checkSelfPermission 永远失败。
              注意：Shizuku 的 UserService 本身不需要在 manifest 注册（由 Shizuku 反射实例化）。 -->

@@ -165,4 +165,11 @@
     <string name="log_mode_detailed">详细模式</string>
     <string name="log_mode_brief_hint">简要模式只记结论、失败原因与失败时系统返回的原始值。要逐候选、逐步的完整原始输出，请在设置页打开「详细日志模式」。</string>
 
+    <!-- 前台服务授权（Android 17 把 specialUse 收紧成「权限 + app-op」） -->
+    <string name="np_fgs_channel_name">监控状态提醒</string>
+    <string name="np_fgs_channel_desc">监控未能启动时在这里提醒，点一下可自动修复</string>
+    <string name="np_fgs_blocked_title">监控未能启动</string>
+    <string name="np_fgs_blocked_text">Android 17 收紧了前台服务权限，需补一次授权。点「立即修复」自动处理（需 root）；失败时请在系统设置里允许本应用后台运行。</string>
+    <string name="np_fgs_action_fix">立即修复</string>
+    <string name="np_fgs_fix_failed">修复失败：没有可用的 root。请在系统设置里允许本应用后台运行。</string>
 </resources>

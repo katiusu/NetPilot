@@ -274,10 +274,16 @@ object MonitorEngine {
             // 显式开启 = 用户现在就要它跑：清掉「用户停过」的标记，解除自动路径的抑制。
             MonitorSettings.setUserStopped(ctx, false)
             KeepAliveState.setMonitorWanted(ctx, true)
-            runCatching {
-                ContextCompat.startForegroundService(ctx, Intent(ctx, MonitorService::class.java))
-            }.onFailure {
-                LogStore.error(TAG, "启动前台服务失败：${it.message ?: it.javaClass.simpleName}")
+            // a17：specialUse 的 app-op 为 ignore 时 startForeground 必抛 SecurityException。
+            // 服务里有兜底（自愈 + 降级），但启动的前几秒只有一次机会，先把 app-op 补好
+            // 再起服务最稳。补授权要跑 root，放 IO 上；补不上也照样起，让服务自己降级。
+            if (FgsGate.isSpecialUseAllowed(ctx)) {
+                startMonitorService(ctx)
+            } else {
+                fgsScope.launch {
+                    FgsGate.heal(ctx)
+                    startMonitorService(ctx)
+                }
             }
         } else {
             // 关总开关同样要落 false：onDestroy 会读它决定要不要排一次保活重启，
@@ -286,6 +292,18 @@ object MonitorEngine {
             runCatching { ctx.stopService(Intent(ctx, MonitorService::class.java)) }
         }
     }
+
+    /** 「起前台服务」这件事在两处用（直接起 / 补完授权再起），收成一个入口。 */
+    private fun startMonitorService(ctx: Context) {
+        runCatching {
+            ContextCompat.startForegroundService(ctx, Intent(ctx, MonitorService::class.java))
+        }.onFailure {
+            LogStore.error(TAG, "启动前台服务失败：${it.message ?: it.javaClass.simpleName}")
+        }
+    }
+
+    /** 只跑「补前台服务授权」的短任务，不参与监控循环的生命周期。 */
+    private val fgsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** 清空降级状态机（不动网络，只清留档）。 */
     fun resetState(context: Context) {

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import io.github.katiusu.netpilot.core.PredictiveBack
 import io.github.katiusu.netpilot.ui.component.search.AppSearchOverlay
 import io.github.katiusu.netpilot.ui.component.search.AppSearchResults
 import io.github.katiusu.netpilot.ui.component.search.AppSearchState
@@ -187,35 +188,6 @@ class MainActivity : ComponentActivity() {
         requestedPageTicket++
     }
 
-    /**
-     * 设置窗口的预测性返回开关。
-     *
-     * 为什么走反射：setEnableOnBackInvokedCallback 是 API 33 的方法，minSdk 正好也是 33，
-     * 编译期本来就能直接引用；但厂商可能裁剪或改写这个方法，反射 + runCatching 让它安静降级成
-     * 「没有预览动画」—— 返回手势本身不受影响，也不会在类校验阶段崩。
-     */
-    private fun applyPredictiveBack(enabled: Boolean) {
-        // 真正的方法是 Activity#setEnableOnBackInvokedCallback（@SystemApi，SDK 桩里没有，只能反射）。
-        // 以前反射的是 Window —— 那个类上从来没这个方法，每次都抛 NoSuchMethodException 又被
-        // runCatching 吞掉，所以开关实际上什么都没做。Window 那条留着兜个别 ROM 的差异实现。
-        val targets = listOf(
-            this to android.app.Activity::class.java,
-            window to android.view.Window::class.java,
-        )
-        for ((receiver, cls) in targets) {
-            val applied = runCatching {
-                cls.getMethod("setEnableOnBackInvokedCallback", Boolean::class.javaPrimitiveType)
-                    .invoke(receiver, enabled)
-            }.isSuccess
-            if (applied) return
-        }
-        // targetSdk 36 起系统不允许应用在运行时关掉预测性返回；这里只记一条日志，不再静默。
-        io.github.katiusu.netpilot.core.monitor.LogStore.warn(
-            "MainActivity",
-            "本机不支持运行时切换预测性返回，已仅记录偏好（" + enabled + "）",
-        )
-    }
-
     override fun onSaveInstanceState(outState: Bundle) {
         // 组合内部的开关值在进程被回收后不可恢复，交给系统 Bundle 带过去。
         outState.putBoolean(STATE_PREDICTIVE_BACK, predictiveBackEnabled)
@@ -234,10 +206,10 @@ class MainActivity : ComponentActivity() {
         applyWindowBackground(savedSettings.themeMode)
 
         // 预测性返回：优先用 Bundle 里的值（进程被回收后重建），否则用偏好。
-        // 必须赶在 setContent 之前设好，否则首帧还会先按系统默认走一遍。
+        // 真正的应用级设置已经在 Application.onCreate 里做完了（PredictiveBack.install）：
+        // 系统在建 ActivityRecord 时读的是 ApplicationInfo 的标志，Activity 里再设没用。
         predictiveBackEnabled = savedInstanceState?.getBoolean(STATE_PREDICTIVE_BACK, savedSettings.predictiveBack)
             ?: savedSettings.predictiveBack
-        applyPredictiveBack(predictiveBackEnabled)
 
         setContent {
             var themeMode by remember {
@@ -378,8 +350,14 @@ class MainActivity : ComponentActivity() {
                                 onPredictiveBackChange = {
                                     predictiveBack = it
                                     predictiveBackEnabled = it
-                                    applyPredictiveBack(it)
                                     persistState()
+                                    // 照 HyperLyric 的做法：改完立刻重设应用级标志并重建界面，
+                                    // 否则新值要等下次冷启动才生效，用户会以为开关没反应。
+                                    // 重建前把当前页写回 intent（本开关只存在于设置页），重建后
+                                    // onCreate 的 applyRequestedPage 会把界面带回设置页，而不是弹回首页。
+                                    PredictiveBack.install(application, it)
+                                    this@MainActivity.intent.putExtra(EXTRA_PAGE, PAGE_SETTINGS)
+                                    this@MainActivity.recreate()
                                 },
                                 onBlurEnabledChange = { isBlurEnabled = it; persistState() },
                             )

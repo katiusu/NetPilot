@@ -19,6 +19,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 常驻监控的前台服务。
@@ -43,8 +44,22 @@ class MonitorService : Service() {
         super.onCreate()
         createChannel()
         // 必须在 onCreate 里就 startForeground：Android 12+ 要求前台服务启动后
-        // 5 秒内挂出通知，否则直接 ANR/崩。
-        startForeground(NOTIFICATION_ID, buildNotification("正在监控网络质量…"))
+        // 5 秒内挂出通知，否则直接 ANR/崩。但 a17（targetSdk 36）起这一步自己也会抛
+        // 异常：specialUse 类型要过「权限 + app-op」两道门，本 ROM 把 app-op 置成
+        // ignore，startForeground 抛 SecurityException，而 onCreate 里没人接住，
+        // 就变成「Unable to create service」的进程级崩溃 —— 2.0.2 闪退的根因。
+        // 现在：先试一次 → 失败就自愈 app-op 再试 → 仍失败就降级成通知并停掉自己，
+        // 宁可监控不跑，也不能崩。
+        if (startForegroundSafe()) {
+            onForegroundReady()
+            return
+        }
+        scope.launch { retryAfterHeal() }
+    }
+
+    /** 前台服务真正挂上之后的收尾：意图对账、心跳补排、通知跟随采样。 */
+    private fun onForegroundReady() {
+        foregroundReady = true
         // 这里刻意**不**写 monitorWanted。「服务被启动」不等于「用户想要监控」：
         // 系统按 sticky 重启、onTaskRemoved 自愈、任何第三方 startService 都会走到
         // onCreate，在这里无条件置 true 就会把用户刚点下的「停止」翻回去，
@@ -62,6 +77,58 @@ class MonitorService : Service() {
         scope.launch {
             MonitorEngine.snapshot.collectLatest { updateNotification(it) }
         }
+        // 自愈后重试成功的路径上，onStartCommand 那一轮已经因为「没挂上前台」跳过，
+        // 这里补一次；正常路径下 startLoop 自己会判重（loop?.isActive）。
+        if (ServicesGate.enabled(this)) {
+            MonitorEngine.startLoop(this, "前台服务")
+        }
+    }
+
+    @Volatile
+    private var foregroundReady = false
+
+    /** 前台服务没挂上、已降级成普通通知：此时不再排「尽快拉回」，否则会 10 秒一轮地空转。 */
+    @Volatile
+    private var degraded = false
+
+    @Volatile
+    private var lastStartForegroundError: String? = null
+
+    /**
+     * startForeground 的安全版。a17 的 specialUse 校验会抛 SecurityException，
+     * targetSdk 34+ 还有 MissingForegroundServiceTypeException /
+     * ForegroundServiceStartNotAllowedException —— 全是 RuntimeException。
+     * 这里统一接住：服务降级，进程不受影响。
+     */
+    private fun startForegroundSafe(): Boolean = try {
+        startForeground(NOTIFICATION_ID, buildNotification("正在监控网络质量…"))
+        true
+    } catch (t: RuntimeException) {
+        lastStartForegroundError = "${t.javaClass.simpleName}: ${t.message}"
+        LogStore.warn("监控服务", "startForeground 被系统拒绝：$lastStartForegroundError")
+        false
+    }
+
+    /** 先自愈 app-op 再重试；仍失败就降级。阻塞的 root 调用放在 IO 上。 */
+    private suspend fun retryAfterHeal() {
+        val healed = withContext(Dispatchers.IO) { FgsGate.heal(this@MonitorService) }
+        if (healed && startForegroundSafe()) {
+            LogStore.info("监控服务", "已补上前台服务授权，监控继续")
+            onForegroundReady()
+            return
+        }
+        degradeToNotice()
+    }
+
+    private fun degradeToNotice() {
+        degraded = true
+        val reason = lastStartForegroundError ?: "startForeground 被系统拒绝"
+        LogStore.error("监控服务", "前台服务无法启动，监控未开启：$reason")
+        // 先 stopSelf 再发通知：本服务是被 startForegroundService 拉起来的，
+        // 系统在等我们 startForeground（约 5 秒），超时会报「未调用 startForeground」
+        // 的 ANR。自己停掉能立刻解除这个等待，通知随后照发。
+        stopSelf()
+        FgsGate.notifyBlocked(this, reason)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -77,6 +144,12 @@ class MonitorService : Service() {
             MonitorSettings.setUserStopped(this, true)
             stopSelf()
             // START_NOT_STICKY：用户停掉的服务不该被系统按 sticky 规则重启。
+            return START_NOT_STICKY
+        }
+        if (!foregroundReady) {
+            // 前台服务没挂上：这时起循环，界面会显示「监控中」而实际什么都没做，
+            // 正是本工程一直在避免的假状态。等 retryAfterHeal 成功后再补。
+            LogStore.warn("监控服务", "前台服务未建立，跳过监控循环")
             return START_NOT_STICKY
         }
         MonitorEngine.startLoop(this, "前台服务")
@@ -106,7 +179,9 @@ class MonitorService : Service() {
         // false）。用 wanted 区分，才能既做到「被杀能拉回来」又做到「用户能真正关掉」。
         // 总开关的判断不能省：关总开关时是先落配置再 stopService，onDestroy 在这里
         // 读到的已经是「关闭」，于是不会再排一个没人需要的重启闹钟。
-        if (ServicesGate.enabled(this) && KeepAliveState.monitorWanted(this)) {
+        // 降级路径不排重启：授权没修好之前，10 秒一轮的重启只会刷屏并烧电；
+        // 交给心跳（≤15 分钟）和用户点通知里的「立即修复」来兜。
+        if (!degraded && ServicesGate.enabled(this) && KeepAliveState.monitorWanted(this)) {
             KeepAliveScheduler.scheduleRestartSoon(this)
         }
         super.onDestroy()

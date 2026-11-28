@@ -9,6 +9,7 @@ import io.github.katiusu.netpilot.prefs.PrefsStore
 import io.github.katiusu.netpilot.ui.screen.features.featureSpecs
 import io.github.katiusu.netpilot.core.NetPilot
 import io.github.katiusu.netpilot.core.PowerSaveWatcher
+import io.github.katiusu.netpilot.core.PredictiveBack
 import io.github.katiusu.netpilot.core.keepalive.ScreenStateGate
 import io.github.katiusu.netpilot.core.priv.ControlManager
 import io.github.katiusu.netpilot.core.tasker.TaskerGate
@@ -25,6 +26,10 @@ class TemplateApp : Application() {
         XposedServiceManager.init()
         // NetPilot 核心：日志、监控引擎、数据卡规则接线（幂等）
         NetPilot.install(this)
+        // 预测性返回的应用级开关：必须赶在任何 Activity 创建之前设好（系统建
+        // ActivityRecord 时读 ApplicationInfo 的标志），所以放在 Application.onCreate。
+        // 做法照抄 HyperLyric 的 hidden API 路径，见 PredictiveBack 的注释。
+        PredictiveBack.install(this, AppSettings.load(this).predictiveBack)
         // Tasker / Locale 接口总开关（默认关）：把系统里的组件启用状态对齐到配置。
         // 关闭时这两个接收器在系统层面就是禁用的，Tasker 广播不会拉起本进程。
         //

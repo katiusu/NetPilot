@@ -44,7 +44,7 @@ android {
         // compileSdk 保持 37：AGP 要求 compileSdk >= targetSdk，且 compileSdk 只决定编译期
         // 能调用的 API 面，不改变运行时行为（运行时行为由 targetSdk 决定）。
         targetSdk = 36
-        versionCode = 25
+        versionCode = 26
         // versionName 是给人看的语义版本；versionCode 是构建号（2026100505 = 2026-10-05 第 5 次构建），
         // 两者都要有：报问题时给构建号才能精确定位到某一次构建。
         // 1.5.1：把「provider 不认调用方身份」与「真的缺权限」分开（uid 名单 / AMS 应用进程记录 /
@@ -65,7 +65,7 @@ android {
 //   配置导入的 null 流与非法数组元素）。
         // 2.0.2：省电（息屏静止退避、系统省电模式感知、采样间隔翻倍）
         //   与流畅度（动画默认跟随刷新率、省电模式锁 60 帧、省电模式关毛玻璃）。
-        versionName = "2.0.2"
+        versionName = "2.0.3"
 
     }
 

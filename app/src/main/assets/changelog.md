@@ -1,3 +1,11 @@
+## 2.0.3
+
+- 修复 Android 17（a17）上启动即闪退：a17 把 specialUse 前台服务收紧成「权限 + app-op」两道门，本机 ROM 把 app-op 默认置成 ignore，于是 onCreate 里的 startForeground 抛 SecurityException，直接被系统判为「Unable to create service」把进程带走。现在 startForeground 全部接住，失败就先用 root 把 app-op 补成 allow 再重试；补不上则降级成一条可点的「监控未启动」通知，监控不跑但绝不闪退。
+- 新增前台服务授权自检（core/monitor/FgsGate.kt）：总开关 / 磁贴 / Tasker / 开机自启四条入口都会在起服务前把授权补好，避免白起一次再崩。
+- 「监控未启动」通知带「立即修复」按钮：点一下跑一次 appops 修复，成功后自动把监控拉回来，不用回设置页手点。
+- 授权没修好之前不再排 10 秒一轮的重启闹钟，改由心跳（≤15 分钟）与通知里的修复入口兜底，不刷日志也不烧电。
+- 修复「预测性返回」开关无效：2.0.1 反射的两个方法对普通应用根本不存在（Activity 的那个是 @SystemApi，Window 上没这个方法），异常还被 runCatching 静默吞掉，所以开关一直是个摆设。现在照 HyperLyric 的实测做法，用 HiddenApiBypass 反射 ApplicationInfo#setEnableOnBackInvokedCallback，在 Application.onCreate 里赶在任何 Activity 创建之前设好；切开关时立刻重设并重建界面（留在设置页），不用重启应用。
+
 ## 2.0.2
 
 - 新增息屏静止退避：屏幕关闭、未降级、且连续三轮读数（制式/RSRP/探测往返）完全不变时，采样间隔按 1.5 倍逐轮放大，封顶 30 分钟；屏幕点亮、读数变化或读数靠近判定门限时立即回到原节奏。

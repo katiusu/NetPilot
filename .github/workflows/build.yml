@@ -1,27 +1,40 @@
 name: Build
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   assemble:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Configure Android SDK
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
           SDKMGR="$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)"
-          "$SDKMGR" "platforms;android-37.2" "build-tools;37.0.0" 2>&1 | tail -3 || true
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          # 工程用的是 buildToolsVersion 36.0.0 + compileSdk 37.2；
+          # 两个 build-tools 都装上，避免 AGP 在 CI 里因缺组件失败。
+          "$SDKMGR" "platforms;android-37.2" "build-tools;36.0.0" "build-tools;37.0.0" "platform-tools"
+          ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
+
       - name: Gradle build
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -34,7 +47,8 @@ jobs:
             printf 'storeFile=release.keystore\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
           fi
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dorg.gradle.vfs.watch=false
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g"
+
       - name: Verify APK
         run: |
           python3 - <<'EOF'
@@ -46,6 +60,7 @@ jobs:
               print(f"APK_CHECK: {apk} entries={len(names)} manifest={has_manifest} arsc={has_arsc}")
               assert has_manifest and has_arsc and len(names) >= 100, "broken apk"
           EOF
+
       - uses: actions/upload-artifact@v4
         with:
           name: netpilot-release

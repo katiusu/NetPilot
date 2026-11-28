@@ -166,4 +166,11 @@
     <string name="log_mode_detailed">Detailed</string>
     <string name="log_mode_brief_hint">Brief mode records conclusions, failure reasons, and the raw values the system returned on failure. For per-candidate, step-by-step raw output, turn on "Detailed log mode" in Settings.</string>
 
+    <!-- foreground service authorization (Android 17 specialUse: permission + app-op) -->
+    <string name="np_fgs_channel_name">Monitor status</string>
+    <string name="np_fgs_channel_desc">Alerts when the monitor cannot start; tap to repair automatically</string>
+    <string name="np_fgs_blocked_title">Monitor not started</string>
+    <string name="np_fgs_blocked_text">Android 17 tightened foreground service permissions, so one more authorization is needed. Tap "Fix now" to repair automatically (root required); if that fails, allow background activity in system settings.</string>
+    <string name="np_fgs_action_fix">Fix now</string>
+    <string name="np_fgs_fix_failed">Repair failed: no usable root. Please allow background activity for this app in system settings.</string>
 </resources>
